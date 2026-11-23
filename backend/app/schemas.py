@@ -1,3 +1,4 @@
+import re
 from datetime import datetime
 from uuid import UUID
 
@@ -278,13 +279,53 @@ Block = Annotated[Union[SnippetRefBlock, HeadingBlock, PageBreakBlock, TocBlock]
 
 class VarDecl(BaseModel):
     name: str = Field(pattern=r"^[A-Za-z_]\w*(\.\w+)?$", max_length=60)
-    type: Literal["text", "date", "number", "list"] = "text"
+    type: Literal["text", "date", "number", "list"] = "text"  # list = list of objects (rows)
     default: Any = None
+    columns: list[Annotated[str, Field(pattern=r"^[A-Za-z_]\w*$", max_length=40)]] = Field(default=[], max_length=20)
+
+
+def _check_value(t: str, v: Any) -> None:
+    scalar = (str, int, float, bool, type(None))
+    if v is None:
+        return
+    if t in ("text", "date") and not isinstance(v, str):
+        raise ValueError("expected text")
+    if t == "date":
+        try:
+            datetime.fromisoformat(v) if v else None
+        except ValueError:
+            raise ValueError("expected an ISO date (YYYY-MM-DD)")
+    if t == "number" and (isinstance(v, bool) or not isinstance(v, (int, float))):
+        raise ValueError("expected a number")
+    if t == "list":
+        if not isinstance(v, list) or len(v) > 1000:
+            raise ValueError("expected a list of at most 1000 rows")
+        for r in v:
+            if not isinstance(r, dict) or len(r) > 20 or not all(
+                    isinstance(k, str) and re.fullmatch(r"[A-Za-z_]\w*", k) and isinstance(x, scalar) for k, x in r.items()):
+                raise ValueError("list rows must be objects with simple fields")
 
 
 class Variables(BaseModel):
     declarations: list[VarDecl] = Field(default=[], max_length=200)
     values: dict[str, Any] = {}
+
+    @model_validator(mode="after")
+    def _typed(self):
+        for d in self.declarations:
+            for what, v in (("value", self.values.get(d.name)), ("default", d.default)):
+                try:
+                    _check_value(d.type, v)
+                except ValueError as e:
+                    raise ValueError(f"variable {d.name}: {what}: {e}")
+        return self
+
+
+class RevRow(BaseModel):
+    version: str = Field(default="", max_length=64)
+    date: str = Field(default="", max_length=32)
+    author: str = Field(default="", max_length=120)
+    message: str = Field(default="", max_length=500)
 
 
 class LinkedDoc(BaseModel):
@@ -312,6 +353,7 @@ class DocDraftIn(BaseModel):
     blocks: list[Block] = Field(default=[], max_length=1000)
     variables: Variables = Variables()
     links: list[LinkedDoc] = Field(default=[], max_length=200)
+    revision_history: list[RevRow] | None = Field(default=None, max_length=500)  # null = auto-built from git
 
 
 class DocOut(BaseModel):

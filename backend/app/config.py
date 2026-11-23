@@ -25,3 +25,6 @@ FILES_ROOT = _e("FILES_ROOT", "/files")
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
 SESSION_DAYS = 14
 INVITE_DAYS = 7
+PDF_URL = _e("PDF_URL", "http://pdf:3000").rstrip("/")
+PDF_TIMEOUT_S = float(_e("PDF_TIMEOUT_S", "120"))
+PDF_MAX_BYTES = int(_e("PDF_MAX_BYTES", str(100 * 1024 * 1024)))

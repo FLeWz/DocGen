@@ -188,7 +188,7 @@ def test_latest_and_tag_are_frozen_at_export_time(ws):
 
 def test_export_errors_and_formats(ws):
     c = ws["c"]
-    assert c.get(f"/api/documents/{ws['doc']}/export?format=pdf").status_code == 400  # plugs in with milestone 6
+    assert c.get(f"/api/documents/{ws['doc']}/export?format=odt").status_code == 400
     nob = upload(c, make_docx(content=False), "NoSlot").json()["id"]
     put(c, ws["doc"], [], base_document={"id": nob})
     e, st = run_export(c, ws["doc"])

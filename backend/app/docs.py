@@ -10,7 +10,7 @@ from .deps import Ctx
 from .git import content as C, repo as git
 from .models import BaseDocument, BaseDocVersion, DocDraft, Document, Folder, Snippet
 
-BODY = ("base_document", "blocks", "variables", "links")
+BODY = ("base_document", "blocks", "variables", "links", "revision_history")
 MAX_BODY = 2_000_000
 
 
@@ -22,7 +22,8 @@ def get_document(ctx: Ctx, id: UUID) -> Document:
 
 
 def empty_body() -> dict:
-    return dict(base_document=None, blocks=[], variables=dict(declarations=[], values={}), links=[])
+    return dict(base_document=None, blocks=[], variables=dict(declarations=[], values={}), links=[],
+                revision_history=None)
 
 
 def path(slug: str) -> str:
@@ -41,7 +42,7 @@ def version_at(ctx: Ctx, d: Document, sha: str) -> dict | None:
     if raw is None:
         return None
     y = yaml.safe_load(raw)
-    return dict(sha=sha, slug=p.split("/")[1].removesuffix(".yaml"), title=y["title"], **{k: y[k] for k in BODY})
+    return dict(sha=sha, slug=p.split("/")[1].removesuffix(".yaml"), title=y["title"], **{k: y.get(k) for k in BODY})
 
 
 def head_version(ctx: Ctx, d: Document) -> dict | None:
@@ -53,7 +54,7 @@ def _eq(a: dict | None, b: dict | None) -> bool:
 
 
 def dver(dr: DocDraft) -> dict:
-    return dict(title=dr.title, slug=dr.slug, **dr.body)
+    return dict(title=dr.title, slug=dr.slug, **{"revision_history": None, **dr.body})
 
 
 def draft_of(ctx: Ctx, d: Document) -> DocDraft | None:

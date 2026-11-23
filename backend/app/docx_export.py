@@ -2,8 +2,9 @@
 through two callbacks, so the same spec always yields the same bytes (timestamps and zip metadata fixed).
 
 spec = {title, built_ins:{doc.title, doc.version, doc.date, org.name, author}, variables:{declarations,values},
-        links, blocks:[{type, slot, ..., pin:{folder_id, snippet_id, sha}}]}
+        links, revision_history:[{version,date,author,message}], blocks:[{type, slot, ..., pin:{folder_id, snippet_id, sha}}]}
 """
+import copy
 import io
 import json
 import re
@@ -83,13 +84,16 @@ def _balanced(t: str) -> bool:
     return t.count("{{") == len(re.findall(r"\{\{.*?\}\}", t))
 
 
-def render_texts(roots, ctx: dict, missing: set, warnings: list) -> None:
+def render_texts(roots, ctx: dict, missing: set, warnings: list, done: set) -> None:
+    """Renders every `{{ }}` text once; `done` holds nodes rendered earlier (repeated rows), never re-evaluated."""
     env = make_env(missing)
     for root in roots:
         for p in root.iter(qn("w:p")):
             ts = list(p.iter(qn("w:t")))
             full = "".join(t.text or "" for t in ts)
             if "{{" not in full:
+                continue
+            if any(t in done for t in ts):
                 continue
             if not all(_balanced(t.text or "") for t in ts):  # placeholder split over runs: merge (formatting of first run wins)
                 ts[0].text = full
@@ -98,13 +102,64 @@ def render_texts(roots, ctx: dict, missing: set, warnings: list) -> None:
                 ts = ts[:1]
             for t in ts:
                 s = t.text or ""
-                if "{{" not in s or "{%" in s or "{#" in s:
+                if t in done or "{{" not in s or "{%" in s or "{#" in s:
                     continue
+                done.add(t)
                 try:
                     t.text = env.from_string(s).render(ctx)
                     t.set(qn("xml:space"), "preserve")
                 except Exception as e:  # syntax error / sandbox violation: keep the text as typed
                     warnings.append(f"template text left as is: {s[:40]!r} ({type(e).__name__})")
+
+
+class Row(dict):
+    """A list-variable row: a column the user left out renders empty instead of as a missing variable."""
+
+    def __missing__(self, k):
+        if k.startswith("__"):
+            raise KeyError(k)
+        return ""
+
+
+FOR_RE = re.compile(r"\{%tr\s+for\s+([A-Za-z_]\w*)\s+in\s+([A-Za-z_]\w*(?:\.\w+)?)\s*%\}")
+
+
+def expand_rows(root, ctx: dict, missing: set, warnings: list, done: set) -> None:
+    """`{%tr for x in list %}` .. `{%tr endfor %}` table rows (base doc and dynamic snippet tables): the rows between
+    the markers repeat once per item and are rendered right here with `x` bound; markers are removed."""
+    for tbl in list(root.iter(qn("w:tbl"))):
+        rows, i = tbl.findall(qn("w:tr")), 0
+        txt = lambda tr: "".join(t.text or "" for t in tr.iter(qn("w:t")))
+        while i < len(rows):
+            m = FOR_RE.search(txt(rows[i]))
+            if not m:
+                i += 1
+                continue
+            j = next((k for k in range(i + 1, len(rows)) if "{%tr" in txt(rows[k]) and "endfor" in txt(rows[k])), None)
+            if j is None:
+                warnings.append(f"table loop '{m[2]}' has no endfor: rows dropped")
+                j = len(rows) - 1
+            var, name = m[1], m[2]
+            items: object = ctx
+            for part in name.split("."):
+                items = items.get(part) if isinstance(items, dict) else None
+            if not isinstance(items, list):
+                if items is not None:
+                    warnings.append(f"'{name}' is not a list: table rows dropped")
+                items = []
+            tpl = rows[i + 1:j]
+            for item in items:
+                for tr in tpl:
+                    c = copy.deepcopy(tr)
+                    rows[j].addprevious(c)
+                    render_texts([c], {**ctx, var: Row(item) if isinstance(item, dict) else item}, missing, warnings, done)
+            for tr in rows[i:j + 1]:
+                tbl.remove(tr)
+            i = j + 1
+
+
+def _clean(row: dict, **extra) -> dict:  # None would render as the text "None"
+    return Row({k: "" if v is None else v for k, v in {**row, **extra}.items()})
 
 
 def context(spec: dict) -> dict:
@@ -122,7 +177,8 @@ def context(spec: dict) -> dict:
     bi = spec["built_ins"]
     ctx.update({"doc": {"title": bi["doc.title"], "version": bi["doc.version"], "date": bi["doc.date"]},
                 "org": {"name": bi["org.name"]}, "author": bi["author"],
-                "linked_documents": spec.get("links", []), "revision_history": []})  # revision_history: milestone 5
+                "linked_documents": [_clean(l, id=l.get("doc_id"), link=l.get("url")) for l in spec.get("links", [])],
+                "revision_history": [_clean(r) for r in spec.get("revision_history") or []]})
     return ctx
 
 
@@ -319,6 +375,14 @@ class Builder:
             self.nodes(cell.get("content"), m, ctx)
             if m._tc.find(qn("w:p")) is None:
                 m._tc.append(OxmlElement("w:p"))
+        name = (n.get("attrs") or {}).get("dynamicList")
+        if name and not re.fullmatch(r"[A-Za-z_]\w*", str(name)):
+            self.warn.append(f"dynamic table: invalid list name {name!r}")
+            name = None
+        if name:  # the last row is the row template; expand_rows repeats it between these markers
+            last = t.rows[-1]._tr
+            for tag, txt in (("addprevious", f"{{%tr for row in {name} %}}"), ("addnext", "{%tr endfor %}")):
+                getattr(last, tag)(_marker_row(txt))
 
     def image(self, a: dict, cont, ctx) -> None:
         data = self.load_asset(ctx, a.get("imageId"))
@@ -357,20 +421,16 @@ class Builder:
         self.doc.add_paragraph().add_run().add_break(WD_BREAK.PAGE)
 
 
-def _drop_template_rows(root) -> None:
-    """docxtpl-style `{%tr for ... %}` ... `{%tr endfor %}` rows: filled in milestone 5, removed until then."""
-    for tbl in root.iter(qn("w:tbl")):
-        skip, kill = False, []
-        for tr in tbl.findall(qn("w:tr")):
-            txt = "".join(t.text or "" for t in tr.iter(qn("w:t")))
-            if "{%tr" in txt and " for " in txt:
-                skip = True
-            if skip:
-                kill.append(tr)
-            if "{%tr" in txt and "endfor" in txt:
-                skip = False
-        for tr in kill:
-            tbl.remove(tr)
+def _marker_row(text: str):
+    tr = OxmlElement("w:tr")
+    tc = OxmlElement("w:tc")
+    p = OxmlElement("w:p")
+    r = OxmlElement("w:r")
+    t = OxmlElement("w:t")
+    t.text = text
+    for a, b in ((r, t), (p, r), (tc, p), (tr, tc)):
+        a.append(b)
+    return tr
 
 
 def _fix_settings(doc) -> None:
@@ -388,7 +448,6 @@ def build(spec: dict, base: bytes, load_content, load_asset) -> tuple[bytes, lis
     warnings: list = []
     doc = Document(io.BytesIO(base))
     body = doc.element.body
-    _drop_template_rows(body)
     cur: dict = {}
     b = Builder(doc, lambda c, iid: load_asset(c["pin"], c["slug"], iid), warnings)
 
@@ -432,7 +491,10 @@ def build(spec: dict, base: bytes, load_content, load_asset) -> tuple[bytes, lis
 
     roots = [body] + [r.target_part.element for r in doc.part.rels.values() if r.reltype in (RT.HEADER, RT.FOOTER)]
     missing: set = set()
-    render_texts(roots, context(spec), missing, warnings)
+    ctx, done = context(spec), set()
+    for r in roots:
+        expand_rows(r, ctx, missing, warnings, done)
+    render_texts(roots, ctx, missing, warnings, done)
     if missing:
         warnings.append("undefined variables: " + ", ".join(sorted(missing)))
     _fix_settings(doc)

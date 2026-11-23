@@ -145,11 +145,13 @@ def commit(repo, name: str, email: str, message: str, writes: dict[str, bytes],
     return new
 
 
-def log(repo, snippet_id=None, limit=200, key="Snippet-Id") -> list[dict]:
+def log(repo, snippet_id=None, limit=200, key="Snippet-Id", rev: str | None = None) -> list[dict]:
+    """`rev` (full sha) limits the walk to that commit and its ancestors."""
     extra = [f"--grep={key}: {UUID(str(snippet_id))}", "--fixed-strings"] if snippet_id else []
     if not head(repo):
         return []
-    out = _git(repo, "log", f"-n{limit}", "--format=%H%x1f%an%x1f%ae%x1f%aI%x1f%B%x1e", *extra).decode()
+    out = _git(repo, "log", f"-n{limit}", "--format=%H%x1f%an%x1f%ae%x1f%aI%x1f%B%x1e",
+                *extra, *([resolve(repo, rev)] if rev else [])).decode()
     rows = []
     for rec in out.split("\x1e"):
         if rec.strip():
