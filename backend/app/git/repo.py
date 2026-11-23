@@ -30,6 +30,12 @@ def repo_path(org_id, folder_id) -> Path:
     return p
 
 
+def base_repo_path(org_id) -> Path:
+    p = (ROOT / str(UUID(str(org_id))) / "_base.git").resolve()
+    assert p.is_relative_to(ROOT) and p != ROOT
+    return p
+
+
 def _git(repo, *args, input=None, env=None) -> bytes:
     e = {"PATH": os.environ["PATH"], "HOME": "/tmp", "GIT_CONFIG_NOSYSTEM": "1",
          "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_TERMINAL_PROMPT": "0", **(env or {})}
@@ -96,9 +102,24 @@ def slug_at(repo, sha: str, snippet_id) -> str | None:
     return out[0].split(":", 1)[1].split("/")[1] if out else None
 
 
+def file_at(repo, sha: str, uid, glob: str) -> str | None:
+    """Path of the file under `glob` whose YAML says `id: <uid>` at a commit (like slug_at, for documents)."""
+    try:
+        out = _git(repo, "grep", "-l", "-E", "-e", f"^id: {UUID(str(uid))}$", sha, "--", glob).decode().split()
+    except GitError:
+        return None
+    return out[0].split(":", 1)[1] if out else None
+
+
+def count_newer(repo, snippet_id, old: str, new: str) -> int:
+    """Commits in old..new that touched the snippet (Snippet-Id trailer)."""
+    return int(_git(repo, "rev-list", "--count", "--fixed-strings", f"--grep=Snippet-Id: {UUID(str(snippet_id))}",
+                    f"{old}..{new}").decode())
+
+
 def commit(repo, name: str, email: str, message: str, writes: dict[str, bytes],
-           moves: list[tuple[str, str]] = ()) -> str:
-    """One commit on main: apply moves (dir old->new), then writes, via a throwaway index."""
+           moves: list[tuple[str, str]] = (), deletes: list[str] = ()) -> str:
+    """One commit on main: apply moves (dir old->new), deletes (files), then writes, via a throwaway index."""
     parent = head(repo)
     with tempfile.TemporaryDirectory() as td:
         env = {"GIT_INDEX_FILE": f"{td}/index"}
@@ -110,6 +131,7 @@ def commit(repo, name: str, email: str, message: str, writes: dict[str, bytes],
                 meta, path = ent.split("\t", 1)
                 mode, sha, _ = meta.split()
                 lines += [f"0 {ZERO}\t{path}", f"{mode} {sha}\t{new}/{path[len(old) + 1:]}"]
+        lines += [f"0 {ZERO}\t{path}" for path in deletes]
         for path, data in writes.items():
             sha = _git(repo, "hash-object", "-w", "--stdin", input=data).decode().strip()
             lines.append(f"100644 {sha}\t{path}")
@@ -123,8 +145,8 @@ def commit(repo, name: str, email: str, message: str, writes: dict[str, bytes],
     return new
 
 
-def log(repo, snippet_id=None, limit=200) -> list[dict]:
-    extra = [f"--grep=Snippet-Id: {UUID(str(snippet_id))}", "--fixed-strings"] if snippet_id else []
+def log(repo, snippet_id=None, limit=200, key="Snippet-Id") -> list[dict]:
+    extra = [f"--grep={key}: {UUID(str(snippet_id))}", "--fixed-strings"] if snippet_id else []
     if not head(repo):
         return []
     out = _git(repo, "log", f"-n{limit}", "--format=%H%x1f%an%x1f%ae%x1f%aI%x1f%B%x1e", *extra).decode()
