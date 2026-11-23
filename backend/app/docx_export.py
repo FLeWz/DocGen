@@ -1,0 +1,444 @@
+"""ProseMirror JSON -> OOXML, inserted into a base DOCX. Pure: no DB or git, content/assets come in
+through two callbacks, so the same spec always yields the same bytes (timestamps and zip metadata fixed).
+
+spec = {title, built_ins:{doc.title, doc.version, doc.date, org.name, author}, variables:{declarations,values},
+        links, blocks:[{type, slot, ..., pin:{folder_id, snippet_id, sha}}]}
+"""
+import io
+import json
+import re
+from datetime import datetime
+
+from docx import Document
+from docx.opc.constants import RELATIONSHIP_TYPE as RT
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
+from docx.shared import Emu, RGBColor
+from jinja2 import Undefined
+from jinja2.exceptions import SecurityError
+from jinja2.sandbox import SandboxedEnvironment
+from PIL import Image as PILImage
+
+from .base_docs import CONTENT_RE, SLOT_RE
+from .ooxml import add_field, stable_zip
+
+MAX_W = 5_486_400  # 6 in; images wider than the text area are scaled down
+SAFE_HREF = re.compile(r"(https?://|mailto:)", re.I)
+SETTINGS_AFTER = {"hdrShapeDefaults", "footnotePr", "endnotePr", "compat", "docVars", "rsids", "mathPr",
+                  "attachedSchema", "themeFontLang", "clrSchemeMapping", "shapeDefaults", "decimalSymbol",
+                  "listSeparator", "doNotIncludeSubdocsInStats", "doNotAutoCompressPictures", "forceUpgrade"}
+
+
+# ---- sandboxed jinja ---------------------------------------------------------------------------
+
+_DATE = {"YYYY": "%Y", "MM": "%m", "DD": "%d", "HH": "%H", "mm": "%M", "ss": "%S"}
+
+
+def make_env(missing: set) -> SandboxedEnvironment:
+    class Missing(Undefined):  # renders as its own placeholder so nothing silently vanishes
+        def __str__(s):
+            missing.add(s._undefined_name)
+            return "{{ %s }}" % s._undefined_name
+
+        def __getattr__(s, k):
+            if k.startswith("__"):
+                raise AttributeError(k)
+            return Missing(name=f"{s._undefined_name}.{k}")
+
+    class Env(SandboxedEnvironment):
+        intercepted_binops = frozenset({"*", "**", "<<"})  # 'a'*10**9 style memory bombs
+
+        def call_binop(self, context, operator, left, right):
+            raise SecurityError(f"operator {operator} not allowed")
+
+    env = Env(undefined=Missing, autoescape=False)  # values land in XML text nodes via lxml, which escapes
+    env.filters["upper"] = lambda v: v if isinstance(v, Undefined) else str(v).upper()
+
+    def datefmt(v, fmt):
+        if isinstance(v, Undefined):
+            return v
+        try:
+            d = datetime.fromisoformat(str(v))
+        except ValueError:
+            return v
+        return d.strftime(re.sub("|".join(_DATE), lambda m: _DATE[m[0]], fmt))
+    env.filters["datefmt"] = datefmt
+    return env
+
+
+def chip(a: dict) -> str:
+    """variable node -> jinja expression text; resolved by the render step."""
+    e = a["name"]
+    if a.get("default") not in (None, ""):
+        e += f"|default({json.dumps(a['default'])}, true)"
+    f = a.get("filter") or ""
+    if f == "upper":
+        e += "|upper"
+    elif f.startswith("date:"):
+        e += f"|datefmt({json.dumps(f[5:])})"
+    return "{{ %s }}" % e
+
+
+def _balanced(t: str) -> bool:
+    return t.count("{{") == len(re.findall(r"\{\{.*?\}\}", t))
+
+
+def render_texts(roots, ctx: dict, missing: set, warnings: list) -> None:
+    env = make_env(missing)
+    for root in roots:
+        for p in root.iter(qn("w:p")):
+            ts = list(p.iter(qn("w:t")))
+            full = "".join(t.text or "" for t in ts)
+            if "{{" not in full:
+                continue
+            if not all(_balanced(t.text or "") for t in ts):  # placeholder split over runs: merge (formatting of first run wins)
+                ts[0].text = full
+                for t in ts[1:]:
+                    t.text = ""
+                ts = ts[:1]
+            for t in ts:
+                s = t.text or ""
+                if "{{" not in s or "{%" in s or "{#" in s:
+                    continue
+                try:
+                    t.text = env.from_string(s).render(ctx)
+                    t.set(qn("xml:space"), "preserve")
+                except Exception as e:  # syntax error / sandbox violation: keep the text as typed
+                    warnings.append(f"template text left as is: {s[:40]!r} ({type(e).__name__})")
+
+
+def context(spec: dict) -> dict:
+    v = spec["variables"]
+    ctx: dict = {}
+    for k, val in {**{d["name"]: d.get("default") for d in v.get("declarations", []) if d.get("default") is not None},
+                   **v.get("values", {})}.items():
+        a, _, b = k.partition(".")
+        if b:
+            if not isinstance(ctx.get(a), dict):
+                ctx[a] = {}
+            ctx[a][b] = val
+        else:
+            ctx[a] = val
+    bi = spec["built_ins"]
+    ctx.update({"doc": {"title": bi["doc.title"], "version": bi["doc.version"], "date": bi["doc.date"]},
+                "org": {"name": bi["org.name"]}, "author": bi["author"],
+                "linked_documents": spec.get("links", []), "revision_history": []})  # revision_history: milestone 5
+    return ctx
+
+
+# ---- numbering ---------------------------------------------------------------------------------
+
+class Numbering:
+    """Reuses a base-doc abstractNum (bullet / decimal, not tied to a paragraph style) or adds one."""
+
+    def __init__(self, doc):
+        self.root = doc.part.numbering_part.element
+
+    def _ids(self, tag, attr):
+        return [int(e.get(qn(attr))) for e in self.root.findall(qn(tag))]
+
+    def _abstract(self, fmt: str, multilevel: bool = False) -> int:
+        if not multilevel:
+            for a in self.root.findall(qn("w:abstractNum")):
+                l0 = a.find(qn("w:lvl"))
+                if l0 is not None and l0.find(qn("w:pStyle")) is None and \
+                        (l0.find(qn("w:numFmt")) is not None and l0.find(qn("w:numFmt")).get(qn("w:val")) == fmt):
+                    return int(a.get(qn("w:abstractNumId")))
+        aid = max(self._ids("w:abstractNum", "w:abstractNumId"), default=-1) + 1
+        lv = []
+        for i in range(9):
+            text = "•" if fmt == "bullet" else (".".join(f"%{k + 1}" for k in range(i + 1)) + ("." if i == 0 else "")
+                                              if multilevel else f"%{i + 1}.")
+            lv.append(f'<w:lvl w:ilvl="{i}"><w:start w:val="1"/><w:numFmt w:val="{fmt}"/><w:lvlText w:val="{text}"/>'
+                      f'<w:lvlJc w:val="left"/><w:pPr><w:ind w:left="{720 * (i + 1)}" w:hanging="360"/></w:pPr></w:lvl>')
+        from docx.oxml import parse_xml
+        a = parse_xml(f'<w:abstractNum xmlns:w="{W_NS}" w:abstractNumId="{aid}"><w:multiLevelType w:val="'
+                      f'{"multilevel" if multilevel else "hybridMultilevel"}"/>{"".join(lv)}</w:abstractNum>')
+        first_num = self.root.find(qn("w:num"))
+        first_num.addprevious(a) if first_num is not None else self.root.append(a)  # abstractNums precede nums
+        return aid
+
+    def _num(self, aid: int, restart: bool) -> int:
+        nid = max(self._ids("w:num", "w:numId"), default=0) + 1
+        from docx.oxml import parse_xml
+        ov = "".join(f'<w:lvlOverride w:ilvl="{i}"><w:startOverride w:val="1"/></w:lvlOverride>'
+                     for i in range(9)) if restart else ""
+        self.root.append(parse_xml(f'<w:num xmlns:w="{W_NS}" w:numId="{nid}"><w:abstractNumId w:val="{aid}"/>{ov}</w:num>'))
+        return nid
+
+    def bullets(self) -> int:
+        if getattr(self, "_b", None) is None:
+            self._b = self._num(self._abstract("bullet"), False)
+        return self._b
+
+    def ordered(self) -> int:  # fresh num per list so every ordered list restarts at 1
+        return self._num(self._abstract("decimal"), True)
+
+    def headings(self) -> int:
+        if getattr(self, "_h", None) is None:
+            self._h = self._num(self._abstract("decimal", multilevel=True), False)
+        return self._h
+
+
+W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+
+
+def _numpr(p, num_id: int, level: int) -> None:
+    ppr = p._p.get_or_add_pPr()
+    n = OxmlElement("w:numPr")
+    for tag, v in (("w:ilvl", level), ("w:numId", num_id)):
+        e = OxmlElement(tag)
+        e.set(qn("w:val"), str(v))
+        n.append(e)
+    ppr.append(n)
+
+
+# ---- ProseMirror -> OOXML ----------------------------------------------------------------------
+
+class Builder:
+    def __init__(self, doc, load_asset, warnings: list):
+        self.doc, self.load_asset, self.warn = doc, load_asset, warnings
+        self.styles = {s.style_id for s in doc.styles}
+        self.num = Numbering(doc)
+
+    def style(self, *wanted) -> str | None:
+        return next((w for w in wanted if w and w in self.styles), None)
+
+    def apply_style(self, p, *wanted) -> None:
+        if s := self.style(*wanted):
+            p._p.get_or_add_pPr().style = s  # id, not name: base-doc styles are matched by id
+
+    def nodes(self, nodes, cont, ctx) -> None:
+        for n in nodes or []:
+            self.node(n, cont, ctx)
+
+    def node(self, n, cont, ctx) -> None:
+        t, a = n.get("type"), n.get("attrs") or {}
+        if t == "paragraph":
+            p = cont.add_paragraph()
+            self.apply_style(p, a.get("styleId"))
+            self.inline(n.get("content"), p)
+        elif t == "heading":
+            lvl = min(max(int(a.get("level") or 1), 1), 4)
+            p = cont.add_paragraph()
+            self.apply_style(p, a.get("styleId"), f"Heading{lvl}")
+            self.inline(n.get("content"), p)
+        elif t in ("bulletList", "orderedList"):
+            self.list(n, cont, ctx, 0)
+        elif t == "table":
+            if cont is self.doc:
+                self.table(n, ctx)
+            else:
+                self.warn.append("nested table skipped")
+        elif t == "image":
+            self.image(a, cont, ctx)
+        elif t == "hardBreak":
+            pass
+        else:
+            self.warn.append(f"unsupported node '{t}' skipped")
+
+    def list(self, n, cont, ctx, level) -> None:
+        num = self.num.ordered() if n["type"] == "orderedList" else self.num.bullets()
+        for li in n.get("content") or []:
+            first = True
+            for child in li.get("content") or []:
+                if child.get("type") in ("bulletList", "orderedList"):
+                    self.list(child, cont, ctx, min(level + 1, 8))
+                else:
+                    p = cont.add_paragraph()
+                    self.apply_style(p, (child.get("attrs") or {}).get("styleId"), "ListParagraph")
+                    if first:
+                        _numpr(p, num, level)
+                        first = False
+                    self.inline(child.get("content"), p)
+
+    def inline(self, content, p) -> None:
+        for c in content or []:
+            t = c.get("type")
+            if t == "text":
+                self.run(p, c.get("text", ""), c.get("marks") or [])
+            elif t == "variable":
+                self.run(p, chip(c.get("attrs") or {}), c.get("marks") or [])
+            elif t == "hardBreak":
+                p.add_run().add_break()
+
+    def run(self, p, text: str, marks: list) -> None:
+        r = p.add_run(text)
+        link = None
+        for m in marks:
+            k = m.get("type")
+            if k == "bold":
+                r.bold = True
+            elif k == "italic":
+                r.italic = True
+            elif k == "underline":
+                r.underline = True
+            elif k == "link" and SAFE_HREF.match((m.get("attrs") or {}).get("href") or ""):
+                link = m["attrs"]["href"]
+        if link:
+            h = OxmlElement("w:hyperlink")
+            h.set(qn("r:id"), p.part.relate_to(link, RT.HYPERLINK, is_external=True))
+            if self.style("Hyperlink"):
+                rpr = r._r.get_or_add_rPr()
+                rs = OxmlElement("w:rStyle")
+                rs.set(qn("w:val"), "Hyperlink")
+                rpr.insert(0, rs)
+            else:
+                r.underline = True
+                r.font.color.rgb = RGBColor(0x05, 0x63, 0xC1)
+            h.append(r._r)
+            p._p.append(h)
+
+    def table(self, n, ctx) -> None:
+        rows = [r for r in n.get("content") or [] if r.get("type") == "tableRow"]
+        if not rows:
+            return
+        occ, placed, ncols = set(), [], 1
+        for ri, row in enumerate(rows):
+            ci = 0
+            for cell in row.get("content") or []:
+                while (ri, ci) in occ:
+                    ci += 1
+                a = cell.get("attrs") or {}
+                cs, rs = max(int(a.get("colspan") or 1), 1), min(max(int(a.get("rowspan") or 1), 1), len(rows) - ri)
+                occ |= {(ri + dr, ci + dc) for dr in range(rs) for dc in range(cs)}
+                placed.append((ri, ci, cs, rs, cell))
+                ci += cs
+                ncols = max(ncols, ci)
+        t = self.doc.add_table(len(rows), ncols)
+        if s := self.style("TableGrid"):
+            t._tbl.tblPr.style = s
+        if all(c.get("type") == "tableHeader" for c in rows[0].get("content") or [{}]):
+            rpr = t.rows[0]._tr.get_or_add_trPr()
+            rpr.append(OxmlElement("w:tblHeader"))
+        for ri, ci, cs, rs, cell in placed:
+            a = t.cell(ri, ci)
+            m = a.merge(t.cell(ri + rs - 1, ci + cs - 1)) if cs > 1 or rs > 1 else a
+            for p in m._tc.findall(qn("w:p")):
+                m._tc.remove(p)
+            self.nodes(cell.get("content"), m, ctx)
+            if m._tc.find(qn("w:p")) is None:
+                m._tc.append(OxmlElement("w:p"))
+
+    def image(self, a: dict, cont, ctx) -> None:
+        data = self.load_asset(ctx, a.get("imageId"))
+        p = cont.add_paragraph()
+        if not data:
+            self.warn.append(f"image {a.get('imageId')} not found")
+            return
+        with PILImage.open(io.BytesIO(data)) as im:
+            if im.format == "WEBP":  # python-docx can't embed webp
+                b = io.BytesIO()
+                im.convert("RGBA").save(b, "PNG")
+                data = b.getvalue()
+        w = a.get("width")
+        r = p.add_run()
+        shape = r.add_picture(io.BytesIO(data), width=Emu(min(int(w) * 9525, MAX_W)) if isinstance(w, (int, float)) and w > 0 else None)
+        if shape.width > MAX_W:
+            shape.height, shape.width = int(shape.height * MAX_W / shape.width), Emu(MAX_W)
+        dp = r._r.xpath(".//wp:docPr")[0]
+        dp.set("descr", str(a.get("alt") or "")[:200])
+
+    # ---- block-level items of a document ----
+    def heading_block(self, b) -> None:
+        p = self.doc.add_paragraph(b["text"])
+        self.apply_style(p, b.get("styleId"), f"Heading{b['level']}")
+        if b.get("numbered"):
+            _numpr(p, self.num.headings(), b["level"] - 1)
+        elif self.style(f"Heading{b['level']}"):
+            _numpr(p, 0, 0)  # numId 0 switches off numbering the style may carry
+
+    def toc_block(self) -> None:
+        p = self.doc.add_paragraph()
+        add_field(p, 'TOC \\o "1-4" \\h \\z \\u', "Right-click and choose Update Field to build the table of contents.")
+
+    def page_break(self) -> None:
+        from docx.enum.text import WD_BREAK
+        self.doc.add_paragraph().add_run().add_break(WD_BREAK.PAGE)
+
+
+def _drop_template_rows(root) -> None:
+    """docxtpl-style `{%tr for ... %}` ... `{%tr endfor %}` rows: filled in milestone 5, removed until then."""
+    for tbl in root.iter(qn("w:tbl")):
+        skip, kill = False, []
+        for tr in tbl.findall(qn("w:tr")):
+            txt = "".join(t.text or "" for t in tr.iter(qn("w:t")))
+            if "{%tr" in txt and " for " in txt:
+                skip = True
+            if skip:
+                kill.append(tr)
+            if "{%tr" in txt and "endfor" in txt:
+                skip = False
+        for tr in kill:
+            tbl.remove(tr)
+
+
+def _fix_settings(doc) -> None:
+    st = doc.settings.element
+    if st.find(qn("w:updateFields")) is not None:
+        return
+    e = OxmlElement("w:updateFields")
+    e.set(qn("w:val"), "true")
+    nxt = next((c for c in st if c.tag.split("}")[1] in SETTINGS_AFTER), None)
+    nxt.addprevious(e) if nxt is not None else st.append(e)
+
+
+def build(spec: dict, base: bytes, load_content, load_asset) -> tuple[bytes, list]:
+    """load_content(pin) -> (pm_doc, slug)|None; load_asset(pin, slug, image_id) -> bytes|None."""
+    warnings: list = []
+    doc = Document(io.BytesIO(base))
+    body = doc.element.body
+    _drop_template_rows(body)
+    cur: dict = {}
+    b = Builder(doc, lambda c, iid: load_asset(c["pin"], c["slug"], iid), warnings)
+
+    holders = {}
+    for p in body.iter(qn("w:p")):
+        t = "".join(x.text or "" for x in p.iter(qn("w:t"))).strip()
+        if CONTENT_RE.fullmatch(t):
+            holders.setdefault("CONTENT", []).append(p)
+        elif m := SLOT_RE.fullmatch(t):
+            holders.setdefault(m[1], []).append(p)
+    if "CONTENT" not in holders:
+        raise ValueError("base document has no {{ CONTENT }} placeholder")
+    for slot in {x.get("slot", "CONTENT") for x in spec["blocks"]} - set(holders):
+        warnings.append(f"slot '{slot}' not in base document: blocks skipped")
+
+    for slot, ps in holders.items():
+        before = list(body)
+        n0 = len(before) - (body.find(qn("w:sectPr")) is not None)
+        for blk in spec["blocks"]:
+            if blk.get("slot", "CONTENT") != slot:
+                continue
+            if blk["type"] == "snippet_ref":
+                got = load_content(blk["pin"])
+                if not got:
+                    raise ValueError(f"snippet {blk['pin']['snippet_id']} @ {blk['pin']['sha'][:7]} not found")
+                content, slug = got
+                cur.update(pin=blk["pin"], slug=slug)
+                b.nodes((content or {}).get("content"), doc, dict(cur))
+            elif blk["type"] == "heading":
+                b.heading_block(blk)
+            elif blk["type"] == "toc":
+                b.toc_block()
+            elif blk["type"] == "page_break":
+                b.page_break()
+        kids = list(body)
+        new = kids[n0:len(kids) - (body.find(qn("w:sectPr")) is not None)]
+        for el in new:
+            ps[0].addprevious(el)
+        for p in ps:
+            p.getparent().remove(p)
+
+    roots = [body] + [r.target_part.element for r in doc.part.rels.values() if r.reltype in (RT.HEADER, RT.FOOTER)]
+    missing: set = set()
+    render_texts(roots, context(spec), missing, warnings)
+    if missing:
+        warnings.append("undefined variables: " + ", ".join(sorted(missing)))
+    _fix_settings(doc)
+    cp, bi = doc.core_properties, spec["built_ins"]
+    cp.title, cp.author, cp.last_modified_by, cp.revision = bi["doc.title"], bi["author"], bi["author"], 1
+    cp.created = cp.modified = datetime.fromisoformat(bi["doc.date"])
+    out = io.BytesIO()
+    doc.save(out)
+    return stable_zip(out.getvalue()), warnings

@@ -3,7 +3,8 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
 from .db import engine
-from .routers import auth, commits, folders, images, invites, members, orgs, snippets, styles
+from .routers import (auth, base_documents, commits, documents, exports, folders, images, invites, library,
+                      members, orgs, snippets, styles)
 from .security import valid_csrf
 
 app = FastAPI(title="DocGen", docs_url="/api/docs", openapi_url="/api/openapi.json", redoc_url=None)
@@ -19,7 +20,7 @@ async def csrf_guard(request: Request, call_next):
     return await call_next(request)
 
 
-for r in (auth, orgs, members, invites, folders, snippets, commits, styles, images):
+for r in (auth, orgs, members, invites, folders, snippets, commits, styles, images, base_documents, documents, exports, library):
     app.include_router(r.router, prefix="/api")
 
 

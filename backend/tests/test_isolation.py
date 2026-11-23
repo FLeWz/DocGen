@@ -112,7 +112,8 @@ def test_every_org_id_table_has_rls_and_not_null(owner_engine):
             "select c.relname, c.relrowsecurity, col.is_nullable from pg_class c "
             "join information_schema.columns col on col.table_name=c.relname and col.column_name='org_id' "
             "where c.relkind='r' and col.table_schema='public'")).all()
-    assert {r[0] for r in rows} >= {"memberships", "invites", "folders", "snippets", "drafts", "styles", "images"}
+    assert {r[0] for r in rows} >= {"memberships", "invites", "folders", "snippets", "drafts", "styles", "images",
+                              "base_documents", "base_doc_versions", "documents", "document_drafts", "document_refs", "exports"}
     assert all(r[1] and r[2] == "NO" for r in rows), rows
 
 
@@ -134,6 +135,17 @@ COVERED = {  # every API route must be listed: a new endpoint forces a new isola
     "GET /api/snippets/{snippet_id}/diff",  # all covered by test_b_cannot_touch_a_git_objects
     "GET /api/styles", "POST /api/styles", "PATCH /api/styles/{style_pk}", "DELETE /api/styles/{style_pk}",
     "POST /api/images", "GET /api/images/{image_id}",  # covered by test_b_cannot_touch_a_styles_and_images
+    # milestone 4: all covered by test_b_cannot_touch_a_documents / test_b_cannot_touch_a_base_documents
+    "GET /api/base-documents", "POST /api/base-documents", "GET /api/base-documents/{id}",
+    "POST /api/base-documents/{id}/versions", "GET /api/base-documents/{id}/versions",
+    "GET /api/base-documents/{id}/download",
+    "GET /api/documents", "POST /api/documents", "GET /api/documents/{document_id}",
+    "DELETE /api/documents/{document_id}", "PUT /api/documents/{document_id}/draft",
+    "DELETE /api/documents/{document_id}/draft", "GET /api/documents/{document_id}/history",
+    "GET /api/documents/{document_id}/updates", "GET /api/documents/{document_id}/blocks/{block_id}/bump",
+    "POST /api/documents/{document_id}/blocks/{block_id}/bump", "GET /api/documents/{document_id}/export",
+    "GET /api/documents/{document_id}/exports", "GET /api/exports/{export_id}",
+    "GET /api/exports/{export_id}/download", "GET /api/library/snippets", "GET /api/snippets/{snippet_id}/used-by",
 }
 
 
@@ -233,3 +245,77 @@ def test_b_cannot_touch_a_styles_and_images(world):
         {"type": "image", "attrs": {"imageId": img}}]}})
     r = b.post(f"/api/folders/{fo}/commit", json={"message": "m", "snippet_ids": [sid]})
     assert r.status_code == 422
+
+
+def test_b_cannot_touch_a_documents(world):
+    import time
+    from .test_base_docs import make_docx, upload
+    from .test_documents import put, ref
+    from .test_git import commit, mk, save
+    a, b = world["a"], world["b"]
+    fa = a.post("/api/folders", json={"name": "Secret"}).json()["id"]
+    sid = mk(a, fa, "S")
+    save(a, sid, "classified")
+    sha = commit(a, fa, [sid]).json()["sha"]
+    bd = upload(a, make_docx(), "Base").json()
+    did = a.post("/api/documents", json={"folder_id": fa, "title": "Doc"}).json()["id"]
+    blk = put(a, did, [ref(fa, sid, "commit", sha)], base_document={"id": bd["id"]})["blocks"][0]["id"]
+    commit_r = a.post(f"/api/folders/{fa}/commit", json={"message": "d", "document_ids": [did]})
+    assert commit_r.status_code == 201
+    eid = a.get(f"/api/documents/{did}/export").json()["export_id"]
+    for _ in range(100):
+        if a.get(f"/api/exports/{eid}").json()["status"] == "done":
+            break
+        time.sleep(0.1)
+    bfo = b.post("/api/folders", json={"name": "Mine"}).json()["id"]
+    bdoc = b.post("/api/documents", json={"folder_id": bfo, "title": "B doc"}).json()["id"]
+    bsid = mk(b, bfo, "B")
+    save(b, bsid, "mine")
+    commit(b, bfo, [bsid])
+    body = {"blocks": [ref(fa, sid, "commit", sha)]}
+    calls = [
+        ("get", f"/api/base-documents/{bd['id']}", None), ("get", f"/api/base-documents/{bd['id']}/versions", None),
+        ("get", f"/api/base-documents/{bd['id']}/download", None),
+        ("get", f"/api/documents/{did}", None), ("get", f"/api/documents/{did}?version={sha}", None),
+        ("delete", f"/api/documents/{did}", None), ("put", f"/api/documents/{did}/draft", {}),
+        ("delete", f"/api/documents/{did}/draft", None), ("get", f"/api/documents/{did}/history", None),
+        ("get", f"/api/documents/{did}/updates", None), ("get", f"/api/documents/{did}/blocks/{blk}/bump", None),
+        ("post", f"/api/documents/{did}/blocks/{blk}/bump", None), ("get", f"/api/documents/{did}/export", None),
+        ("get", f"/api/documents/{did}/exports", None), ("get", f"/api/exports/{eid}", None),
+        ("get", f"/api/exports/{eid}/download", None), ("get", f"/api/snippets/{sid}/used-by", None),
+        ("post", f"/api/folders/{fa}/commit", {"message": "x", "document_ids": [did]}),
+        ("post", f"/api/folders/{bfo}/commit", {"message": "x", "document_ids": [did]}),  # A's doc into B's folder
+        ("post", "/api/documents", {"folder_id": fa, "title": "x"}),
+        ("put", f"/api/documents/{bdoc}/draft", body),  # B referencing A's snippet
+        ("put", f"/api/documents/{bdoc}/draft", {"base_document": {"id": bd["id"]}}),  # ... or A's base doc
+        ("get", f"/api/styles?base_doc={bd['id']}", None),
+    ]
+    for method, url, jb in calls:
+        r = getattr(b, method)(url, **({"json": jb} if jb is not None else {}))
+        assert r.status_code == 404, (method, url, r.status_code)
+    assert b.get("/api/base-documents").json() == [] and b.get("/api/documents").json()[0]["id"] == bdoc
+    assert [g["folder_name"] for g in b.get("/api/library/snippets").json()] == ["Mine"]  # A's snippets are not in B's library
+    assert b.get(f"/api/documents?folder_id={fa}").json() == []
+    assert a.get(f"/api/documents/{did}/exports").json()[0]["status"] == "done"
+    assert a.get(f"/api/documents/{did}").json()["head_sha"] == commit_r.json()["sha"]
+    # B cannot create a base document that overwrites A's repo/path, and B's _base repo is separate
+    assert b.post("/api/base-documents", data={"name": "B base"}).status_code == 201
+    from app.git import repo as git
+    assert git.base_repo_path(world["a_org"]) != git.base_repo_path(b.get("/api/orgs/current").json()["id"])
+    assert len(a.get("/api/base-documents").json()) == 1
+
+
+def test_rls_blocks_cross_org_document_rows(world):
+    from .test_base_docs import make_docx, upload
+    a = world["a"]
+    fo = a.post("/api/folders", json={"name": "F"}).json()["id"]
+    a.post("/api/documents", json={"folder_id": fo, "title": "D"})
+    upload(a, make_docx())
+    b_org = world["b"].get("/api/orgs/current").json()["id"]
+    with _app_conn() as c:
+        c.execute(text("select set_config('app.org_id', :o, false)"), {"o": b_org})
+        for t in ("documents", "document_drafts", "base_documents", "base_doc_versions", "document_refs", "exports"):
+            assert c.scalar(text(f"select count(*) from {t}")) == 0
+        with pytest.raises(Exception):
+            c.execute(text("insert into base_documents (id, org_id, name) values (gen_random_uuid(), :o, 'x')"),
+                      {"o": world["a_org"]})

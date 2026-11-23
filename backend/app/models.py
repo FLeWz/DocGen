@@ -2,7 +2,7 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, String, UniqueConstraint, func
+from sqlalchemy import DateTime, ForeignKey, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -152,3 +152,84 @@ class Image(OrgScoped, Base):
     height: Mapped[int] = mapped_column()
     created_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     created_at: Mapped[datetime] = _now()
+
+
+class BaseDocument(OrgScoped, Base):
+    """A versioned .docx template; bytes live in /repos/{org}/_base.git at base/{id}.docx."""
+    __tablename__ = "base_documents"
+    id: Mapped[uuid.UUID] = _id()
+    name: Mapped[str] = mapped_column(String(100))
+    created_at: Mapped[datetime] = _now()
+
+
+class BaseDocVersion(OrgScoped, Base):
+    """One upload = one git commit (`sha`). Parsed styles/placeholders are cached here."""
+    __tablename__ = "base_doc_versions"
+    __table_args__ = (UniqueConstraint("base_document_id", "sha"),)
+    id: Mapped[uuid.UUID] = _id()
+    base_document_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("base_documents.id", ondelete="CASCADE"), index=True)
+    sha: Mapped[str] = mapped_column(String(40))
+    number: Mapped[int] = mapped_column()
+    filename: Mapped[str] = mapped_column(String(200))
+    size: Mapped[int] = mapped_column()
+    message: Mapped[str] = mapped_column(String(500), default="")
+    styles: Mapped[list] = mapped_column(JSONB)  # parsed styles.xml, shaped like Style rows
+    placeholders: Mapped[dict] = mapped_column(JSONB)  # {content: bool, slots: [name]}
+    created_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = _now()
+
+
+class Document(OrgScoped, Base):
+    """Index of documents/<slug>.yaml in the folder's repo."""
+    __tablename__ = "documents"
+    __table_args__ = (UniqueConstraint("folder_id", "slug"),)
+    id: Mapped[uuid.UUID] = _id()
+    folder_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("folders.id", ondelete="CASCADE"), index=True)
+    slug: Mapped[str] = mapped_column(String(64))
+    title: Mapped[str] = mapped_column(String(200))
+    head_sha: Mapped[str | None] = mapped_column(String(40))
+    created_at: Mapped[datetime] = _now()
+
+
+class DocDraft(OrgScoped, Base):
+    __tablename__ = "document_drafts"
+    __table_args__ = (UniqueConstraint("document_id", "user_id"),)
+    id: Mapped[uuid.UUID] = _id()
+    document_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("documents.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    title: Mapped[str] = mapped_column(String(200))
+    slug: Mapped[str] = mapped_column(String(64))
+    body: Mapped[dict] = mapped_column(JSONB)  # base_document, blocks, variables, links
+    base_sha: Mapped[str | None] = mapped_column(String(40))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class DocRef(OrgScoped, Base):
+    """'Used by' index: one row per snippet_ref block of every committed document version."""
+    __tablename__ = "document_refs"
+    id: Mapped[uuid.UUID] = _id()
+    document_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("documents.id", ondelete="CASCADE"), index=True)
+    commit_sha: Mapped[str] = mapped_column(String(40))
+    snippet_id: Mapped[uuid.UUID] = mapped_column(index=True)
+    folder_id: Mapped[uuid.UUID] = mapped_column()
+    pin_type: Mapped[str] = mapped_column(String(8))
+    pin_value: Mapped[str | None] = mapped_column(String(64))
+
+
+class Export(OrgScoped, Base):
+    """Export record and job in one row (status queued|running|done|error). `spec` is everything the
+    renderer needs (document snapshot, resolved pins, variables, built-ins) so it can be re-rendered."""
+    __tablename__ = "exports"
+    id: Mapped[uuid.UUID] = _id()
+    document_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("documents.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    format: Mapped[str] = mapped_column(String(8))
+    status: Mapped[str] = mapped_column(String(8), default="queued")
+    error: Mapped[str | None] = mapped_column(Text)
+    warnings: Mapped[list] = mapped_column(JSONB, default=list)
+    pins: Mapped[dict] = mapped_column(JSONB)
+    variables: Mapped[dict] = mapped_column(JSONB)
+    spec: Mapped[dict] = mapped_column(JSONB)
+    sha256: Mapped[str | None] = mapped_column(String(64))
+    created_at: Mapped[datetime] = _now()
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
