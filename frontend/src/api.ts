@@ -29,3 +29,14 @@ export type Member = { user_id: string; email: string; name: string; role: Role 
 export type Invite = { id: string; email: string; role: Role; status: string; expires_at: string; email_sent?: boolean };
 export type Lookup = { org_name: string; email: string; role: Role; status: string; user_exists: boolean };
 export const isAdmin = (r?: Role) => r === "admin" || r === "owner";
+
+export type Folder = { id: string; parent_id: string | null; name: string };
+export type SnippetRow = { id: string; folder_id: string; slug: string; title: string; head_sha: string | null; has_draft: boolean };
+export type Doc = { type: "doc"; content: unknown[] };
+export type Draft = { snippet_id: string; title: string; slug: string; content: Doc; styles: string[]; variables: string[];
+  exists: boolean; base_sha: string | null; head_sha: string | null; conflict: boolean; dirty: boolean };
+export type Commit = { sha: string; author_name: string; author_email: string; date: string; message: string; snippet_ids: string[]; tags: string[] };
+export type Change = { snippet_id: string; slug: string; title: string; status: "new" | "modified"; conflict: boolean; text: string;
+  summary: { added: number; removed: number; changed: number; unchanged: number }; three_way: ThreeWay | null };
+export type ThreeWay = { snippet_id: string; slug: string; base: { content: Doc } | null; theirs: { content: Doc } | null; mine: { content: Doc } };
+export const pretty = (v: unknown) => JSON.stringify(v, null, 2);
