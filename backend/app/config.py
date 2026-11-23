@@ -21,5 +21,7 @@ SMTP_PASSWORD = _e("SMTP_PASSWORD", "")
 SMTP_STARTTLS = _e("SMTP_STARTTLS", "false").lower() == "true"
 SMTP_FROM = _e("SMTP_FROM", "DocGen <noreply@docgen.local>")
 REPOS_ROOT = _e("REPOS_ROOT", "/repos")
+FILES_ROOT = _e("FILES_ROOT", "/files")
+MAX_IMAGE_BYTES = 10 * 1024 * 1024
 SESSION_DAYS = 14
 INVITE_DAYS = 7

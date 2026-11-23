@@ -1,7 +1,9 @@
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel as _B, ConfigDict, EmailStr, Field
+from typing import Literal
+
+from pydantic import BaseModel as _B, ConfigDict, EmailStr, Field, model_validator
 
 
 class BaseModel(_B):
@@ -148,3 +150,53 @@ class CommitIn(BaseModel):
 class TagIn(BaseModel):
     name: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
     sha: str | None = Field(default=None, max_length=64)  # default HEAD
+
+
+Hex = r"^#[0-9a-fA-F]{6}$"
+
+
+class StyleIn(BaseModel):
+    style_id: str = Field(pattern=r"^[A-Za-z][A-Za-z0-9]{0,39}$")
+    name: str = Field(min_length=1, max_length=80)
+    kind: Literal["paragraph", "heading", "character", "table"]
+    level: int | None = Field(default=None, ge=1, le=9)
+    color: str | None = Field(default=None, pattern=Hex)
+    font_size: float | None = Field(default=None, gt=0, le=200)
+    font_family: str | None = Field(default=None, pattern=r"^[A-Za-z0-9 _-]{1,60}$")
+    numbering: Literal["none", "decimal"] = "none"
+    space_before: float = Field(default=0, ge=0, le=200)
+    space_after: float = Field(default=0, ge=0, le=200)
+    bold: bool = False
+    italic: bool = False
+
+    @model_validator(mode="after")
+    def _heading_level(self):
+        if (self.kind == "heading") != (self.level is not None):
+            raise ValueError("level is required for (and only for) heading styles")
+        return self
+
+
+class StylePatchIn(BaseModel):  # style_id/kind are fixed after creation: content references them
+    name: str | None = Field(default=None, min_length=1, max_length=80)
+    level: int | None = Field(default=None, ge=1, le=9)
+    color: str | None = Field(default=None, pattern=Hex)
+    font_size: float | None = Field(default=None, gt=0, le=200)
+    font_family: str | None = Field(default=None, pattern=r"^[A-Za-z0-9 _-]{1,60}$")
+    numbering: Literal["none", "decimal"] | None = None
+    space_before: float | None = Field(default=None, ge=0, le=200)
+    space_after: float | None = Field(default=None, ge=0, le=200)
+    bold: bool | None = None
+    italic: bool | None = None
+
+
+class StyleOut(StyleIn):
+    id: UUID
+    builtin: bool
+
+
+class ImageOut(BaseModel):
+    id: UUID
+    mime: str
+    size: int
+    width: int
+    height: int

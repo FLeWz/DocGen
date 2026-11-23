@@ -119,3 +119,36 @@ class Draft(OrgScoped, Base):
     variables: Mapped[list] = mapped_column(JSONB, default=list)
     base_sha: Mapped[str | None] = mapped_column(String(40))  # snippet head_sha when the draft was started
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class Style(OrgScoped, Base):
+    """Org style set. `style_id` is the stable Word-like key that content nodes reference (attr styleId)."""
+    __tablename__ = "styles"
+    __table_args__ = (UniqueConstraint("org_id", "style_id"),)
+    id: Mapped[uuid.UUID] = _id()
+    style_id: Mapped[str] = mapped_column(String(40))
+    name: Mapped[str] = mapped_column(String(80))
+    kind: Mapped[str] = mapped_column(String(16))  # paragraph | heading | character | table
+    level: Mapped[int | None] = mapped_column()  # headings: 1-9
+    color: Mapped[str | None] = mapped_column(String(7))  # #rrggbb
+    font_size: Mapped[float | None] = mapped_column()  # pt
+    font_family: Mapped[str | None] = mapped_column(String(60))
+    numbering: Mapped[str] = mapped_column(String(8), default="none")  # none | decimal
+    space_before: Mapped[float] = mapped_column(default=0)  # pt
+    space_after: Mapped[float] = mapped_column(default=0)
+    bold: Mapped[bool] = mapped_column(default=False)
+    italic: Mapped[bool] = mapped_column(default=False)
+    builtin: Mapped[bool] = mapped_column(default=False)  # seeded; cannot be deleted
+
+
+class Image(OrgScoped, Base):
+    """Uploaded image; bytes live at FILES_ROOT/{org_id}/images/{id}.{ext} (path derived, never stored)."""
+    __tablename__ = "images"
+    id: Mapped[uuid.UUID] = _id()
+    ext: Mapped[str] = mapped_column(String(4))  # png | jpg | gif | webp
+    mime: Mapped[str] = mapped_column(String(20))
+    size: Mapped[int] = mapped_column()
+    width: Mapped[int] = mapped_column()
+    height: Mapped[int] = mapped_column()
+    created_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = _now()

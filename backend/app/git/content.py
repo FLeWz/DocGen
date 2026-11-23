@@ -16,6 +16,19 @@ def files(snippet_id, v: dict) -> dict[str, str]:
             "meta.yaml": yaml.safe_dump(meta, sort_keys=False, allow_unicode=True)}
 
 
+def image_ids(node) -> list[str]:
+    """imageId of every image node, in document order, unique."""
+    out: list[str] = []
+    def walk(n):
+        if isinstance(n, dict):
+            if n.get("type") == "image" and isinstance(n.get("attrs", {}).get("imageId"), str):
+                out.append(n["attrs"]["imageId"])
+            for c in n.get("content") or []:
+                walk(c)
+    walk(node)
+    return list(dict.fromkeys(out))
+
+
 def version_at(repo, sha: str, snippet_id) -> dict | None:
     slug = git.slug_at(repo, sha, snippet_id)
     if not slug:

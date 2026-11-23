@@ -4,7 +4,8 @@ from sqlalchemy import select
 from ..db import set_ctx
 from ..git import repo as git
 from ..deps import Ctx, org_ctx, require, user_ctx
-from ..models import Membership, Organization, Role
+from .. import styles
+from ..models import Membership, Organization, Role, Style
 from ..schemas import OrgCreateIn, OrgOut, SwitchIn
 from ..scoping import OrgRepo
 from uuid import uuid4
@@ -31,6 +32,7 @@ def create(body: OrgCreateIn, ctx: Ctx = Depends(user_ctx)):
     ctx.db.add(Organization(id=org_id, name=body.name))
     ctx.db.flush()
     OrgRepo(ctx.db, Membership, org_id).add(user_id=ctx.user.id, role=Role.owner.value)
+    styles.seed(OrgRepo(ctx.db, Style, org_id))
     ctx.auth.active_org_id = org_id
     ctx.db.commit()
     return OrgOut(id=org_id, name=body.name, role=Role.owner)

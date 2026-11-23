@@ -8,7 +8,8 @@ from sqlalchemy.exc import IntegrityError
 from .. import vcs
 from ..deps import Ctx, require
 from ..git import content as C, repo as git
-from ..models import Draft, Folder, Role, Snippet
+from ..files import image_path
+from ..models import Draft, Folder, Image, Role, Snippet
 from ..schemas import CommitIn
 
 router = APIRouter(tags=["commits"])
@@ -55,6 +56,14 @@ def commit(folder_id: UUID, body: CommitIn, ctx: Ctx = Depends(require(Role.edit
             moves.append((f"snippets/{s.slug}", f"snippets/{d.slug}"))
         for name, text in C.files(s.id, vcs.dver(d)).items():
             writes[f"snippets/{d.slug}/{name}"] = text.encode()
+        for iid in C.image_ids(d.content):  # embed referenced images so the repo is self-contained
+            try:
+                img = ctx.repo(Image).get(UUID(iid))
+            except ValueError:
+                img = None
+            if not img:
+                raise HTTPException(422, f"unknown image {iid}")
+            writes[f"snippets/{d.slug}/assets/{img.id}.{img.ext}"] = image_path(ctx.org_id, img.id, img.ext).read_bytes()
     msg = re.sub(r"^Snippet-Id:.*$", "", body.message, flags=re.M).strip()  # trailers are server-written only
     if not msg:
         raise HTTPException(422, "empty message")

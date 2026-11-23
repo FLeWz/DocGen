@@ -9,7 +9,8 @@ from sqlalchemy.orm import Session
 from .. import config
 from ..db import get_db, set_ctx
 from ..deps import SESSION_COOKIE, Ctx, optional_ctx, user_ctx
-from ..models import AuthSession, Membership, Organization, Role, User
+from .. import styles
+from ..models import AuthSession, Membership, Organization, Role, Style, User
 from ..schemas import LoginIn, MeOut, OrgOut, SignupIn
 from ..scoping import OrgRepo
 from ..security import DUMMY_HASH, hash_pw, make_csrf, new_token, sha, valid_csrf, verify_pw
@@ -55,6 +56,7 @@ def signup(body: SignupIn, response: Response, db: Session = Depends(get_db)):
         db.add(Organization(id=org_id, name=body.org_name))
         db.flush()
         OrgRepo(db, Membership, org_id).add(user_id=user.id, role=Role.owner.value)
+        styles.seed(OrgRepo(db, Style, org_id))
         start_session(db, response, user, org_id)
         db.commit()
     except IntegrityError:

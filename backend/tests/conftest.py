@@ -14,6 +14,7 @@ os.environ["DATABASE_URL"] = APP_URL.render_as_string(hide_password=False)
 
 import tempfile  # noqa: E402
 os.environ["REPOS_ROOT"] = tempfile.mkdtemp(prefix="repos-")  # never the real /repos volume
+os.environ["FILES_ROOT"] = tempfile.mkdtemp(prefix="files-")
 
 import pytest  # noqa: E402
 from alembic import command  # noqa: E402

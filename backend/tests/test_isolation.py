@@ -112,7 +112,7 @@ def test_every_org_id_table_has_rls_and_not_null(owner_engine):
             "select c.relname, c.relrowsecurity, col.is_nullable from pg_class c "
             "join information_schema.columns col on col.table_name=c.relname and col.column_name='org_id' "
             "where c.relkind='r' and col.table_schema='public'")).all()
-    assert {r[0] for r in rows} >= {"memberships", "invites", "folders", "snippets", "drafts"}
+    assert {r[0] for r in rows} >= {"memberships", "invites", "folders", "snippets", "drafts", "styles", "images"}
     assert all(r[1] and r[2] == "NO" for r in rows), rows
 
 
@@ -132,6 +132,8 @@ COVERED = {  # every API route must be listed: a new endpoint forces a new isola
     "DELETE /api/snippets/{snippet_id}/draft", "POST /api/snippets/{snippet_id}/resolve",
     "POST /api/snippets/{snippet_id}/restore", "GET /api/snippets/{snippet_id}/history",
     "GET /api/snippets/{snippet_id}/diff",  # all covered by test_b_cannot_touch_a_git_objects
+    "GET /api/styles", "POST /api/styles", "PATCH /api/styles/{style_pk}", "DELETE /api/styles/{style_pk}",
+    "POST /api/images", "GET /api/images/{image_id}",  # covered by test_b_cannot_touch_a_styles_and_images
 }
 
 
@@ -211,3 +213,23 @@ def test_rls_blocks_cross_org_git_index_rows(world):
         with pytest.raises(Exception):
             c.execute(text("insert into folders (id, org_id, name) values (gen_random_uuid(), :o, 'x')"),
                       {"o": world["a_org"]})
+
+
+def test_b_cannot_touch_a_styles_and_images(world):
+    from .test_editor import PNG
+    a, b = world["a"], world["b"]
+    a_style = next(s for s in a.get("/api/styles").json() if s["style_id"] == "Heading1")["id"]
+    img = a.post("/api/images", files={"file": ("x.png", PNG, "image/png")}).json()["id"]
+    assert b.get(f"/api/images/{img}").status_code == 404
+    assert b.patch(f"/api/styles/{a_style}", json={"name": "pwned"}).status_code == 404
+    assert b.delete(f"/api/styles/{a_style}").status_code == 404
+    assert {s["id"] for s in a.get("/api/styles").json()} .isdisjoint({s["id"] for s in b.get("/api/styles").json()})
+    assert len(b.get("/api/styles").json()) == len(a.get("/api/styles").json())  # each org has its own seeded set
+    assert next(s for s in a.get("/api/styles").json() if s["id"] == a_style)["name"] == "Heading 1"
+    # B cannot embed A's image into its own commit (404-like: unknown image)
+    fo = b.post("/api/folders", json={"name": "F"}).json()["id"]
+    sid = b.post(f"/api/folders/{fo}/snippets", json={"title": "S"}).json()["id"]
+    b.put(f"/api/snippets/{sid}/draft", json={"content": {"type": "doc", "content": [
+        {"type": "image", "attrs": {"imageId": img}}]}})
+    r = b.post(f"/api/folders/{fo}/commit", json={"message": "m", "snippet_ids": [sid]})
+    assert r.status_code == 422
