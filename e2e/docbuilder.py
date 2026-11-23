@@ -4,6 +4,8 @@ Snippet in folder A -> document in folder B pinned to v1 -> snippet gets v2 -> '
 Signs up a throwaway user; leaves its org behind in the dev DB."""
 import os
 import secrets
+import shutil
+import subprocess
 import zipfile
 
 from playwright.sync_api import expect, sync_playwright
@@ -110,6 +112,24 @@ with sync_playwright() as pw:
         page.get_by_role("button", name="Apply bump").click()
         expect(page.get_by_test_id("badge-update")).to_have_count(0)
 
+        # variables: a declared variable without value/default blocks the export and is listed
+        page.get_by_placeholder("New variable name").fill("owner")
+        page.get_by_role("button", name="Add", exact=True).click()
+        page.get_by_role("button", name="Download DOCX").click()
+        expect(page.get_by_test_id("missing-vars")).to_contain_text("owner")
+        page.get_by_label("Value of owner").fill("Zed")
+        # list variable with columns and rows (the editor of list-of-objects values)
+        page.get_by_placeholder("New variable name").fill("team")
+        page.get_by_label("New variable type").select_option("list")
+        page.get_by_role("button", name="Add", exact=True).click()
+        page.get_by_label("Columns of team").fill("name, qty")
+        page.get_by_label("Columns of team").blur()
+        page.get_by_role("button", name="+ Row").first.click()
+        page.get_by_label("team 1 name").fill("Ann")
+        expect(page.get_by_label("team 1 qty")).to_be_visible()
+        expect(page.get_by_test_id("revision-history").get_by_label("Revision 2 message")).to_have_value("doc v1")  # oldest first: v1, doc v1, v2
+        expect(page.get_by_test_id("doc-save-status")).to_have_attribute("data-status", "saved")
+
         # download DOCX (background job, UI polls)
         with page.expect_download(timeout=60_000) as dl:
             page.get_by_role("button", name="Download DOCX").click()
@@ -119,6 +139,17 @@ with sync_playwright() as pw:
         xml = zipfile.ZipFile(path).read("word/document.xml").decode()
         assert "Version one text and version two" in xml, "bumped content missing in DOCX"
         assert "{{ CONTENT }}" not in xml
+        assert "doc v1" in xml, "revision history row missing in DOCX"  # default base, filled from the git log
+
+        # download PDF through the same job flow (Gotenberg)
+        with page.expect_download(timeout=120_000) as dl:
+            page.get_by_role("button", name="Download PDF").click()
+        pdf = os.path.join(ART, "manual.pdf")
+        dl.value.save_as(pdf)
+        assert open(pdf, "rb").read(5) == b"%PDF-", "not a PDF"
+        if shutil.which("pdftotext"):
+            txt = subprocess.run(["pdftotext", pdf, "-"], capture_output=True, text=True, check=True).stdout
+            assert "Version one text and version two" in txt and "doc v1" in txt, txt[:500]
         print("e2e docbuilder OK")
     except Exception:
         os.makedirs(ART, exist_ok=True)
