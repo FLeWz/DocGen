@@ -12,8 +12,9 @@ export async function api<T = unknown>(path: string, method = "GET", body?: unkn
     if (!readCookie("docgen_csrf")) await fetch("/api/auth/csrf");
     headers["X-CSRF-Token"] = readCookie("docgen_csrf") ?? "";
   }
-  if (body !== undefined) headers["Content-Type"] = "application/json";
-  const r = await fetch("/api" + path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
+  const form = body instanceof FormData; // multipart: the browser sets the boundary header
+  if (body !== undefined && !form) headers["Content-Type"] = "application/json";
+  const r = await fetch("/api" + path, { method, headers, body: body === undefined ? undefined : form ? body : JSON.stringify(body) });
   if (!r.ok) {
     const d = (await r.json().catch(() => ({}))).detail;
     throw new ApiError(r.status, typeof d === "string" ? d : Array.isArray(d) ? d.map((e) => e.msg).join("; ") : r.statusText);
@@ -32,7 +33,10 @@ export const isAdmin = (r?: Role) => r === "admin" || r === "owner";
 
 export type Folder = { id: string; parent_id: string | null; name: string };
 export type SnippetRow = { id: string; folder_id: string; slug: string; title: string; head_sha: string | null; has_draft: boolean };
-export type Doc = { type: "doc"; content: unknown[] };
+export type Doc = { type: "doc"; content?: unknown[] };
+export type Style = { id: string; style_id: string; name: string; kind: "paragraph" | "heading" | "character" | "table"; level: number | null;
+  color: string | null; font_size: number | null; font_family: string | null; numbering: "none" | "decimal";
+  space_before: number; space_after: number; bold: boolean; italic: boolean; builtin: boolean };
 export type Draft = { snippet_id: string; title: string; slug: string; content: Doc; styles: string[]; variables: string[];
   exists: boolean; base_sha: string | null; head_sha: string | null; conflict: boolean; dirty: boolean };
 export type Commit = { sha: string; author_name: string; author_email: string; date: string; message: string; snippet_ids: string[]; tags: string[] };

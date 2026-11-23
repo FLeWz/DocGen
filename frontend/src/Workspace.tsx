@@ -1,6 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
-import { api, Change, Commit, Draft, Folder, Me, pretty, SnippetRow, ThreeWay } from "./api";
+import { useState } from "react";
+import { api, Change, Commit, Folder, Me, pretty, SnippetRow, Style, ThreeWay } from "./api";
+import { PMNode } from "./editor/doc";
+import { Preview, SnippetEditor, useStyles } from "./editor/SnippetEditor";
 
 const Err = ({ e }: { e: unknown }) => (e ? <p role="alert" style={{ color: "crimson" }}>{(e as Error).message}</p> : null);
 const short = (s: string | null) => (s ? s.slice(0, 7) : "—");
@@ -20,47 +22,18 @@ function Tree({ folders, parent, sel, onSel }: { folders: Folder[]; parent: stri
   );
 }
 
-function Editor({ id, folder, me, onClose }: { id: string; folder: string; me: Me; onClose: () => void }) {
-  const qc = useQueryClient();
-  const d = useQuery({ queryKey: ["draft", id], queryFn: () => api<Draft>(`/snippets/${id}/draft`) });
-  const [title, setTitle] = useState(""), [text, setText] = useState(""), [err, setErr] = useState("");
-  const loaded = useRef("");
-  useEffect(() => { // reload the form only when the server draft changes identity (restore/discard/resolve), not per autosave
-    if (!d.data) return;
-    const k = [id, d.data.base_sha, d.data.exists, d.data.conflict, d.data.head_sha].join();
-    if (loaded.current !== k) { loaded.current = k; setTitle(d.data.title); setText(pretty(d.data.content)); }
-  }, [d.data, id]);
-  const save = useMutation({
-    mutationFn: () => {
-      let content; try { content = JSON.parse(text); } catch { throw new Error("content is not valid JSON"); }
-      return api<Draft>(`/snippets/${id}/draft`, "PUT", { title, content });
-    },
-    onSuccess: (r) => { setErr(""); qc.setQueryData(["draft", id], r); qc.invalidateQueries({ queryKey: ["changes"] }); },
-    onError: (e) => setErr((e as Error).message),
-  });
-  const timer = useRef<number>();
-  const autosave = () => { clearTimeout(timer.current); timer.current = window.setTimeout(() => save.mutate(), 800); };
-  const discard = useMutation({
-    mutationFn: () => api(`/snippets/${id}/draft`, "DELETE"),
-    onSuccess: () => { loaded.current = ""; qc.invalidateQueries(); },
-  });
-  const ro = !canEdit(me);
+function Editor({ id, folder, me, onClose, onCommit }: { id: string; folder: string; me: Me; onClose: () => void; onCommit: () => void }) {
+  const [epoch, setEpoch] = useState(0); // bumped after restore so the editor reloads the new draft
   return (
     <section>
       <h3>Edit snippet <button onClick={onClose}>Close</button></h3>
-      {d.data?.conflict && <p role="alert" style={{ color: "darkorange" }}>HEAD moved since your draft started — resolve it on the commit tab.</p>}
-      <p><input value={title} disabled={ro} onChange={(e) => { setTitle(e.target.value); autosave(); }} aria-label="Title" /></p>
-      <textarea value={text} disabled={ro} rows={14} cols={80} style={{ fontFamily: "monospace" }} aria-label="Content JSON"
-        onChange={(e) => { setText(e.target.value); autosave(); }} />
-      <p>{save.isPending ? "saving…" : d.data?.dirty ? "draft saved" : "no changes"} · base {short(d.data?.base_sha ?? null)}{" "}
-        {!ro && <button onClick={() => confirm("Discard your draft?") && discard.mutate()}>Discard draft</button>}</p>
-      <Err e={err || d.error || discard.error} />
-      <SnippetHistory id={id} folder={folder} me={me} />
+      <SnippetEditor id={id} me={me} epoch={epoch} onCommit={onCommit} />
+      <SnippetHistory id={id} folder={folder} me={me} onRestored={() => setEpoch((e) => e + 1)} />
     </section>
   );
 }
 
-function SnippetHistory({ id, folder, me }: { id: string; folder: string; me: Me }) {
+function SnippetHistory({ id, folder, me, onRestored }: { id: string; folder: string; me: Me; onRestored: () => void }) {
   const qc = useQueryClient();
   const h = useQuery({ queryKey: ["shist", id], queryFn: () => api<Commit[]>(`/snippets/${id}/history`) });
   const [from, setFrom] = useState(""), [to, setTo] = useState("");
@@ -70,7 +43,7 @@ function SnippetHistory({ id, folder, me }: { id: string; folder: string; me: Me
   });
   const restore = useMutation({
     mutationFn: (v: string) => api(`/snippets/${id}/restore`, "POST", { version: v }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["draft", id] }); qc.invalidateQueries({ queryKey: ["changes", folder] }); },
+    onSuccess: async () => { qc.invalidateQueries({ queryKey: ["changes", folder] }); await qc.refetchQueries({ queryKey: ["draft", id] }); onRestored(); },
   });
   return (
     <div>
@@ -92,7 +65,7 @@ function SnippetHistory({ id, folder, me }: { id: string; folder: string; me: Me
   );
 }
 
-function Conflict({ c, onDone }: { c: ThreeWay; onDone: () => void }) {
+function Conflict({ c, onDone, styles }: { c: ThreeWay; onDone: () => void; styles: Style[] }) {
   const [text, setText] = useState(pretty(c.mine.content));
   const res = useMutation({
     mutationFn: () => api(`/snippets/${c.snippet_id}/resolve`, "POST", { content: JSON.parse(text) }),
@@ -103,7 +76,7 @@ function Conflict({ c, onDone }: { c: ThreeWay; onDone: () => void }) {
       <b>Conflict: {c.slug}</b>
       <div style={{ display: "flex", gap: 8 }}>
         {([["Base", c.base?.content], ["Theirs (HEAD)", c.theirs?.content]] as const).map(([n, v]) =>
-          <div key={n}><i>{n}</i><pre>{v ? pretty(v) : "(none)"}</pre></div>)}
+          <div key={n} style={{ flex: 1 }}><i>{n}</i>{v ? <Preview doc={v as PMNode} styles={styles} small /> : <pre>(none)</pre>}</div>)}
         <div><i>Resolved (edit; starts from mine)</i><br /><textarea rows={12} cols={50} value={text} onChange={(e) => setText(e.target.value)} /></div>
       </div>
       <button onClick={() => res.mutate()}>Use resolved content</button>
@@ -114,6 +87,7 @@ function Conflict({ c, onDone }: { c: ThreeWay; onDone: () => void }) {
 
 function CommitTab({ folder, me }: { folder: string; me: Me }) {
   const qc = useQueryClient();
+  const styles = useStyles(me).data ?? [];
   const ch = useQuery({ queryKey: ["changes", folder], queryFn: () => api<Change[]>(`/folders/${folder}/changes`) });
   const [picked, setPicked] = useState<Set<string>>(new Set()), [msg, setMsg] = useState("");
   const refresh = () => qc.invalidateQueries();
@@ -131,7 +105,7 @@ function CommitTab({ folder, me }: { folder: string; me: Me }) {
         <div key={c.snippet_id}>
           <label><input type="checkbox" checked={picked.has(c.snippet_id)} onChange={() => toggle(c.snippet_id)} />{" "}
             <b>{c.title}</b> ({c.status}{c.conflict ? ", CONFLICT" : ""}) +{c.summary.added} −{c.summary.removed} ~{c.summary.changed} blocks</label>
-          {c.three_way ? <Conflict c={c.three_way} onDone={refresh} /> : <pre style={{ maxHeight: 200, overflow: "auto" }}>{c.text}</pre>}
+          {c.three_way ? <Conflict c={c.three_way} onDone={refresh} styles={styles} /> : <pre style={{ maxHeight: 200, overflow: "auto" }}>{c.text}</pre>}
         </div>
       ))}
       {canEdit(me) && <p><input placeholder="Commit message" value={msg} onChange={(e) => setMsg(e.target.value)} size={50} />{" "}
@@ -183,7 +157,7 @@ function FolderView({ folder, me }: { folder: Folder; me: Me }) {
       <h2>{folder.name}</h2>
       <nav>{(["snippets", "commit", "history"] as const).map((t) =>
         <button key={t} disabled={tab === t} onClick={() => setTab(t)}>{t}</button>)}</nav>
-      {tab === "snippets" && (open ? <Editor id={open} folder={folder.id} me={me} onClose={() => setOpen(null)} /> : (
+      {tab === "snippets" && (open ? <Editor id={open} folder={folder.id} me={me} onClose={() => setOpen(null)} onCommit={() => setTab("commit")} /> : (
         <section>
           <p><input placeholder="Search" value={q} onChange={(e) => setQ(e.target.value)} /></p>
           <ul>{list.data?.map((s) => (

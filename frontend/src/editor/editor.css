@@ -1,0 +1,22 @@
+.ed-wrap { display: flex; gap: 16px; align-items: flex-start; }
+.ed-wrap > div { flex: 1; min-width: 0; }
+.ed-tb { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; align-items: center; }
+.ed-tb button.on { background: #cfe3ff; }
+.ProseMirror { min-height: 320px; border: 1px solid #bbb; padding: 8px 12px; background: #fff; }
+.ProseMirror table, .page table { border-collapse: collapse; width: 100%; }
+.ProseMirror td, .ProseMirror th, .page td, .page th { border: 1px solid #888; padding: 3px 6px; vertical-align: top; min-width: 2em; }
+.ProseMirror .selectedCell { background: #cfe3ff; }
+.ProseMirror table[data-dynamic-list] { outline: 2px dashed #7a5af8; }
+.ProseMirror img, .page img { max-width: 100%; }
+.var-chip { background: #ece6ff; color: #4b2db8; border-radius: 4px; padding: 0 4px; font-family: monospace; font-size: .9em; }
+.ProseMirror .ProseMirror-selectednode.var-chip { outline: 2px solid #4b2db8; }
+.page-scroll { background: #e8e8e8; padding: 12px; overflow: auto; max-height: 75vh; }
+/* A4 with 2.5 cm margins, scaled down to fit the pane */
+.page { width: 21cm; min-height: 29.7cm; box-sizing: border-box; padding: 2.5cm; background: #fff; box-shadow: 0 1px 6px #0004;
+  zoom: .55; font-family: Calibri, Carlito, sans-serif; font-size: 11pt; margin: 0 auto; }
+.page.small { zoom: .35; min-height: 0; }
+.page p { margin: 0 0 8pt; }
+.page .num { margin-right: .4em; }
+.page .dyn-badge { font-size: 9pt; color: #7a5af8; }
+.page tr.tpl { background: #f4f0ff; }
+.page ul, .page ol { margin: 0 0 8pt; }
