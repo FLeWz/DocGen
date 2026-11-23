@@ -4,3 +4,7 @@ __pycache__/
 .pytest_cache/
 node_modules/
 frontend/dist/
+.venv/
+.playwright/
+.chrome-profile/
+e2e-artifacts/
