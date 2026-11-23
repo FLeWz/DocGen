@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { FormEvent, useState } from "react";
 import { BaseDocs } from "./BaseDocs";
+import { Imports } from "./Import";
 import { Workspace } from "./Workspace";
 import { api, ApiError, Invite, isAdmin, Lookup, Me, Member, Org, ROLES, Role } from "./api";
 
@@ -117,6 +118,7 @@ function Dashboard({ me }: { me: Me }) {
       {me.org && <>
         <h1>{me.org.name}</h1>
         <Workspace me={me} />
+        <Imports me={me} />
         <BaseDocs me={me} />
         <Members me={me} />
         {isAdmin(me.org.role) && <Invites me={me} />}

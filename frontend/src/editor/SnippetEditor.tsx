@@ -2,8 +2,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Editor } from "@tiptap/core";
 import { NodeSelection } from "@tiptap/pm/state";
 import { EditorContent, useEditor, useEditorState } from "@tiptap/react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, Draft, Me, Style } from "../api";
+import { ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { api, Doc, Draft, Me, Style } from "../api";
 import { effectiveStyle, extractStyles, extractVariables, NAME_RE, PMNode } from "./doc";
 import "./editor.css";
 import { extensions } from "./extensions";
@@ -20,10 +20,17 @@ export function Preview({ doc, styles, small }: { doc: PMNode | null | undefined
 type VForm = { name: string; default: string; kind: "" | "upper" | "date"; format: string; existing: boolean };
 type Status = "idle" | "saving" | "saved" | "error";
 
-export function SnippetEditor({ id, me, epoch, onCommit }: { id: string; me: Me; epoch: number; onCommit: () => void }) {
+export type EditorData = { title: string; content: Doc };
+export type SaveBody = { title?: string; content: PMNode; styles: string[]; variables: string[] };
+
+/** TipTap editor + toolbar + preview over any document source (snippet draft, imported DOCX). Saves are debounced 800 ms. */
+export function RichEditor({ qkey, load, save, keyOf, me, idleSaved, banner, actions, onSaved }: {
+  qkey: unknown[]; load: () => Promise<EditorData>; save: (b: SaveBody) => Promise<EditorData>; keyOf: (d: EditorData) => string; me: Me;
+  idleSaved?: boolean; banner?: ReactNode; actions?: (h: { editor: Editor; flush: () => Promise<unknown> }) => ReactNode; onSaved?: () => void;
+}) {
   const qc = useQueryClient();
   const ro = me.org?.role === "viewer";
-  const d = useQuery({ queryKey: ["draft", id], queryFn: () => api<Draft>(`/snippets/${id}/draft`) });
+  const d = useQuery({ queryKey: qkey, queryFn: load });
   const styles = useStyles(me).data ?? [];
   const [doc, setDoc] = useState<PMNode>({ type: "doc" });
   const [title, setTitle] = useState("");
@@ -41,12 +48,11 @@ export function SnippetEditor({ id, me, epoch, onCommit }: { id: string; me: Me;
     pending.current = false;
     const content = ed.getJSON() as PMNode, t = titleRef.current;
     setStatus("saving");
-    chain.current = chain.current.then(() => api<Draft>(`/snippets/${id}/draft`, "PUT",
-      { title: t || undefined, content, styles: extractStyles(content), variables: extractVariables(content) }))
-      .then((r) => { setErr(""); qc.setQueryData(["draft", id], r); qc.invalidateQueries({ queryKey: ["changes"] }); setStatus(pending.current ? "saving" : "saved"); })
+    chain.current = chain.current.then(() => save({ title: t || undefined, content, styles: extractStyles(content), variables: extractVariables(content) }))
+      .then((r) => { setErr(""); qc.setQueryData(qkey, r); onSaved?.(); setStatus(pending.current ? "saving" : "saved"); })
       .catch((e: Error) => { pending.current = true; setErr(e.message); setStatus("error"); });
     return chain.current;
-  }, [id, qc]);
+  }, [qkey.join(), qc]); // eslint-disable-line react-hooks/exhaustive-deps
   const touch = useCallback(() => { pending.current = true; setStatus("saving"); window.clearTimeout(timer.current); timer.current = window.setTimeout(flush, 800); }, [flush]);
 
   const editor = useEditor({
@@ -61,18 +67,13 @@ export function SnippetEditor({ id, me, epoch, onCommit }: { id: string; me: Me;
   const loaded = useRef("");
   useEffect(() => {
     if (!d.data || !editor) return;
-    const k = [id, epoch, d.data.base_sha, d.data.conflict, d.data.head_sha].join();
+    const k = keyOf(d.data);
     if (loaded.current === k) return;
     loaded.current = k;
     editor.commands.setContent(d.data.content as any, { emitUpdate: false });
     titleRef.current = d.data.title; setTitle(d.data.title);
     setDoc(editor.getJSON() as PMNode); pending.current = false; setStatus("idle");
-  }, [d.data, editor, id, epoch]);
-
-  const discard = useMutation({
-    mutationFn: () => api(`/snippets/${id}/draft`, "DELETE"),
-    onSuccess: async () => { pending.current = false; await qc.invalidateQueries(); loaded.current = ""; setErr(""); },
-  });
+  }, [d.data, editor, keyOf]);
 
   const st = useEditorState({
     editor, selector: ({ editor: e }) => {
@@ -144,12 +145,11 @@ export function SnippetEditor({ id, me, epoch, onCommit }: { id: string; me: Me;
       <p>
         <input value={title} disabled={ro} aria-label="Title" onChange={(e) => { setTitle(e.target.value); titleRef.current = e.target.value; touch(); }} />{" "}
         <span data-testid="save-status" data-status={status} role="status" style={{ color: status === "error" ? "crimson" : undefined }}>
-          {status === "idle" && d.data?.dirty ? "draft saved" : label}</span>
+          {status === "idle" && idleSaved ? "draft saved" : label}</span>
         {status === "error" && <> <button onClick={() => flush()}>Retry</button></>}{" "}
-        <button onClick={async () => { await flush(); onCommit(); }}>Commit…</button>{" "}
-        {!ro && <button onClick={() => confirm("Discard your draft?") && discard.mutate()}>Discard draft</button>}
+        {actions?.({ editor, flush })}
       </p>
-      {d.data?.conflict && <p role="alert" style={{ color: "darkorange" }}>HEAD moved since your draft started — resolve it on the commit tab.</p>}
+      {banner}
       <div className="ed-tb">
         <select aria-label="Paragraph style" disabled={ro} value={st?.style ?? "Normal"} onChange={(e) => applyStyle(e.target.value)}>
           {styles.filter((s) => s.kind === "paragraph" || s.kind === "heading").map((s) => <option key={s.style_id} value={s.style_id}>{s.name}</option>)}
@@ -191,7 +191,32 @@ export function SnippetEditor({ id, me, epoch, onCommit }: { id: string; me: Me;
         <div><Preview doc={doc} styles={styles} /></div>
       </div>
       <p><small>Styles: {extractStyles(doc).join(", ") || "—"} · Variables: {extractVariables(doc).join(", ") || "—"}</small></p>
-      {discard.error && <p role="alert" style={{ color: "crimson" }}>{(discard.error as Error).message}</p>}
     </section>
+  );
+}
+
+export function SnippetEditor({ id, me, epoch, onCommit }: { id: string; me: Me; epoch: number; onCommit: () => void }) {
+  const qc = useQueryClient();
+  const [bump, setBump] = useState(0); // forces a reload after discarding the draft
+  const qkey = useMemo(() => ["draft", id], [id]);
+  const d = useQuery({ queryKey: qkey, queryFn: () => api<Draft>(`/snippets/${id}/draft`) }).data;
+  const discard = useMutation({
+    mutationFn: () => api(`/snippets/${id}/draft`, "DELETE"),
+    onSuccess: async () => { await qc.invalidateQueries(); setBump((b) => b + 1); },
+  });
+  return (
+    <>
+      <RichEditor qkey={qkey} me={me} idleSaved={d?.dirty}
+        load={() => api<Draft>(`/snippets/${id}/draft`)}
+        save={(b) => api<Draft>(`/snippets/${id}/draft`, "PUT", b)}
+        keyOf={(x) => { const y = x as Draft; return [id, epoch, bump, y.base_sha, y.conflict, y.head_sha].join(); }}
+        onSaved={() => qc.invalidateQueries({ queryKey: ["changes"] })}
+        banner={d?.conflict && <p role="alert" style={{ color: "darkorange" }}>HEAD moved since your draft started — resolve it on the commit tab.</p>}
+        actions={({ flush }) => <>
+          <button onClick={async () => { await flush(); onCommit(); }}>Commit…</button>{" "}
+          {me.org?.role !== "viewer" && <button onClick={() => confirm("Discard your draft?") && discard.mutate()}>Discard draft</button>}
+        </>} />
+      {discard.error && <p role="alert" style={{ color: "crimson" }}>{(discard.error as Error).message}</p>}
+    </>
   );
 }

@@ -73,6 +73,7 @@ export function contentToHtml(doc: PMNode | null | undefined, styles: Style[]): 
         const a = n.attrs ?? {}, w = Number(a.width);
         return `<img class="img" src="/api/images/${esc(encodeURIComponent(a.imageId ?? ""))}" alt="${esc(a.alt)}"${w > 0 ? ` style="width:${w}px"` : ""}>`;
       }
+      case "opaque": return `<div class="opaque-chip" title="Not editable: kept as-is in the exported DOCX">⬚ ${esc(n.attrs?.kind ?? "unknown")}</div>`;
       default: return kids(n, inList);
     }
   }

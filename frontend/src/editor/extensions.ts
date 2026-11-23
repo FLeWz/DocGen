@@ -1,7 +1,7 @@
 // TipTap schema. Custom attrs (see docs/DECISIONS.md "Content JSON shapes"):
 //   paragraph {styleId|null}  heading {level, styleId|null}  table {dynamicList|null}
 //   variable (inline atom) {name, default, filter|null}  image (block atom) {imageId, alt, width|null}
-import { Node, mergeAttributes } from "@tiptap/core";
+import { Extension, Node, mergeAttributes } from "@tiptap/core";
 import Heading from "@tiptap/extension-heading";
 import Paragraph from "@tiptap/extension-paragraph";
 import { Table, TableCell, TableHeader, TableRow } from "@tiptap/extension-table";
@@ -34,6 +34,26 @@ export const ImageNode = Node.create({
     ...(node.attrs.width ? { style: `width:${+node.attrs.width}px` } : {}) })],
 });
 
+// Anything the importer could not map: raw OOXML of the whole block, shown as a grey chip, written back verbatim.
+export const Opaque = Node.create({
+  name: "opaque", group: "block", atom: true, selectable: true, draggable: true,
+  addAttributes() { return { kind: attr("kind", "data-kind", "unknown"), xml: attr("xml", "data-xml", "") }; },
+  parseHTML: () => [{ tag: "div[data-opaque]" }],
+  renderHTML: ({ node, HTMLAttributes }) => ["div", mergeAttributes(HTMLAttributes, { "data-opaque": "", class: "opaque-chip", contenteditable: "false", title: "Not editable: kept as-is in the exported DOCX" }), `⬚ ${node.attrs.kind}`],
+});
+
+// Imported-DOCX bookkeeping that must survive editing (never shown): Word list ids, table properties and column grid.
+const hidden = (def: unknown = null) => ({ default: def, rendered: false });
+export const ImportAttrs = Extension.create({
+  name: "importAttrs",
+  addGlobalAttributes() {
+    return [
+      { types: ["bulletList", "orderedList"], attributes: { numId: hidden() } },
+      { types: ["table"], attributes: { styleId: hidden(), tblPr: hidden(), grid: hidden() } },
+    ];
+  },
+});
+
 export const extensions = [
   StarterKit.configure({ paragraph: false, heading: false, blockquote: false, codeBlock: false, code: false, strike: false,
     horizontalRule: false, link: { openOnClick: false } }),
@@ -43,5 +63,5 @@ export const extensions = [
   }),
   Table.extend({ addAttributes() { return { ...this.parent?.(), dynamicList: attr("dynamicList", "data-dynamic-list") }; } })
     .configure({ resizable: false }),
-  TableRow, TableHeader, TableCell, Variable, ImageNode,
+  TableRow, TableHeader, TableCell, Variable, ImageNode, Opaque, ImportAttrs,
 ];

@@ -67,3 +67,10 @@ test("empty doc and unknown nodes do not throw", () => {
   expect(contentToHtml(null, styles)).toBe("");
   expect(contentToHtml(doc({ type: "mystery", content: [{ type: "paragraph" }] }), styles)).toContain("<p");
 });
+
+test("opaque block renders as an escaped grey chip, not its XML", () => {
+  const h = contentToHtml(doc({ type: "opaque", attrs: { kind: "text <box>", xml: "<w:p>SECRET</w:p>" } }), styles);
+  expect(h).toContain('class="opaque-chip"');
+  expect(h).toContain("⬚ text &lt;box&gt;");
+  expect(h).not.toContain("SECRET");
+});
