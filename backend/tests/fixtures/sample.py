@@ -101,5 +101,5 @@ def build() -> bytes:
     return b.getvalue()
 
 
-if __name__ == "__main__":
-    open(sys.argv[1], "wb").write(build())
+if __name__ == "__main__":  # "-" = stdout (the e2e script pipes it out of the api container)
+    (sys.stdout.buffer if sys.argv[1] == "-" else open(sys.argv[1], "wb")).write(build())
