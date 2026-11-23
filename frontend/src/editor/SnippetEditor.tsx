@@ -61,7 +61,7 @@ export function SnippetEditor({ id, me, epoch, onCommit }: { id: string; me: Me;
   const loaded = useRef("");
   useEffect(() => {
     if (!d.data || !editor) return;
-    const k = [id, epoch, d.data.base_sha, d.data.exists, d.data.conflict, d.data.head_sha].join();
+    const k = [id, epoch, d.data.base_sha, d.data.conflict, d.data.head_sha].join();
     if (loaded.current === k) return;
     loaded.current = k;
     editor.commands.setContent(d.data.content as any, { emitUpdate: false });
