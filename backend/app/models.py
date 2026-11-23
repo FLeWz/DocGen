@@ -233,3 +233,17 @@ class Export(OrgScoped, Base):
     sha256: Mapped[str | None] = mapped_column(String(64))
     created_at: Mapped[datetime] = _now()
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class Import(OrgScoped, Base):
+    """Uploaded DOCX being edited. Original package at FILES_ROOT/{org_id}/imports/{id}.docx (path derived);
+    `content` is the editable TipTap doc incl. `opaque` nodes holding raw OOXML; saved on every edit."""
+    __tablename__ = "imports"
+    id: Mapped[uuid.UUID] = _id()
+    title: Mapped[str] = mapped_column(String(200))
+    filename: Mapped[str] = mapped_column(String(200))
+    content: Mapped[dict] = mapped_column(JSONB)
+    warnings: Mapped[list] = mapped_column(JSONB, default=list)
+    created_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = _now()
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

@@ -1,4 +1,3 @@
-import re
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
@@ -29,21 +28,9 @@ def list_snippets(folder_id: UUID, q: str | None = Query(default=None, max_lengt
 @router.post("/folders/{folder_id}/snippets", status_code=201, response_model=SnippetOut)
 def create_snippet(folder_id: UUID, body: SnippetCreateIn, ctx: Ctx = E):
     f = vcs.get_folder(ctx, folder_id)
-    taken = {s.slug for s in ctx.repo(Snippet).list(Snippet.folder_id == f.id)}
-    if body.slug:
-        if body.slug in taken:
-            raise HTTPException(409, "slug already used in this folder")
-        slug = body.slug
-    else:
-        base = re.sub(r"[^a-z0-9]+", "-", body.title.lower()).strip("-")[:56] or "snippet"
-        slug, n = base, 2
-        while slug in taken:
-            slug, n = f"{base}-{n}", n + 1
-    s = ctx.repo(Snippet).add(folder_id=f.id, slug=slug, title=body.title)
-    ctx.repo(Draft).add(snippet_id=s.id, user_id=ctx.user.id, title=s.title, slug=slug,
-                        content=C.EMPTY_DOC, styles=[], variables=[], base_sha=None)
+    s = vcs.new_snippet(ctx, f, body.title, body.slug)
     ctx.db.commit()
-    return SnippetOut(id=s.id, folder_id=f.id, slug=slug, title=s.title, head_sha=None, has_draft=True)
+    return SnippetOut(id=s.id, folder_id=f.id, slug=s.slug, title=s.title, head_sha=None, has_draft=True)
 
 
 @router.get("/snippets/{snippet_id}")

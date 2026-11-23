@@ -14,14 +14,14 @@ from docx import Document
 from docx.opc.constants import RELATIONSHIP_TYPE as RT
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
-from docx.shared import Emu, RGBColor
+from docx.shared import Emu, RGBColor, Twips
 from jinja2 import Undefined
 from jinja2.exceptions import SecurityError
 from jinja2.sandbox import SandboxedEnvironment
 from PIL import Image as PILImage
 
 from .base_docs import CONTENT_RE, SLOT_RE
-from .ooxml import add_field, stable_zip
+from .ooxml import add_field, opaque_element, stable_zip
 
 MAX_W = 5_486_400  # 6 in; images wider than the text area are scaled down
 SAFE_HREF = re.compile(r"(https?://|mailto:)", re.I)
@@ -252,8 +252,10 @@ def _numpr(p, num_id: int, level: int) -> None:
 # ---- ProseMirror -> OOXML ----------------------------------------------------------------------
 
 class Builder:
-    def __init__(self, doc, load_asset, warnings: list):
-        self.doc, self.load_asset, self.warn = doc, load_asset, warnings
+    def __init__(self, doc, load_asset, warnings: list, rels: set | None = None):
+        """`rels` (ids of the document's relationships) switches on import mode: the package IS the original, so
+        opaque blocks keep their r:id references and lists keep their original numIds."""
+        self.doc, self.load_asset, self.warn, self.rels = doc, load_asset, warnings, rels
         self.styles = {s.style_id for s in doc.styles}
         self.num = Numbering(doc)
 
@@ -288,13 +290,32 @@ class Builder:
                 self.warn.append("nested table skipped")
         elif t == "image":
             self.image(a, cont, ctx)
+        elif t == "opaque":
+            self.opaque(a, cont)
         elif t == "hardBreak":
             pass
         else:
             self.warn.append(f"unsupported node '{t}' skipped")
 
+    def opaque(self, a: dict, cont) -> None:
+        """Raw OOXML block, re-validated here (it came from the client's JSON) and written back as is."""
+        try:
+            el = opaque_element(a.get("xml"), self.rels)
+        except ValueError as e:
+            self.warn.append(f"opaque block '{str(a.get('kind'))[:40]}' skipped: {e}")
+            return
+        if cont is self.doc:
+            s = self.doc.element.body.find(qn("w:sectPr"))
+            s.addprevious(el) if s is not None else self.doc.element.body.append(el)
+        else:
+            cont._tc.append(el)
+
     def list(self, n, cont, ctx, level) -> None:
-        num = self.num.ordered() if n["type"] == "orderedList" else self.num.bullets()
+        nid = (n.get("attrs") or {}).get("numId")
+        if self.rels is not None and nid in set(self.num._ids("w:num", "w:numId")):
+            num = nid  # imported list keeps its Word numbering (continues across lists)
+        else:
+            num = self.num.ordered() if n["type"] == "orderedList" else self.num.bullets()
         for li in n.get("content") or []:
             first = True
             for child in li.get("content") or []:
@@ -362,14 +383,30 @@ class Builder:
                 ci += cs
                 ncols = max(ncols, ci)
         t = self.doc.add_table(len(rows), ncols)
-        if s := self.style("TableGrid"):
+        ta = n.get("attrs") or {}
+        try:  # imported tables keep their own properties (style, borders, width) and column grid
+            pr = opaque_element(ta["tblPr"], self.rels, {"tblPr"}) if ta.get("tblPr") and self.rels is not None else None
+        except ValueError:
+            pr = None
+        if pr is not None:
+            t._tbl.remove(t._tbl.tblPr)
+            t._tbl.insert(0, pr)
+        elif s := self.style(ta.get("styleId"), "TableGrid"):
             t._tbl.tblPr.style = s
+        grid = ta.get("grid") if self.rels is not None else None
+        if isinstance(grid, list) and len(grid) == ncols and all(isinstance(g, int) and g > 0 for g in grid):
+            for gc, g in zip(t._tbl.tblGrid.findall(qn("w:gridCol")), grid):
+                gc.set(qn("w:w"), str(g))
+        else:
+            grid = None
         if all(c.get("type") == "tableHeader" for c in rows[0].get("content") or [{}]):
             rpr = t.rows[0]._tr.get_or_add_trPr()
             rpr.append(OxmlElement("w:tblHeader"))
         for ri, ci, cs, rs, cell in placed:
             a = t.cell(ri, ci)
             m = a.merge(t.cell(ri + rs - 1, ci + cs - 1)) if cs > 1 or rs > 1 else a
+            if grid:
+                m.width = Twips(sum(grid[ci:ci + cs]))
             for p in m._tc.findall(qn("w:p")):
                 m._tc.remove(p)
             self.nodes(cell.get("content"), m, ctx)

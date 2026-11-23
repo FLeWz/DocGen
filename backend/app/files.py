@@ -19,3 +19,9 @@ def export_path(org_id, export_id, ext: str = "docx") -> Path:
     p = (ROOT / str(UUID(str(org_id))) / "exports" / f"{UUID(str(export_id))}.{ext}").resolve()
     assert p.is_relative_to(ROOT)
     return p
+
+
+def import_path(org_id, import_id) -> Path:
+    p = (ROOT / str(UUID(str(org_id))) / "imports" / f"{UUID(str(import_id))}.docx").resolve()
+    assert p.is_relative_to(ROOT)
+    return p

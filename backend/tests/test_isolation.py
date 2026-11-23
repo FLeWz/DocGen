@@ -113,7 +113,7 @@ def test_every_org_id_table_has_rls_and_not_null(owner_engine):
             "join information_schema.columns col on col.table_name=c.relname and col.column_name='org_id' "
             "where c.relkind='r' and col.table_schema='public'")).all()
     assert {r[0] for r in rows} >= {"memberships", "invites", "folders", "snippets", "drafts", "styles", "images",
-                              "base_documents", "base_doc_versions", "documents", "document_drafts", "document_refs", "exports"}
+                              "base_documents", "base_doc_versions", "documents", "document_drafts", "document_refs", "exports", "imports"}
     assert all(r[1] and r[2] == "NO" for r in rows), rows
 
 
@@ -147,6 +147,10 @@ COVERED = {  # every API route must be listed: a new endpoint forces a new isola
     "GET /api/documents/{document_id}/exports", "GET /api/exports/{export_id}",
     "GET /api/documents/{document_id}/revision-history",  # milestone 5, see test_b_cannot_touch_a_documents
     "GET /api/exports/{export_id}/download", "GET /api/library/snippets", "GET /api/snippets/{snippet_id}/used-by",
+    # milestone 7: all covered by test_b_cannot_touch_a_imports
+    "POST /api/import/docx", "GET /api/imports", "GET /api/imports/{import_id}", "PUT /api/imports/{import_id}",
+    "GET /api/imports/{import_id}/export", "GET /api/imports/{import_id}/split", "POST /api/imports/{import_id}/split",
+    "POST /api/imports/{import_id}/selection-snippet", "POST /api/imports/{import_id}/base-document",
 }
 
 
@@ -321,3 +325,48 @@ def test_rls_blocks_cross_org_document_rows(world):
         with pytest.raises(Exception):
             c.execute(text("insert into base_documents (id, org_id, name) values (gen_random_uuid(), :o, 'x')"),
                       {"o": world["a_org"]})
+
+
+def test_b_cannot_touch_a_imports(world):
+    from .test_import import SAMPLE, imp
+    a, b = world["a"], world["b"]
+    iid = imp(a).json()["id"]
+    fa = a.post("/api/folders", json={"name": "A"}).json()["id"]
+    bfo = b.post("/api/folders", json={"name": "B"}).json()["id"]
+    b_imp = imp(b).json()["id"]
+    sel = {"title": "x", "start": 0, "end": 1}
+    calls = [
+        ("get", f"/api/imports/{iid}", None), ("put", f"/api/imports/{iid}", {"content": {"type": "doc", "content": []}}),
+        ("get", f"/api/imports/{iid}/export", None), ("get", f"/api/imports/{iid}/split?level=1", None),
+        ("post", f"/api/imports/{iid}/split", {"folder_id": bfo, "level": 1}),  # A's import into B's folder
+        ("post", f"/api/imports/{iid}/selection-snippet", {**sel, "folder_id": bfo}),
+        ("post", f"/api/imports/{iid}/base-document", {"name": "stolen"}),
+        ("post", f"/api/imports/{b_imp}/split", {"folder_id": fa, "level": 1}),  # B's import into A's folder
+        ("post", f"/api/imports/{b_imp}/selection-snippet", {**sel, "folder_id": fa}),
+    ]
+    for method, url, body in calls:
+        r = getattr(b, method)(url, **({"json": body} if body is not None else {}))
+        assert r.status_code == 404, (method, url, r.status_code)
+    assert [i["id"] for i in b.get("/api/imports").json()] == [b_imp]
+    assert b.get("/api/base-documents").json() == [] and a.get(f"/api/folders/{fa}/snippets").json() == []
+    assert a.get(f"/api/imports/{iid}").status_code == 200
+    # B can't reference A's imported image in its own import content either: images are org-scoped
+    img = next(x for x in a.get(f"/api/imports/{iid}").json()["content"]["content"] if x["type"] == "image")["attrs"]["imageId"]
+    assert b.get(f"/api/images/{img}").status_code == 404
+    doc = {"type": "doc", "content": [{"type": "image", "attrs": {"imageId": img}}]}
+    b.put(f"/api/imports/{b_imp}", json={"content": doc})
+    r = b.get(f"/api/imports/{b_imp}/export")
+    assert r.status_code == 200 and r.headers["x-export-warnings"] == "1"  # "image not found"
+
+
+def test_rls_blocks_cross_org_import_rows(world):
+    from .test_import import imp
+    imp(world["a"])
+    b_org = world["b"].get("/api/orgs/current").json()["id"]
+    with _app_conn() as c:
+        assert c.scalar(text("select count(*) from imports")) == 0
+        c.execute(text("select set_config('app.org_id', :o, false)"), {"o": b_org})
+        assert c.scalar(text("select count(*) from imports")) == 0
+        with pytest.raises(Exception):
+            c.execute(text("insert into imports (id, org_id, title, filename, content) values "
+                           "(gen_random_uuid(), :o, 't', 'f', '{}')"), {"o": world["a_org"]})

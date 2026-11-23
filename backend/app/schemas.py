@@ -377,3 +377,30 @@ class ExportOut(BaseModel):
     created_at: datetime
     finished_at: datetime | None
     user_id: UUID | None
+
+
+# ---- milestone 7: DOCX import ----
+class ImportPut(BaseModel):
+    title: str | None = Field(default=None, min_length=1, max_length=200)
+    content: dict  # TipTap doc; opaque nodes are re-validated server-side
+
+
+class SelectionIn(BaseModel):
+    folder_id: UUID
+    title: str = Field(min_length=1, max_length=200)
+    start: int = Field(ge=0)  # top-level block index range [start, end) of the import's content
+    end: int = Field(gt=0)
+
+
+class SplitIn(BaseModel):
+    folder_id: UUID
+    level: int = Field(ge=1, le=2)  # 1 = split at Heading 1, 2 = at Heading 1 and 2
+
+
+class ImportBaseIn(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=100)  # new base document
+    base_document_id: UUID | None = None  # ... or a new version of this one
+
+
+class ImportSnippetOut(SnippetOut):
+    warnings: list[str] = []

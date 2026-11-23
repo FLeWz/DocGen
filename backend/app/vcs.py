@@ -26,6 +26,24 @@ def get_snippet(ctx: Ctx, id: UUID) -> Snippet:
     return s
 
 
+def new_snippet(ctx: Ctx, f: Folder, title: str, slug: str | None = None, content: dict | None = None,
+                styles: list | None = None) -> Snippet:
+    """Snippet row + the caller's draft (no commit). Slug derived from the title when not given; 409 if taken."""
+    taken = {s.slug for s in ctx.repo(Snippet).list(Snippet.folder_id == f.id)}
+    if slug:
+        if slug in taken:
+            raise HTTPException(409, "slug already used in this folder")
+    else:
+        base = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")[:56] or "snippet"
+        slug, n = base, 2
+        while slug in taken:
+            slug, n = f"{base}-{n}", n + 1
+    s = ctx.repo(Snippet).add(folder_id=f.id, slug=slug, title=title)
+    ctx.repo(Draft).add(snippet_id=s.id, user_id=ctx.user.id, title=title, slug=slug,
+                        content=content or C.EMPTY_DOC, styles=styles or [], variables=[], base_sha=None)
+    return s
+
+
 def repo_of(ctx: Ctx, folder_id: UUID):
     return git.repo_path(ctx.org_id, folder_id)
 

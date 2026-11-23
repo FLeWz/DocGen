@@ -15,12 +15,11 @@ router = APIRouter(tags=["images"])
 PILImage.MAX_IMAGE_PIXELS = 50_000_000  # decompression-bomb guard (Pillow raises above 2x this)
 
 
-@router.post("/images", status_code=201, response_model=ImageOut)
-def upload(file: UploadFile, ctx: Ctx = Depends(require(Role.editor))):
-    data = file.file.read(config.MAX_IMAGE_BYTES + 1)
+def save(ctx: Ctx, data: bytes) -> Image:
+    """Validate image bytes (type from the bytes, never from names) and store them; caller commits."""
     if len(data) > config.MAX_IMAGE_BYTES:
         raise HTTPException(413, "image too large")
-    try:  # trust the bytes, not the filename or Content-Type
+    try:
         with PILImage.open(io.BytesIO(data)) as im:
             fmt, (w, h) = im.format, im.size
             im.verify()
@@ -34,6 +33,12 @@ def upload(file: UploadFile, ctx: Ctx = Depends(require(Role.editor))):
     p = image_path(ctx.org_id, img.id, ext)
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_bytes(data)
+    return img
+
+
+@router.post("/images", status_code=201, response_model=ImageOut)
+def upload(file: UploadFile, ctx: Ctx = Depends(require(Role.editor))):
+    img = save(ctx, file.file.read(config.MAX_IMAGE_BYTES + 1))
     ctx.db.commit()
     return img
 
