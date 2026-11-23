@@ -2,6 +2,8 @@
 
 Content nodes reference styles by `style_id` (Word-style ids: "Normal", "Heading1"), never by uuid,
 so a base document's styles.xml (milestone 4) can supply the same ids."""
+from uuid import NAMESPACE_URL, uuid5
+
 from .models import Style
 from .scoping import OrgRepo
 
@@ -29,7 +31,12 @@ def seed(repo: OrgRepo) -> None:
 
 
 def resolve(repo: OrgRepo, base_doc=None) -> list[Style]:
-    """Styles for a document. Milestone 4: when `base_doc` has its own style list, its styles override
-    org styles with the same style_id and org styles fill the gaps (or replace the set entirely --
-    see DECISIONS.md). Until then there is only the org set."""
-    return repo.list()
+    """Styles for a document. `base_doc` = a BaseDocVersion (or anything with `.styles`, a list of Style-shaped
+    dicts parsed from its styles.xml): its styles override org styles with the same style_id; org styles fill
+    the ids it lacks. Base styles are transient rows (not in the session) with a deterministic id."""
+    org = repo.list()
+    if not base_doc:
+        return org
+    mine = {d["style_id"]: Style(id=uuid5(NAMESPACE_URL, f"{base_doc.id}/{d['style_id']}"), org_id=repo.org_id,
+                                 builtin=False, **d) for d in base_doc.styles}
+    return [mine.pop(s.style_id, s) for s in org] + list(mine.values())

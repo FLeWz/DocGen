@@ -3,9 +3,9 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.exc import IntegrityError
 
-from .. import styles
+from .. import docs, styles
 from ..deps import Ctx, require
-from ..models import Role, Style
+from ..models import BaseDocument, Role, Style
 from ..schemas import StyleIn, StyleOut, StylePatchIn
 
 router = APIRouter(tags=["styles"])
@@ -19,8 +19,13 @@ def _get(ctx: Ctx, id: UUID) -> Style:
 
 
 @router.get("/styles", response_model=list[StyleOut])
-def list_styles(ctx: Ctx = Depends(require(Role.viewer))):
-    return sorted(styles.resolve(ctx.repo(Style)), key=lambda s: (s.kind, s.level or 0, s.name))
+def list_styles(base_doc: UUID | None = None, ctx: Ctx = Depends(require(Role.viewer))):
+    bd = None
+    if base_doc:  # ?base_doc=<id>: the base document's styles (head version) override the org set
+        if not ctx.repo(BaseDocument).get(base_doc):
+            raise HTTPException(404, "base document not found")
+        bd = docs.base_head(ctx, ctx.repo(BaseDocument).get(base_doc))
+    return sorted(styles.resolve(ctx.repo(Style), bd), key=lambda s: (s.kind, s.level or 0, s.name))
 
 
 @router.post("/styles", status_code=201, response_model=StyleOut)

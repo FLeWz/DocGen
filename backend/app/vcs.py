@@ -103,12 +103,14 @@ def draft_out(ctx: Ctx, s: Snippet, d: Draft | None) -> dict:
 
 
 TRAILER = re.compile(r"^Snippet-Id: ([0-9a-f-]{36})$", re.M)
+DOC_TRAILER = re.compile(r"^Document-Id: ([0-9a-f-]{36})$", re.M)
+ANY_TRAILER = re.compile(r"^(?:Snippet|Document)-Id:.*$", re.M)  # server-written only: stripped from user text
 
 
 def commit_out(row: dict, tagmap: dict) -> dict:
     body = row.pop("body")
-    ids = TRAILER.findall(body)
-    return dict(**row, message=TRAILER.sub("", body).strip(), snippet_ids=ids, tags=tagmap.get(row["sha"], []))
+    return dict(**row, message=ANY_TRAILER.sub("", body).strip(), snippet_ids=TRAILER.findall(body),
+                document_ids=DOC_TRAILER.findall(body), tags=tagmap.get(row["sha"], []))
 
 
 def tag_map(repo) -> dict:
