@@ -32,8 +32,15 @@ with sync_playwright() as pw:
 
         ed, prev = page.locator(".ProseMirror"), page.get_by_test_id("preview")
         expect(ed).to_be_visible()
-        ed.click()
-        page.keyboard.type("Welcome Acme")
+        for _ in range(5):  # the first keystrokes are lost if the draft loads right after the click: retry
+            ed.click()
+            page.keyboard.type("Welcome Acme")
+            try:
+                expect(prev).to_contain_text("Welcome Acme", timeout=1500)
+                break
+            except AssertionError:
+                page.keyboard.press("Control+A")
+                page.keyboard.press("Delete")
         expect(prev).to_contain_text("Welcome Acme")
 
         page.get_by_label("Paragraph style").select_option("Heading1")

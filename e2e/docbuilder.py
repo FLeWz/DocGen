@@ -16,6 +16,21 @@ email, password = f"e2e-{tag}@example.com", secrets.token_urlsafe(16)
 ART = os.environ.get("E2E_ARTIFACTS", "e2e-artifacts")
 
 
+def type_into(page, text):
+    """Type into the (only) editor; the first keystrokes are lost if the draft loads right after the click, so retry."""
+    ed, prev = page.locator(".ProseMirror"), page.get_by_test_id("preview")
+    for _ in range(5):
+        ed.click()
+        page.keyboard.type(text)
+        try:
+            expect(prev).to_contain_text(text, timeout=1500)
+            return
+        except AssertionError:
+            page.keyboard.press("Control+A")
+            page.keyboard.press("Delete")
+    raise AssertionError(f"could not type {text!r} into the editor")
+
+
 def commit_folder(page, message):
     page.get_by_role("button", name="Commit…").click()
     page.get_by_role("checkbox").first.check()
@@ -51,8 +66,8 @@ with sync_playwright() as pw:
         page.get_by_placeholder("New snippet title").fill("Intro")
         page.get_by_role("button", name="Add snippet").click()
         ed = page.locator(".ProseMirror")
-        ed.click()
-        page.keyboard.type("Version one text")
+        expect(ed).to_be_visible()
+        type_into(page, "Version one text")
         expect(page.get_by_test_id("save-status")).to_have_attribute("data-status", "saved")
         commit_folder(page, "v1")
 

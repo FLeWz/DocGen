@@ -1,0 +1,6 @@
+# Only affects builds whose context is the repo root (the e2e image); backend/ and frontend/ have their own.
+*
+!backend/tests/__init__.py
+!backend/tests/fixtures
+!e2e
+**/__pycache__

@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { FormEvent, useState } from "react";
 import { BaseDocs } from "./BaseDocs";
 import { Imports } from "./Import";
+import { Styles } from "./Styles";
 import { Workspace } from "./Workspace";
 import { api, ApiError, Invite, isAdmin, Lookup, Me, Member, Org, ROLES, Role } from "./api";
 
@@ -120,6 +121,7 @@ function Dashboard({ me }: { me: Me }) {
         <Workspace me={me} />
         <Imports me={me} />
         <BaseDocs me={me} />
+        <Styles me={me} />
         <Members me={me} />
         {isAdmin(me.org.role) && <Invites me={me} />}
         {me.org.role === "owner" && <button onClick={() => confirm("Delete this organization and all its data?") && delOrg.mutate()}>Delete organization</button>}

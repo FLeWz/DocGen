@@ -45,6 +45,24 @@ services:
     ports: ["${WEB_PORT:-8080}:80"]
     depends_on:
       api: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/"]
+      interval: 3s
+      retries: 20
+
+  # `make test-e2e-docker`: Playwright against the running stack through the compose network.
+  e2e:
+    profiles: [e2e]
+    build: {context: ., dockerfile: e2e/Dockerfile}
+    user: "${E2E_UID:-1000}"
+    environment:
+      E2E_BASE_URL: http://web
+      MAIL_URL: http://mail:8025
+      E2E_ARTIFACTS: /artifacts
+    volumes: ["./e2e-artifacts:/artifacts"]
+    depends_on:
+      web: {condition: service_healthy}
+    command: ["sh", "-c", "for t in smoke docbuilder import invite; do python $$t.py || exit 1; done"]
 
   pdf:
     image: gotenberg/gotenberg:8

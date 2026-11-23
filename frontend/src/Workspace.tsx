@@ -176,6 +176,7 @@ function FolderView({ folder, me }: { folder: Folder; me: Me }) {
     mutationFn: (title: string) => api<SnippetRow>(`/folders/${folder.id}/snippets`, "POST", { title }),
     onSuccess: (s) => { qc.invalidateQueries(); setOpen(s.id); },
   });
+  const delSnippet = useMutation({ mutationFn: (id: string) => api(`/snippets/${id}`, "DELETE"), onSuccess: () => qc.invalidateQueries() });
   return (
     <div>
       <h2>{folder.name}</h2>
@@ -186,10 +187,11 @@ function FolderView({ folder, me }: { folder: Folder; me: Me }) {
           <p><input placeholder="Search" value={q} onChange={(e) => setQ(e.target.value)} /></p>
           <ul>{list.data?.map((s) => (
             <li key={s.id}><a href="#" onClick={(e) => { e.preventDefault(); setOpen(s.id); }}>{s.title}</a>{" "}
-              <small>{s.slug} · {short(s.head_sha)}{s.has_draft ? " · draft" : ""}</small></li>))}</ul>
+              <small>{s.slug} · {short(s.head_sha)}{s.has_draft ? " · draft" : ""}</small>{" "}
+              {canEdit(me) && <button aria-label={`Delete ${s.title}`} onClick={() => confirm(`Delete snippet "${s.title}"? Its git history stays.`) && delSnippet.mutate(s.id)}>Delete</button>}</li>))}</ul>
           {canEdit(me) && <form onSubmit={(e) => { e.preventDefault(); const f = e.currentTarget; create.mutate(new FormData(f).get("title") as string); f.reset(); }}>
             <input name="title" placeholder="New snippet title" required /> <button>Add snippet</button></form>}
-          <Err e={create.error ?? list.error} />
+          <Err e={create.error ?? list.error ?? delSnippet.error} />
         </section>))}
       {tab === "documents" && (openDoc ? <DocBuilder id={openDoc} me={me} onClose={() => { setOpenDoc(null); qc.invalidateQueries({ queryKey: ["documents"] }); }} onCommit={() => { setOpenDoc(null); setTab("commit"); }} /> : (
         <section>

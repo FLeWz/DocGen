@@ -28,15 +28,20 @@ export function Imports({ me }: { me: Me }) {
     mutationFn: (fd: FormData) => api<ImportRow>("/import/docx", "POST", fd),
     onSuccess: (r) => { qc.invalidateQueries({ queryKey: ["imports"] }); setOpen(r.id); },
   });
+  const del = useMutation({
+    mutationFn: (id: string) => api(`/imports/${id}`, "DELETE"),
+    onSuccess: (_, id) => { qc.invalidateQueries({ queryKey: ["imports"] }); if (open === id) setOpen(null); },
+  });
   const submit = (e: FormEvent<HTMLFormElement>) => { e.preventDefault(); upload.mutate(new FormData(e.currentTarget)); e.currentTarget.reset(); };
   return (
     <section>
       <h2>Import DOCX</h2>
       {canEdit && <form onSubmit={submit}><input type="file" name="file" accept=".docx" aria-label="DOCX file" required />{" "}<button>Import</button></form>}
-      <Err e={upload.error ?? list.error} />
+      <Err e={upload.error ?? list.error ?? del.error} />
       <ul>{list.data?.map((i) => (
         <li key={i.id}><b>{i.title}</b> <small>({i.filename})</small>{" "}
-          <button onClick={() => setOpen(open === i.id ? null : i.id)}>{open === i.id ? "Close" : "Open"}</button></li>))}</ul>
+          <button onClick={() => setOpen(open === i.id ? null : i.id)}>{open === i.id ? "Close" : "Open"}</button>{" "}
+          {canEdit && <button onClick={() => confirm(`Delete import "${i.title}"?`) && del.mutate(i.id)}>Delete</button>}</li>))}</ul>
       {open && <ImportEditor key={open} id={open} me={me} />}
     </section>
   );
