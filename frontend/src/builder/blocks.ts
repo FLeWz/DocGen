@@ -17,3 +17,8 @@ export function moveTo<T>(a: T[], from: number, to: number): T[] {
 export const newId = () => (crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(16).slice(2) + Date.now().toString(16));
 export const snippetBlock = (folder_id: string, snippet_id: string, sha: string): Block =>
   ({ id: newId(), slot: "CONTENT", type: "snippet_ref", folder_id, snippet_id, version: { type: "commit", value: sha } });
+
+export type Row = Record<string, string | number | null>;
+/** Rows of a list variable after the column set changed: keep known cells, drop removed columns. */
+export const reshape = (rows: Row[], cols: string[]): Row[] => rows.map((r) => Object.fromEntries(cols.map((c) => [c, r[c] ?? ""])));
+export const parseCols = (s: string): string[] => [...new Set(s.split(",").map((c) => c.trim()).filter((c) => /^[A-Za-z_]\w*$/.test(c)))];

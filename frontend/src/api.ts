@@ -1,5 +1,5 @@
 export class ApiError extends Error {
-  constructor(public status: number, message: string) { super(message); }
+  constructor(public status: number, message: string, public detail?: unknown) { super(message); }
 }
 
 export function readCookie(name: string, cookie = document.cookie): string | undefined {
@@ -17,7 +17,7 @@ export async function api<T = unknown>(path: string, method = "GET", body?: unkn
   const r = await fetch("/api" + path, { method, headers, body: body === undefined ? undefined : form ? body : JSON.stringify(body) });
   if (!r.ok) {
     const d = (await r.json().catch(() => ({}))).detail;
-    throw new ApiError(r.status, typeof d === "string" ? d : Array.isArray(d) ? d.map((e) => e.msg).join("; ") : r.statusText);
+    throw new ApiError(r.status, typeof d === "string" ? d : Array.isArray(d) ? d.map((e) => e.msg).join("; ") : d?.message ?? r.statusText, d);
   }
   return (r.status === 204 ? undefined : await r.json()) as T;
 }
@@ -55,8 +55,11 @@ export type Block = { id: string; slot: string } & (
   | { type: "heading"; text: string; level: number; styleId: string | null; numbered: boolean }
   | { type: "page_break" } | { type: "toc" });
 export type LinkedDoc = { title: string; doc_id: string | null; version: string | null; url: string | null };
+export type VarDecl = { name: string; type: "text" | "date" | "number" | "list"; default: unknown; columns?: string[] };
+export type Variables = { declarations: VarDecl[]; values: Record<string, unknown> };
+export type RevRow = { version: string; date: string; author: string; message: string };
 export type DocBody = { title: string; slug: string; base_document: { id: string; version: string | null } | null; blocks: Block[];
-  variables: { declarations: { name: string; type: string; default: unknown }[]; values: Record<string, string> }; links: LinkedDoc[] };
+  variables: Variables; links: LinkedDoc[]; revision_history: RevRow[] | null };
 export type DocFull = DocBody & { id: string; folder_id: string; head_sha: string | null; has_draft: boolean; dirty?: boolean; conflict?: boolean };
 export type DocRow = { id: string; folder_id: string; slug: string; title: string; head_sha: string | null; has_draft: boolean };
 export type RefStatus = { block_id: string; folder_name: string | null; title: string | null; slug: string | null; missing: boolean; pin: Pin;

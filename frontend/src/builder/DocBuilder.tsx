@@ -1,9 +1,10 @@
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, BaseDoc, BaseDocVersion, Block, Commit, DocBody, DocFull, ExportStatus, LibraryGroup, Me, RefStatus, Style } from "../api";
-import { NAME_RE, PMNode } from "../editor/doc";
+import { api, ApiError, BaseDoc, BaseDocVersion, Block, Commit, DocBody, DocFull, ExportStatus, LibraryGroup, Me, RefStatus, RevRow, Style, VarDecl } from "../api";
+import { PMNode } from "../editor/doc";
 import { Preview } from "../editor/SnippetEditor";
 import { insertAt, moveTo, newId, snippetBlock } from "./blocks";
+import { RevisionTable, VariablesForm } from "./Variables";
 
 const Err = ({ e }: { e: unknown }) => (e ? <p role="alert" style={{ color: "crimson" }}>{(e as Error).message}</p> : null);
 const short = (s: string | null) => (s ? s.slice(0, 7) : "—");
@@ -11,7 +12,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const nul = (s: string | null) => (s ? s : null);
 const pinKey = (v: { type: string; value: string | null }) => `${v.type}:${v.value ?? ""}`;
 const DND_SNIPPET = "application/x-docgen-snippet", DND_BLOCK = "application/x-docgen-block";
-const bodyOf = (d: DocBody): DocBody => ({ title: d.title, slug: d.slug, base_document: d.base_document, blocks: d.blocks, variables: d.variables, links: d.links });
+const bodyOf = (d: DocBody): DocBody => ({ title: d.title, slug: d.slug, base_document: d.base_document, blocks: d.blocks, variables: d.variables, links: d.links, revision_history: d.revision_history ?? null });
 
 function Library({ onAdd, disabled }: { onAdd: (g: LibraryGroup, s: LibraryGroup["snippets"][0]) => void; disabled: boolean }) {
   const [q, setQ] = useState(""), [tag, setTag] = useState("");
@@ -105,7 +106,7 @@ export function DocBuilder({ id, me, onClose, onCommit }: { id: string; me: Me; 
   const [err, setErr] = useState("");
   const [bump, setBump] = useState<string | null>(null);
   const [preview, setPreview] = useState(false);
-  const [dl, setDl] = useState(""), [dlErr, setDlErr] = useState("");
+  const [dl, setDl] = useState(""), [dlErr, setDlErr] = useState(""), [missing, setMissing] = useState<{ name: string; type: VarDecl["type"] }[]>([]);
   const [over, setOver] = useState<number | null>(null);
   const wRef = useRef<DocBody | null>(null), timer = useRef<number>(), pending = useRef(false), chain = useRef<Promise<unknown>>(Promise.resolve());
 
@@ -117,7 +118,7 @@ export function DocBuilder({ id, me, onClose, onCommit }: { id: string; me: Me; 
     setStatus("saving");
     chain.current = chain.current.then(() => api<DocFull>(`/documents/${id}/draft`, "PUT", {
       title: b.title, slug: b.slug, base_document: b.base_document, blocks: b.blocks, variables: b.variables,
-      links: b.links.map((l) => ({ ...l, doc_id: nul(l.doc_id), version: nul(l.version), url: nul(l.url) })),
+      links: b.links.map((l) => ({ ...l, doc_id: nul(l.doc_id), version: nul(l.version), url: nul(l.url) })), revision_history: b.revision_history,
     })).then((r) => {
       setErr("");
       const cur = wRef.current;
@@ -126,6 +127,7 @@ export function DocBuilder({ id, me, onClose, onCommit }: { id: string; me: Me; 
         setW(wRef.current);
       }
       qc.invalidateQueries({ queryKey: ["updates", id] });
+      qc.invalidateQueries({ queryKey: ["rev", id] });
       qc.invalidateQueries({ queryKey: ["changes"] });
       setStatus(pending.current ? "saving" : "saved");
     }).catch((e: Error) => { pending.current = true; setErr(e.message); setStatus("error"); });
@@ -149,18 +151,23 @@ export function DocBuilder({ id, me, onClose, onCommit }: { id: string; me: Me; 
     mutationFn: async (bid: string) => { await flush(); return api<DocFull>(`/documents/${id}/blocks/${bid}/bump`, "POST"); },
     onSuccess: (d) => { wRef.current = bodyOf(d); setW(wRef.current); setBump(null); qc.invalidateQueries({ queryKey: ["updates", id] }); qc.invalidateQueries({ queryKey: ["changes"] }); },
   });
-  const download = async () => {
-    setDlErr(""); setDl("Preparing DOCX…");
+  const rev = useQuery({ queryKey: ["rev", id], queryFn: () => api<RevRow[]>(`/documents/${id}/revision-history`), enabled: !!w && w.revision_history === null });
+  const download = async (fmt: "docx" | "pdf") => {
+    setDlErr(""); setMissing([]); setDl(`Preparing ${fmt.toUpperCase()}…`);
     try {
       await flush();
-      const { export_id } = await api<{ export_id: string }>(`/documents/${id}/export?format=docx`);
+      const { export_id } = await api<{ export_id: string }>(`/documents/${id}/export?format=${fmt}`);
       for (;;) {
         const s = await api<ExportStatus>(`/exports/${export_id}`);
         if (s.status === "error") throw new Error(s.error ?? "export failed");
         if (s.status === "done") { setDl(s.warnings.length ? `Downloaded with warnings: ${s.warnings.join("; ")}` : "Downloaded."); window.location.assign(`/api/exports/${export_id}/download`); return; }
         await sleep(500);
       }
-    } catch (e) { setDl(""); setDlErr((e as Error).message); }
+    } catch (e) {
+      setDl(""); setDlErr((e as Error).message);
+      const d = e instanceof ApiError ? (e.detail as { error?: string; variables?: typeof missing } | undefined) : undefined;
+      if (d?.error === "missing_variables") setMissing(d.variables ?? []);
+    }
   };
 
   if (!w) return <p>Loading…{q.error && <Err e={q.error} />}</p>;
@@ -178,7 +185,6 @@ export function DocBuilder({ id, me, onClose, onCommit }: { id: string; me: Me; 
       style={{ height: over === i ? 28 : 10, background: over === i ? "#cfe3ff" : "transparent", listStyle: "none" }} />
   );
   const vars = w.variables;
-  const setVars = (v: Partial<DocBody["variables"]>) => upd({ variables: { ...vars, ...v } });
   const status_ = (i: string) => updates.data?.find((s) => s.block_id === i);
 
   return (
@@ -223,23 +229,23 @@ export function DocBuilder({ id, me, onClose, onCommit }: { id: string; me: Me; 
         <aside style={{ width: 300 }}>
           <p>
             <button onClick={() => setPreview(!preview)}>{preview ? "Hide preview" : "Preview"}</button>{" "}
-            <button onClick={download}>Download DOCX</button>{" "}
+            <button onClick={() => download("docx")}>Download DOCX</button>{" "}
+            <button onClick={() => download("pdf")}>Download PDF</button>{" "}
             {!ro && <button onClick={() => flush().then(onCommit)}>Commit…</button>}
           </p>
           {dl && <p data-testid="dl-status">{dl}</p>}<Err e={dlErr ? new Error(dlErr) : null} />
+          {missing.length > 0 && <ul data-testid="missing-vars">{missing.map((m) => <li key={m.name}><code>{m.name}</code> ({m.type}){" "}
+            {!ro && !vars.declarations.some((d) => d.name === m.name) && <button onClick={() => upd({ variables: { ...vars, declarations: [...vars.declarations, { name: m.name, type: m.type, default: null, columns: [] }] } })}>Declare</button>}</li>)}</ul>}
           <h4>Base document</h4>
           <select aria-label="Base document" disabled={ro} value={w.base_document?.id ?? ""} onChange={(e) => upd({ base_document: e.target.value ? { id: e.target.value, version: null } : null })}>
             <option value="">(bundled default)</option>{bases.data?.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select>
           {w.base_document && <select aria-label="Base document version" disabled={ro} value={w.base_document.version ?? ""} onChange={(e) => upd({ base_document: { ...w.base_document!, version: e.target.value } })}>
             {bvers.data?.map((v) => <option key={v.sha} value={v.sha}>v{v.number} {v.message}</option>)}</select>}
           <h4>Variables</h4>
-          {vars.declarations.map((d) => (
-            <p key={d.name}><label>{d.name}{" "}
-              <input value={vars.values[d.name] ?? ""} placeholder={String(d.default ?? "")} disabled={ro} onChange={(e) => setVars({ values: { ...vars.values, [d.name]: e.target.value } })} /></label>
-              {!ro && <button aria-label={`Remove variable ${d.name}`} onClick={() => setVars({ declarations: vars.declarations.filter((x) => x !== d) })}>×</button>}</p>))}
-          {!ro && <form onSubmit={(e) => { e.preventDefault(); const n = String(new FormData(e.currentTarget).get("name")).trim(); if (NAME_RE.test(n) && !vars.declarations.some((d) => d.name === n)) setVars({ declarations: [...vars.declarations, { name: n, type: "text", default: null }] }); e.currentTarget.reset(); }}>
-            <input name="name" placeholder="New variable name" size={16} /> <button>Add</button></form>}
+          <VariablesForm vars={vars} ro={ro} onChange={(v) => upd({ variables: v })} />
           <small>Built-ins: doc.title, doc.version, doc.date, org.name, author</small>
+          <h4>Revision history</h4>
+          <RevisionTable rows={w.revision_history ?? rev.data ?? []} auto={w.revision_history === null} ro={ro} onChange={(r) => upd({ revision_history: r })} />
           <h4>Linked documents</h4>
           {w.links.map((l, i) => (
             <p key={i}>{(["title", "doc_id", "version", "url"] as const).map((k) =>
