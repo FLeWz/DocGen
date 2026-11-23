@@ -37,6 +37,8 @@ def owner_engine():
 
 @pytest.fixture(autouse=True)
 def clean(owner_engine):
+    from app import throttle
+    throttle._fails.clear()
     with owner_engine.begin() as c:
         c.execute(text("truncate users, organizations, memberships, invites, sessions cascade"))
 

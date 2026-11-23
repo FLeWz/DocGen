@@ -6,7 +6,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from .. import config
+from .. import config, throttle
 from ..db import get_db, set_ctx
 from ..deps import SESSION_COOKIE, Ctx, optional_ctx, user_ctx
 from .. import styles
@@ -67,11 +67,15 @@ def signup(body: SignupIn, response: Response, db: Session = Depends(get_db)):
 
 
 @router.post("/login", response_model=MeOut)
-def login(body: LoginIn, response: Response, db: Session = Depends(get_db)):
-    user = db.scalar(select(User).where(User.email == body.email.lower()))
+def login(body: LoginIn, request: Request, response: Response, db: Session = Depends(get_db)):
+    email, ip = body.email.lower(), request.client.host if request.client else "?"
+    throttle.check(ip, email)
+    user = db.scalar(select(User).where(User.email == email))
     ok = verify_pw(user.password_hash if user else DUMMY_HASH, body.password)
     if not user or not ok:
+        throttle.failed(ip, email)
         raise HTTPException(401, "invalid email or password")
+    throttle.succeeded(ip, email)
     set_ctx(db, user_id=user.id)
     # user-scoped (not org-scoped) on purpose: RLS lets a user see their own memberships
     m = db.scalar(select(Membership).where(Membership.user_id == user.id).order_by(Membership.created_at))
