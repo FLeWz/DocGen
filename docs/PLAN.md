@@ -19,7 +19,10 @@ backend/
 frontend/            React+TS+Vite, TanStack Query; nginx serves dist and proxies /api -> api:8000
 docs/
 ```
-Later milestones add `app/git/` (repo access), `app/docx/` (import/export), `app/jobs.py`.
+Added later: `app/git/` (git CLI access), `vcs.py`/`docs.py` (folder/snippet/document logic), `docx_export.py`,
+`docx_import.py`, `ooxml.py`, `base_docs.py`, `export.py` (job + renderers), `throttle.py` (login throttling),
+`seed.py` (demo data), `routers/maintenance.py` (file cleanup). Also `e2e/` (Playwright scripts + Dockerfile),
+`scripts/clean-start.sh`, `README.md`.
 
 Storage volumes: `pgdata`; `repos` -> `/repos/{org_id}/{folder_id}.git`, `/repos/{org_id}/_base.git`; `files` -> `/files/{org_id}/...`. Paths are built server-side from UUIDs only.
 
@@ -40,24 +43,33 @@ Storage volumes: `pgdata`; `repos` -> `/repos/{org_id}/{folder_id}.git`, `/repos
 | styles* (M3) | org style set |
 | exports* (M4) | id, org_id, document_id, user_id, pins json, variables json, format, status, file path |
 | jobs (M4) | merged into `exports` (status column); executed by an in-process thread pool |
+| imports* (M7) | id, org_id, title, filename, content (editable TipTap JSON), warnings; original at `/files/{org}/imports/{id}.docx` |
+| base_doc_versions*, document_drafts*, document_refs*, images* | see `models.py` |
 
 ## API (`/api`, OpenAPI at `/api/docs`)
 
-Done (M1): `auth/{signup,login,logout,me,csrf}`, `GET/POST orgs`, `orgs/current` (GET, DELETE), `orgs/switch`, `members` (GET; PATCH/DELETE `/{user_id}`), `invites` (GET, POST, `/{id}/resend`, DELETE `/{id}`, `/lookup`, `/accept`).
+Final state (every route is listed in `COVERED` in `tests/test_isolation.py`): `auth/{signup,login,logout,me,csrf}` ·
+`orgs` (GET, POST), `orgs/current` (GET, DELETE), `orgs/switch` · `members` (GET; PATCH/DELETE `/{user_id}`) ·
+`invites` (GET, POST, `/{id}/resend`, DELETE `/{id}`, `/lookup`, `/accept`) · `folders` (CRUD) and
+`folders/{id}/{snippets,changes,commit,history,tags}` · `snippets/{id}` (GET, DELETE) with `/draft` (GET, PUT, DELETE),
+`/resolve`, `/restore`, `/history`, `/diff`, `/used-by` · `styles` (CRUD, `?base_doc=`) · `images` · `base-documents`
+(+ `/versions`, `/download`) · `documents` (+ `/draft`, `/history`, `/updates`, `/blocks/{id}/bump`,
+`/revision-history`, `/export?format=docx|pdf`, `/exports`) · `exports/{id}` (+ `/download`) · `library/snippets` ·
+`import/docx`, `imports` (GET; `/{id}` GET/PUT/DELETE, `/export`, `/split`, `/selection-snippet`, `/base-document`) ·
+`maintenance/cleanup` (admin).
 
-Planned: `folders`, `folders/{id}/snippets`, `snippets/{id}/draft`, `folders/{id}/commit`, `snippets/{id}/history`, `snippets/{id}/diff`, `snippets/{id}/restore`, `folders/{id}/tags`, `documents`, `documents/{id}/export?format=`, `exports/{id}`, `base-documents`, `import/docx`.
+Roles: viewer reads/exports; editor edits/commits/builds/deletes snippets and imports; admin members/invites/base docs/styles/folder delete/cleanup; owner deletes the org. Other org's object -> 404.
 
-Roles: viewer reads/exports; editor edits/commits/builds; admin members/invites/base docs; owner deletes the org. Other org's object -> 404.
+## Milestones (all done)
 
-## Milestones
-
-1. **Skeleton + auth + orgs + invites + isolation tests** (done)
+1. Skeleton + auth + orgs + invites + isolation tests
 2. Folders + git-backed snippets + draft/commit/history/diff/tags/conflicts
 3. Snippet editor (TipTap) + preview + styles
-4. Base documents + document builder + DOCX export + export records/jobs (done)
+4. Base documents + document builder + DOCX export + export records/jobs
 5. Dynamic variables/tables + revision history + linked docs
 6. PDF export via Gotenberg
 7. DOCX import, snippet from selection, round-trip tests
-8. Polish, seed script, README, Playwright e2e
+8. Polish: seed script, login throttling, snippet/import delete + file cleanup, style-set UI, Docker e2e in `make test`,
+   README, acceptance run (`scripts/clean-start.sh`)
 
 Every milestone: new tenant tables go through `OrgScoped` + `tenant_rls()` + `OrgRepo`, and new routes must be added to `COVERED` in `tests/test_isolation.py` with an isolation test.

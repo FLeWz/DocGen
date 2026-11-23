@@ -67,6 +67,33 @@ with sync_playwright() as pw:
         expect(page.get_by_text("No changes.")).to_be_visible()
         page.get_by_role("button", name="history").click()
         expect(page.get_by_text("Add intro")).to_be_visible()
+
+        # edit -> commit again -> history + diff -> restore the old version into the draft
+        page.get_by_role("button", name="snippets", exact=True).click()
+        expect(ed).to_be_visible()  # the editor stays open behind the commit tab
+        for _ in range(5):
+            ed.click()
+            page.keyboard.press("Control+End")
+            page.keyboard.type(" EDIT2")
+            try:
+                expect(prev).to_contain_text("EDIT2", timeout=1500)
+                break
+            except AssertionError:
+                page.keyboard.press("Control+Z")
+        expect(page.get_by_test_id("save-status")).to_have_attribute("data-status", "saved")
+        page.get_by_role("button", name="Commit…").click()
+        page.get_by_role("checkbox").check()
+        page.get_by_placeholder("Commit message").fill("Second edit")
+        page.get_by_role("button", name="Commit 1").click()
+        expect(page.get_by_text("No changes.")).to_be_visible()
+        page.get_by_role("button", name="snippets", exact=True).click()
+        expect(page.get_by_text("Second edit")).to_be_visible()
+        page.get_by_label("from", exact=True).nth(1).check()  # history is newest first: row 1 = "Add intro"
+        page.get_by_label("to", exact=True).nth(0).check()
+        expect(page.locator("pre")).to_contain_text("EDIT2")  # the diff
+        page.get_by_role("button", name="Restore to draft").nth(1).click()
+        expect(prev).not_to_contain_text("EDIT2")
+        expect(prev).to_contain_text("Welcome Acme")
         print("e2e smoke OK")
     except Exception:
         os.makedirs(ART, exist_ok=True)
