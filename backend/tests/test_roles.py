@@ -66,3 +66,28 @@ def test_self_leave_and_owner_delete(team):
     assert t["owner"].delete("/api/orgs/current").status_code == 204
     assert t["admin"].get("/api/orgs").json() == []
     assert t["owner"].get("/api/orgs").json() == []
+
+
+def test_folder_snippet_roles(client, outbox):
+    from .conftest import add_member, signup
+    signup(client, "o@x.co", "Org")
+    ed, vw = add_member(client, outbox, "e@x.co", "editor"), add_member(client, outbox, "v@x.co", "viewer")
+    ad = add_member(client, outbox, "a@x.co", "admin")
+    assert vw.post("/api/folders", json={"name": "F"}).status_code == 403
+    fo = ed.post("/api/folders", json={"name": "F"}).json()["id"]
+    sid = ed.post(f"/api/folders/{fo}/snippets", json={"title": "S"}).json()["id"]
+    doc = {"content": {"type": "doc", "content": []}}
+    assert vw.get("/api/folders").status_code == 200 and vw.get(f"/api/folders/{fo}/snippets").status_code == 200
+    assert vw.get(f"/api/snippets/{sid}").status_code == 200
+    assert vw.get(f"/api/folders/{fo}/changes").status_code == 200
+    for method, url, body in [
+        ("post", f"/api/folders/{fo}/snippets", {"title": "T"}), ("put", f"/api/snippets/{sid}/draft", doc),
+        ("delete", f"/api/snippets/{sid}/draft", None), ("post", f"/api/snippets/{sid}/resolve", doc),
+        ("post", f"/api/snippets/{sid}/restore", {"version": "abc1234"}),
+        ("post", f"/api/folders/{fo}/commit", {"message": "m", "snippet_ids": [sid]}),
+        ("post", f"/api/folders/{fo}/tags", {"name": "v1"}), ("patch", f"/api/folders/{fo}", {"name": "Z"}),
+        ("delete", f"/api/folders/{fo}", None)]:
+        assert getattr(vw, method)(url, **({"json": body} if body is not None else {})).status_code == 403, url
+    assert ed.delete(f"/api/folders/{fo}").status_code == 403  # admin only
+    assert ed.post(f"/api/folders/{fo}/commit", json={"message": "m", "snippet_ids": [sid]}).status_code == 201
+    assert ad.delete(f"/api/folders/{fo}").status_code == 204

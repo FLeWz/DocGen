@@ -112,7 +112,7 @@ def test_every_org_id_table_has_rls_and_not_null(owner_engine):
             "select c.relname, c.relrowsecurity, col.is_nullable from pg_class c "
             "join information_schema.columns col on col.table_name=c.relname and col.column_name='org_id' "
             "where c.relkind='r' and col.table_schema='public'")).all()
-    assert {r[0] for r in rows} >= {"memberships", "invites"}
+    assert {r[0] for r in rows} >= {"memberships", "invites", "folders", "snippets", "drafts"}
     assert all(r[1] and r[2] == "NO" for r in rows), rows
 
 
@@ -123,6 +123,15 @@ COVERED = {  # every API route must be listed: a new endpoint forces a new isola
     "GET /api/members", "PATCH /api/members/{user_id}", "DELETE /api/members/{user_id}",
     "GET /api/invites", "POST /api/invites", "POST /api/invites/{id}/resend", "DELETE /api/invites/{id}",
     "POST /api/invites/lookup", "POST /api/invites/accept",  # token-scoped, see test_invites
+    "GET /api/folders", "POST /api/folders", "PATCH /api/folders/{folder_id}", "DELETE /api/folders/{folder_id}",
+    "GET /api/folders/{folder_id}/snippets", "POST /api/folders/{folder_id}/snippets",
+    "GET /api/folders/{folder_id}/changes", "POST /api/folders/{folder_id}/commit",
+    "GET /api/folders/{folder_id}/history", "GET /api/folders/{folder_id}/tags",
+    "POST /api/folders/{folder_id}/tags", "DELETE /api/folders/{folder_id}/tags/{name}",
+    "GET /api/snippets/{snippet_id}", "GET /api/snippets/{snippet_id}/draft", "PUT /api/snippets/{snippet_id}/draft",
+    "DELETE /api/snippets/{snippet_id}/draft", "POST /api/snippets/{snippet_id}/resolve",
+    "POST /api/snippets/{snippet_id}/restore", "GET /api/snippets/{snippet_id}/history",
+    "GET /api/snippets/{snippet_id}/diff",  # all covered by test_b_cannot_touch_a_git_objects
 }
 
 
@@ -138,3 +147,67 @@ def test_all_routes_covered_and_no_client_org_id(client):
             schema = op.get("requestBody", {}).get("content", {}).get("application/json", {}).get("schema", {})
             ref = schema.get("$ref", "").split("/")[-1]
             assert "org_id" not in spec["components"]["schemas"].get(ref, {}).get("properties", {})
+
+
+# --- folders / git ----------------------------------------------------------------------------
+
+def test_b_cannot_touch_a_git_objects(world):
+    from app.git import repo as git
+    a, b = world["a"], world["b"]
+    fo = a.post("/api/folders", json={"name": "Secret"}).json()["id"]
+    sid = a.post(f"/api/folders/{fo}/snippets", json={"title": "S"}).json()["id"]
+    doc = {"content": {"type": "doc", "content": [{"type": "paragraph"}]}}
+    a.put(f"/api/snippets/{sid}/draft", json=doc)
+    sha = a.post(f"/api/folders/{fo}/commit", json={"message": "m", "snippet_ids": [sid]}).json()["sha"]
+    a.post(f"/api/folders/{fo}/tags", json={"name": "v1"})
+    head_before = git.head(git.repo_path(world["a_org"], fo))
+    bfo = b.post("/api/folders", json={"name": "Mine"}).json()["id"]
+    bsid = b.post(f"/api/folders/{bfo}/snippets", json={"title": "B"}).json()["id"]
+    b.put(f"/api/snippets/{bsid}/draft", json=doc)
+
+    calls = [
+        ("patch", f"/api/folders/{fo}", {"name": "x"}), ("delete", f"/api/folders/{fo}", None),
+        ("get", f"/api/folders/{fo}/snippets", None), ("post", f"/api/folders/{fo}/snippets", {"title": "x"}),
+        ("get", f"/api/folders/{fo}/changes", None), ("get", f"/api/folders/{fo}/history", None),
+        ("post", f"/api/folders/{fo}/commit", {"message": "x", "snippet_ids": [sid]}),
+        ("post", f"/api/folders/{bfo}/commit", {"message": "x", "snippet_ids": [sid]}),  # A snippet into B folder
+        ("get", f"/api/folders/{fo}/tags", None), ("post", f"/api/folders/{fo}/tags", {"name": "v9", "sha": sha}),
+        ("delete", f"/api/folders/{fo}/tags/v1", None),
+        ("get", f"/api/snippets/{sid}", None), ("get", f"/api/snippets/{sid}?version={sha}", None),
+        ("get", f"/api/snippets/{sid}?version=v1", None),
+        ("get", f"/api/snippets/{sid}/draft", None), ("put", f"/api/snippets/{sid}/draft", doc),
+        ("delete", f"/api/snippets/{sid}/draft", None), ("post", f"/api/snippets/{sid}/resolve", doc),
+        ("post", f"/api/snippets/{sid}/restore", {"version": sha}),
+        ("get", f"/api/snippets/{sid}/history", None),
+        ("get", f"/api/snippets/{sid}/diff?from={sha}&to={sha}", None),
+    ]
+    for method, url, body in calls:
+        r = getattr(b, method)(url, **({"json": body} if body is not None else {}))
+        assert r.status_code == 404, (method, url, r.status_code)
+    # B's own snippet can't be asked for A's commit sha, nor A's folder moved under B (and vice versa)
+    assert b.get(f"/api/snippets/{bsid}?version={sha}").status_code == 404
+    assert b.patch(f"/api/folders/{bfo}", json={"parent_id": fo}).status_code == 404
+    assert a.post("/api/folders", json={"name": "x", "parent_id": bfo}).status_code == 404
+    assert b.get("/api/folders").json() == [{"id": bfo, "parent_id": None, "name": "Mine"}]
+    # nothing of A changed; B's repo is separate and contains none of A's objects
+    assert git.head(git.repo_path(world["a_org"], fo)) == head_before
+    assert a.get(f"/api/folders/{fo}/tags").json() == [{"name": "v1", "sha": sha}]
+    assert a.get(f"/api/snippets/{sid}/draft").json()["exists"] is False
+    b_org = b.get("/api/orgs/current").json()["id"]
+    assert git.repo_path(b_org, bfo) != git.repo_path(world["a_org"], fo)
+    assert git.head(git.repo_path(b_org, bfo)) is None
+
+
+def test_rls_blocks_cross_org_git_index_rows(world):
+    a = world["a"]
+    fo = a.post("/api/folders", json={"name": "F"}).json()["id"]
+    a.post(f"/api/folders/{fo}/snippets", json={"title": "S"})
+    b_org = world["b"].get("/api/orgs/current").json()["id"]
+    with _app_conn() as c:
+        assert c.scalar(text("select count(*) from folders")) == 0  # no context -> nothing
+        c.execute(text("select set_config('app.org_id', :o, false)"), {"o": b_org})
+        for t in ("folders", "snippets", "drafts"):
+            assert c.scalar(text(f"select count(*) from {t}")) == 0
+        with pytest.raises(Exception):
+            c.execute(text("insert into folders (id, org_id, name) values (gen_random_uuid(), :o, 'x')"),
+                      {"o": world["a_org"]})

@@ -12,6 +12,9 @@ APP_URL = _app.set(database=TEST_DB)
 os.environ["MIGRATE_DATABASE_URL"] = OWNER_URL.render_as_string(hide_password=False)
 os.environ["DATABASE_URL"] = APP_URL.render_as_string(hide_password=False)
 
+import tempfile  # noqa: E402
+os.environ["REPOS_ROOT"] = tempfile.mkdtemp(prefix="repos-")  # never the real /repos volume
+
 import pytest  # noqa: E402
 from alembic import command  # noqa: E402
 from alembic.config import Config  # noqa: E402
