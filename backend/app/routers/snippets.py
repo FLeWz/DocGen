@@ -1,11 +1,13 @@
+import re
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from sqlalchemy import Text, cast
 
 from .. import vcs
 from ..deps import Ctx, require
 from ..git import content as C, repo as git
-from ..models import Draft, Role, Snippet
+from ..models import DocDraft, DocRef, Draft, Folder, Role, Snippet
 from ..schemas import DraftIn, RestoreIn, SnippetCreateIn, SnippetOut
 
 router = APIRouter(tags=["snippets"])
@@ -105,3 +107,23 @@ def diff(snippet_id: UUID, from_: str = Query(alias="from", max_length=64), to: 
     s = vcs.get_snippet(ctx, snippet_id)
     a, b = vcs.rev_version(ctx, s, from_), vcs.rev_version(ctx, s, to)
     return dict(from_sha=a["sha"], to_sha=b["sha"], **C.diff(s.id, a, b))
+
+
+@router.delete("/snippets/{snippet_id}", status_code=204)
+def delete_snippet(snippet_id: UUID, ctx: Ctx = E):
+    """Refused (409) while any document version or draft references it. A committed snippet is removed from HEAD
+    in a final commit; its history stays in git (old commits, tags) but it leaves the index and the library."""
+    s = vcs.get_snippet(ctx, snippet_id)
+    ctx.db.scalar(ctx.repo(Folder).query().where(Folder.id == s.folder_id).with_for_update())  # serialize with commits
+    if ctx.repo(DocRef).first(DocRef.snippet_id == s.id) or ctx.repo(DocDraft).first(
+            cast(DocDraft.body, Text).contains(str(s.id))):
+        raise HTTPException(409, "snippet is used by a document; remove it from the document first")
+    if s.head_sha:
+        repo = vcs.repo_of(ctx, s.folder_id)
+        try:
+            git.commit(repo, re.sub(r"[<>\n]", "", ctx.user.name).strip() or "user", ctx.user.email,
+                       f"Delete snippet {s.slug}\n\nSnippet-Id: {s.id}\n", {}, deletes=git.ls(repo, git.head(repo), f"snippets/{s.slug}"))
+        except git.GitError as e:
+            raise HTTPException(409, f"git commit failed: {e}")
+    ctx.repo(Snippet).delete(s)  # drafts cascade
+    ctx.db.commit()

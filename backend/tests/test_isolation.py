@@ -151,6 +151,8 @@ COVERED = {  # every API route must be listed: a new endpoint forces a new isola
     "POST /api/import/docx", "GET /api/imports", "GET /api/imports/{import_id}", "PUT /api/imports/{import_id}",
     "GET /api/imports/{import_id}/export", "GET /api/imports/{import_id}/split", "POST /api/imports/{import_id}/split",
     "POST /api/imports/{import_id}/selection-snippet", "POST /api/imports/{import_id}/base-document",
+    # milestone 8: test_b_cannot_delete_a_snippets_and_imports / test_cleanup_is_org_scoped
+    "DELETE /api/imports/{import_id}", "DELETE /api/snippets/{snippet_id}", "POST /api/maintenance/cleanup",
 }
 
 
@@ -370,3 +372,26 @@ def test_rls_blocks_cross_org_import_rows(world):
         with pytest.raises(Exception):
             c.execute(text("insert into imports (id, org_id, title, filename, content) values "
                            "(gen_random_uuid(), :o, 't', 'f', '{}')"), {"o": world["a_org"]})
+
+
+def test_b_cannot_delete_a_snippets_and_imports(world):
+    from .test_import import imp
+    from .test_git import mk, save
+    a, b = world["a"], world["b"]
+    iid = imp(a).json()["id"]
+    fo = a.post("/api/folders", json={"name": "F"}).json()["id"]
+    sid = mk(a, fo, "S")
+    save(a, sid, "x")
+    assert b.delete(f"/api/imports/{iid}").status_code == 404
+    assert b.delete(f"/api/snippets/{sid}").status_code == 404
+    assert a.get(f"/api/imports/{iid}").status_code == 200 and a.get(f"/api/snippets/{sid}").status_code == 200
+
+
+def test_cleanup_is_org_scoped(world, owner_engine):
+    from .test_editor import PNG
+    a, b = world["a"], world["b"]
+    img = a.post("/api/images", files={"file": ("x.png", PNG, "image/png")}).json()["id"]
+    with owner_engine.begin() as c:
+        c.execute(text("update images set created_at = now() - interval '3 days'"))
+    assert b.post("/api/maintenance/cleanup").json()["images_deleted"] == 0  # B is owner of its own org only
+    assert a.get(f"/api/images/{img}").status_code == 200

@@ -175,3 +175,15 @@ def tag_delete(repo, name: str) -> None:
     if not TAG.fullmatch(name) or name not in {t["name"] for t in tags(repo)}:
         raise NotFound(name)
     _git(repo, "tag", "-d", name)
+
+
+def ls(repo, sha: str, prefix: str) -> list[str]:
+    """File paths under `prefix/` at commit `sha`."""
+    return _git(repo, "ls-tree", "-r", "--name-only", sha, "--", prefix + "/").decode().splitlines()
+
+
+def ever_paths(repo) -> set[str]:
+    """Every path that appears in any commit of the repo (used to find images still needed by history)."""
+    if not head(repo):
+        return set()
+    return set(_git(repo, "log", "--all", "--name-only", "--format=").decode().split("\n")) - {""}

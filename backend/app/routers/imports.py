@@ -72,6 +72,15 @@ def get_import(import_id: UUID, ctx: Ctx = V):
     return dict(**_meta(i), content=i.content, warnings=i.warnings)
 
 
+@router.delete("/imports/{import_id}", status_code=204)
+def delete_import(import_id: UUID, ctx: Ctx = E):
+    """Row + original file; images it created stay until the cleanup endpoint finds them unreferenced."""
+    i = _get(ctx, import_id)
+    ctx.repo(Import).delete(i)
+    ctx.db.commit()
+    import_path(ctx.org_id, i.id).unlink(missing_ok=True)
+
+
 @router.put("/imports/{import_id}")
 def put_import(import_id: UUID, body: ImportPut, ctx: Ctx = E):
     i = _get(ctx, import_id)

@@ -1,4 +1,5 @@
 """Uploaded-file storage under FILES_ROOT/{org_id}/images/{image_id}.{ext}; paths come from UUIDs only."""
+import shutil
 from pathlib import Path
 from uuid import UUID
 
@@ -25,3 +26,7 @@ def import_path(org_id, import_id) -> Path:
     p = (ROOT / str(UUID(str(org_id))) / "imports" / f"{UUID(str(import_id))}.docx").resolve()
     assert p.is_relative_to(ROOT)
     return p
+
+
+def remove_org(org_id) -> None:
+    shutil.rmtree(ROOT / str(UUID(str(org_id))), ignore_errors=True)

@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 
 from ..db import set_ctx
+from .. import files
 from ..git import repo as git
 from ..deps import Ctx, org_ctx, require, user_ctx
 from .. import styles
@@ -59,3 +60,4 @@ def delete_current(ctx: Ctx = Depends(require(Role.owner))):
     ctx.db.delete(ctx.db.get(Organization, org_id))  # DB cascades memberships/invites/folders, nulls sessions
     ctx.db.commit()
     git.remove_org(org_id)
+    files.remove_org(org_id)
