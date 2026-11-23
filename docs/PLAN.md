@@ -39,7 +39,7 @@ Storage volumes: `pgdata`; `repos` -> `/repos/{org_id}/{folder_id}.git`, `/repos
 | base_documents* (M4) | id, org_id, name, file path in `_base.git` |
 | styles* (M3) | org style set |
 | exports* (M4) | id, org_id, document_id, user_id, pins json, variables json, format, status, file path |
-| jobs* (M4) | DB-backed queue for exports |
+| jobs (M4) | merged into `exports` (status column); executed by an in-process thread pool |
 
 ## API (`/api`, OpenAPI at `/api/docs`)
 
@@ -54,7 +54,7 @@ Roles: viewer reads/exports; editor edits/commits/builds; admin members/invites/
 1. **Skeleton + auth + orgs + invites + isolation tests** (done)
 2. Folders + git-backed snippets + draft/commit/history/diff/tags/conflicts
 3. Snippet editor (TipTap) + preview + styles
-4. Base documents + document builder + DOCX export + export records/jobs
+4. Base documents + document builder + DOCX export + export records/jobs (done)
 5. Dynamic variables/tables + revision history + linked docs
 6. PDF export via Gotenberg
 7. DOCX import, snippet from selection, round-trip tests

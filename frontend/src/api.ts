@@ -40,7 +40,26 @@ export type Style = { id: string; style_id: string; name: string; kind: "paragra
 export type Draft = { snippet_id: string; title: string; slug: string; content: Doc; styles: string[]; variables: string[];
   exists: boolean; base_sha: string | null; head_sha: string | null; conflict: boolean; dirty: boolean };
 export type Commit = { sha: string; author_name: string; author_email: string; date: string; message: string; snippet_ids: string[]; tags: string[] };
-export type Change = { snippet_id: string; slug: string; title: string; status: "new" | "modified"; conflict: boolean; text: string;
+export type Change = { kind?: "document"; document_id?: string | null; snippet_id: string | null; slug: string; title: string; status: "new" | "modified"; conflict: boolean; text: string;
   summary: { added: number; removed: number; changed: number; unchanged: number }; three_way: ThreeWay | null };
 export type ThreeWay = { snippet_id: string; slug: string; base: { content: Doc } | null; theirs: { content: Doc } | null; mine: { content: Doc } };
 export const pretty = (v: unknown) => JSON.stringify(v, null, 2);
+
+// ---- milestone 4: base documents, documents, library, exports ----
+export type BaseDocVersion = { id: string; sha: string; number: number; filename: string; size: number; message: string;
+  placeholders: { content: boolean; slots: string[] }; created_at: string };
+export type BaseDoc = { id: string; name: string; head: BaseDocVersion | null };
+export type Pin = { type: "commit" | "tag" | "latest"; value: string | null };
+export type Block = { id: string; slot: string } & (
+  | { type: "snippet_ref"; folder_id: string; snippet_id: string; version: Pin }
+  | { type: "heading"; text: string; level: number; styleId: string | null; numbered: boolean }
+  | { type: "page_break" } | { type: "toc" });
+export type LinkedDoc = { title: string; doc_id: string | null; version: string | null; url: string | null };
+export type DocBody = { title: string; slug: string; base_document: { id: string; version: string | null } | null; blocks: Block[];
+  variables: { declarations: { name: string; type: string; default: unknown }[]; values: Record<string, string> }; links: LinkedDoc[] };
+export type DocFull = DocBody & { id: string; folder_id: string; head_sha: string | null; has_draft: boolean; dirty?: boolean; conflict?: boolean };
+export type DocRow = { id: string; folder_id: string; slug: string; title: string; head_sha: string | null; has_draft: boolean };
+export type RefStatus = { block_id: string; folder_name: string | null; title: string | null; slug: string | null; missing: boolean; pin: Pin;
+  resolved_sha: string | null; latest_sha: string | null; newer_commits: number; update_available: boolean };
+export type LibraryGroup = { folder_id: string; folder_name: string; tags: string[]; snippets: { id: string; title: string; slug: string; head_sha: string }[] };
+export type ExportStatus = { id: string; status: "queued" | "running" | "done" | "error"; error: string | null; warnings: string[] };

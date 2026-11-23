@@ -20,3 +20,4 @@ test-frontend:
 # Needs the stack running; host venv + browsers (see e2e/smoke.py). Not part of `make test`.
 test-e2e:
 	PLAYWRIGHT_BROWSERS_PATH=$(CURDIR)/.playwright .venv/bin/python e2e/smoke.py
+	PLAYWRIGHT_BROWSERS_PATH=$(CURDIR)/.playwright .venv/bin/python e2e/docbuilder.py

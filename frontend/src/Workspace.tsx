@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { api, Change, Commit, Folder, Me, pretty, SnippetRow, Style, ThreeWay } from "./api";
+import { api, Change, Commit, DocRow, Folder, Me, pretty, SnippetRow, Style, ThreeWay } from "./api";
+import { DocBuilder } from "./builder/DocBuilder";
 import { PMNode } from "./editor/doc";
 import { Preview, SnippetEditor, useStyles } from "./editor/SnippetEditor";
 
@@ -29,6 +30,7 @@ function Editor({ id, folder, me, onClose, onCommit }: { id: string; folder: str
       <h3>Edit snippet <button onClick={onClose}>Close</button></h3>
       <SnippetEditor id={id} me={me} epoch={epoch} onCommit={onCommit} />
       <SnippetHistory id={id} folder={folder} me={me} onRestored={() => setEpoch((e) => e + 1)} />
+      <UsedBy id={id} />
     </section>
   );
 }
@@ -65,6 +67,18 @@ function SnippetHistory({ id, folder, me, onRestored }: { id: string; folder: st
   );
 }
 
+function UsedBy({ id }: { id: string }) {
+  const u = useQuery({ queryKey: ["usedby", id], queryFn: () => api<{ document_id: string; title: string; folder_name: string; versions: { commit_sha: string; current: boolean; pin: { type: string; value: string | null } }[] }[]>(`/snippets/${id}/used-by`) });
+  return (
+    <div>
+      <h4>Used by</h4>
+      {u.data?.length === 0 && <p><small>No committed document references this snippet.</small></p>}
+      <ul>{u.data?.map((d) => <li key={d.document_id}>{d.folder_name} / <b>{d.title}</b>:{" "}
+        {d.versions.map((v) => <span key={v.commit_sha}><code>{short(v.commit_sha)}</code>{v.current ? " (current)" : ""} pins {v.pin.type === "latest" ? "latest" : short(v.pin.value)}; </span>)}</li>)}</ul>
+    </div>
+  );
+}
+
 function Conflict({ c, onDone, styles }: { c: ThreeWay; onDone: () => void; styles: Style[] }) {
   const [text, setText] = useState(pretty(c.mine.content));
   const res = useMutation({
@@ -85,6 +99,8 @@ function Conflict({ c, onDone, styles }: { c: ThreeWay; onDone: () => void; styl
   );
 }
 
+const key = (c: Change) => (c.kind === "document" ? c.document_id! : c.snippet_id!);
+
 function CommitTab({ folder, me }: { folder: string; me: Me }) {
   const qc = useQueryClient();
   const styles = useStyles(me).data ?? [];
@@ -92,7 +108,9 @@ function CommitTab({ folder, me }: { folder: string; me: Me }) {
   const [picked, setPicked] = useState<Set<string>>(new Set()), [msg, setMsg] = useState("");
   const refresh = () => qc.invalidateQueries();
   const commit = useMutation({
-    mutationFn: () => api(`/folders/${folder}/commit`, "POST", { message: msg, snippet_ids: [...picked] }),
+    mutationFn: () => api(`/folders/${folder}/commit`, "POST", {
+      message: msg, snippet_ids: ch.data!.filter((c) => c.kind !== "document" && picked.has(key(c))).map((c) => c.snippet_id),
+      document_ids: ch.data!.filter((c) => c.kind === "document" && picked.has(key(c))).map((c) => c.document_id) }),
     onSuccess: () => { setMsg(""); setPicked(new Set()); refresh(); },
   });
   const toggle = (id: string) => setPicked((p) => { const n = new Set(p); if (n.has(id)) n.delete(id); else n.add(id); return n; });
@@ -102,9 +120,9 @@ function CommitTab({ folder, me }: { folder: string; me: Me }) {
       <h3>Commit</h3>
       {ch.data.length === 0 && <p>No changes.</p>}
       {ch.data.map((c) => (
-        <div key={c.snippet_id}>
-          <label><input type="checkbox" checked={picked.has(c.snippet_id)} onChange={() => toggle(c.snippet_id)} />{" "}
-            <b>{c.title}</b> ({c.status}{c.conflict ? ", CONFLICT" : ""}) +{c.summary.added} −{c.summary.removed} ~{c.summary.changed} blocks</label>
+        <div key={key(c)}>
+          <label><input type="checkbox" checked={picked.has(key(c))} onChange={() => toggle(key(c))} />{" "}
+            <b>{c.kind === "document" ? "📄 " : ""}{c.title}</b> ({c.status}{c.conflict ? ", CONFLICT" : ""}) +{c.summary.added} −{c.summary.removed} ~{c.summary.changed} blocks</label>
           {c.three_way ? <Conflict c={c.three_way} onDone={refresh} styles={styles} /> : <pre style={{ maxHeight: 200, overflow: "auto" }}>{c.text}</pre>}
         </div>
       ))}
@@ -144,8 +162,14 @@ function FolderHistory({ folder, me }: { folder: string; me: Me }) {
 
 function FolderView({ folder, me }: { folder: Folder; me: Me }) {
   const qc = useQueryClient();
-  const [tab, setTab] = useState<"snippets" | "commit" | "history">("snippets");
+  const [tab, setTab] = useState<"snippets" | "documents" | "commit" | "history">("snippets");
   const [open, setOpen] = useState<string | null>(null);
+  const [openDoc, setOpenDoc] = useState<string | null>(null);
+  const docs = useQuery({ queryKey: ["documents", folder.id], queryFn: () => api<DocRow[]>(`/documents?folder_id=${folder.id}`) });
+  const createDoc = useMutation({
+    mutationFn: (title: string) => api<DocRow>("/documents", "POST", { folder_id: folder.id, title }),
+    onSuccess: (d) => { qc.invalidateQueries({ queryKey: ["documents"] }); setOpenDoc(d.id); },
+  });
   const [q, setQ] = useState("");
   const list = useQuery({ queryKey: ["snippets", folder.id, q], queryFn: () => api<SnippetRow[]>(`/folders/${folder.id}/snippets?q=${encodeURIComponent(q)}`) });
   const create = useMutation({
@@ -155,7 +179,7 @@ function FolderView({ folder, me }: { folder: Folder; me: Me }) {
   return (
     <div>
       <h2>{folder.name}</h2>
-      <nav>{(["snippets", "commit", "history"] as const).map((t) =>
+      <nav>{(["snippets", "documents", "commit", "history"] as const).map((t) =>
         <button key={t} disabled={tab === t} onClick={() => setTab(t)}>{t}</button>)}</nav>
       {tab === "snippets" && (open ? <Editor id={open} folder={folder.id} me={me} onClose={() => setOpen(null)} onCommit={() => setTab("commit")} /> : (
         <section>
@@ -166,6 +190,15 @@ function FolderView({ folder, me }: { folder: Folder; me: Me }) {
           {canEdit(me) && <form onSubmit={(e) => { e.preventDefault(); const f = e.currentTarget; create.mutate(new FormData(f).get("title") as string); f.reset(); }}>
             <input name="title" placeholder="New snippet title" required /> <button>Add snippet</button></form>}
           <Err e={create.error ?? list.error} />
+        </section>))}
+      {tab === "documents" && (openDoc ? <DocBuilder id={openDoc} me={me} onClose={() => { setOpenDoc(null); qc.invalidateQueries({ queryKey: ["documents"] }); }} onCommit={() => { setOpenDoc(null); setTab("commit"); }} /> : (
+        <section>
+          <ul>{docs.data?.map((d) => (
+            <li key={d.id}><a href="#" onClick={(e) => { e.preventDefault(); setOpenDoc(d.id); }}>{d.title}</a>{" "}
+              <small>{d.slug} · {short(d.head_sha)}{d.has_draft ? " · draft" : ""}</small></li>))}</ul>
+          {canEdit(me) && <form onSubmit={(e) => { e.preventDefault(); const f = e.currentTarget; createDoc.mutate(new FormData(f).get("title") as string); f.reset(); }}>
+            <input name="title" placeholder="New document title" required /> <button>Add document</button></form>}
+          <Err e={createDoc.error ?? docs.error} />
         </section>))}
       {tab === "commit" && <CommitTab folder={folder.id} me={me} />}
       {tab === "history" && <FolderHistory folder={folder.id} me={me} />}
