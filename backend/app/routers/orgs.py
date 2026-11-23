@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 
 from ..db import set_ctx
+from ..git import repo as git
 from ..deps import Ctx, org_ctx, require, user_ctx
 from ..models import Membership, Organization, Role
 from ..schemas import OrgCreateIn, OrgOut, SwitchIn
@@ -52,5 +53,7 @@ def switch(body: SwitchIn, ctx: Ctx = Depends(user_ctx)):
 
 @router.delete("/current", status_code=204)
 def delete_current(ctx: Ctx = Depends(require(Role.owner))):
-    ctx.db.delete(ctx.db.get(Organization, ctx.org_id))  # DB cascades memberships/invites, nulls sessions
+    org_id = ctx.org_id
+    ctx.db.delete(ctx.db.get(Organization, org_id))  # DB cascades memberships/invites/folders, nulls sessions
     ctx.db.commit()
+    git.remove_org(org_id)
