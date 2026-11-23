@@ -1,3 +1,4 @@
 set -e
 alembic upgrade head
+[ "$SEED_DEMO" = 1 ] && python -m app.seed
 exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips '*'

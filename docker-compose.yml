@@ -30,6 +30,7 @@ services:
       SMTP_STARTTLS: ${SMTP_STARTTLS:-false}
       SMTP_FROM: ${SMTP_FROM:-DocGen <noreply@docgen.local>}
       PDF_URL: http://pdf:3000
+      SEED_DEMO: ${SEED_DEMO:-0}
     volumes: [repos:/repos, files:/files]
     depends_on:
       db: {condition: service_healthy}
