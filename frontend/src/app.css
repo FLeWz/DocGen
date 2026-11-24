@@ -152,6 +152,11 @@ dialog.modal::backdrop { background: #10162066; }
 .list .t { font-weight: 500; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .list small { color: var(--muted); max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dropzone { position: relative; display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center; padding: 32px; margin-bottom: var(--sp-4); border: 2px dashed var(--border-strong); border-radius: var(--radius); background: var(--surface); cursor: pointer; }
 .dropzone:hover, .dropzone.over, .dropzone:focus-within { border-color: var(--primary); background: var(--primary-soft); } .dropzone input { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%; }
+.splitbar { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; } .splitbar .small { margin-left: auto; }
+.outline { list-style: none; margin: 0; padding: 0; max-height: 320px; overflow: auto; border: 1px solid var(--border); border-radius: var(--radius-s); }
+.outline li { display: flex; gap: 10px; align-items: center; padding: 4px 8px; border-bottom: 1px solid var(--border); } .outline li.on { background: var(--primary-soft); } .outline li:last-child { border-bottom: 0; }
+.outline .chk { flex: 1; min-width: 0; } .outline .t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .outline .lv { font-size: 11px; font-weight: 700; color: var(--muted); width: 22px; flex: none; }
+.outline small, .ttl { flex: none; } .ttl { width: 200px; height: 26px; } .chk .ttl { margin-left: 8px; } .splitlist small.warn { color: var(--warn, #b45309); }
 .splitlist { margin: 0; padding-left: 22px; max-height: 260px; overflow: auto; }
 
 /* ---- editor page ---- */

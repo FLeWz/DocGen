@@ -4,8 +4,6 @@ import { Navigate, Route, Routes, useNavigate } from "react-router-dom";
 import { api, Invite, isAdmin, Me, Member, Role, ROLES } from "../api";
 import { PageHead } from "../Shell";
 import { Badge, Empty, ErrorBanner, fmtDate, Icon, Skeleton, useUI } from "../ui";
-import { BaseDocs } from "./BaseDocs";
-import { Styles } from "./Styles";
 
 const form = (fn: (d: FormData, f: HTMLFormElement) => void) => (e: FormEvent<HTMLFormElement>) => { e.preventDefault(); fn(new FormData(e.currentTarget), e.currentTarget); };
 
@@ -81,7 +79,7 @@ function General({ me }: { me: Me }) {
 
 export function Settings({ me }: { me: Me }) {
   const admin = isAdmin(me.org?.role);
-  const tabs = [{ to: "/settings/members", label: "Members" }, ...(admin ? [{ to: "/settings/invites", label: "Invites" }] : []), { to: "/settings/base-documents", label: "Base documents" }, { to: "/settings/styles", label: "Styles" }, { to: "/settings/general", label: "General" }];
+  const tabs = [{ to: "/settings/members", label: "Members" }, ...(admin ? [{ to: "/settings/invites", label: "Invites" }] : []), { to: "/settings/general", label: "General" }];
   return (
     <div className="page">
       <PageHead crumbs={[{ label: "Dashboard", to: "/" }, { label: "Settings" }]} title={`${me.org!.name} settings`} tabs={tabs} />
@@ -89,8 +87,8 @@ export function Settings({ me }: { me: Me }) {
         <Route index element={<Navigate to="members" replace />} />
         <Route path="members" element={<Members me={me} />} />
         <Route path="invites" element={admin ? <Invites me={me} /> : <Navigate to="../members" replace />} />
-        <Route path="base-documents" element={<BaseDocs me={me} />} />
-        <Route path="styles" element={<Styles me={me} />} />
+        <Route path="base-documents" element={<Navigate to="/base-documents" replace />} />{/* moved to the side menu */}
+        <Route path="styles" element={<Navigate to="/styles" replace />} />
         <Route path="general" element={<General me={me} />} />
         <Route path="*" element={<Navigate to="members" replace />} />
       </Routes>

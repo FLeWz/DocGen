@@ -80,7 +80,7 @@
 .docx .ProseMirror .pgbrk ~ br.ProseMirror-trailingBreak { display: none; } /* the placeholder line PM adds after a trailing page break is no line in Word */
 /* spacing before is not drawn at the top of a page (LibreOffice; Word does the same after automatic page breaks) */
 .docx-pages .docx-page:not(:first-child) .pv > :first-child, .docx .ProseMirror > .pgtop { margin-top: 0 !important; }
-.tb-sel { height: 28px; font-size: 12px; max-width: 90px; } .tb-color { width: 28px; height: 28px; padding: 0; border: 1px solid var(--border); background: none; }
+.tb-sel { height: 28px; font-size: 12px; max-width: 90px; } .tb-sel.tb-size { width: 112px; max-width: none; flex: none; } .tb-color { width: 28px; height: 28px; padding: 0; border: 1px solid var(--border); background: none; }
 
 /* {{ CONTENT }} / {{ SLOT:name }} placeholder paragraph of a base document */
 .docx .ProseMirror p[data-slot] { border: 2px dashed var(--ok, #12b76a); background: color-mix(in srgb, var(--ok, #12b76a) 10%, transparent); padding: 4px 8px; font-family: ui-monospace, monospace; }

@@ -9,10 +9,11 @@ import { blockRange, selectedBlocks } from "../editor/blockrange";
 import { RichEditor } from "../editor/SnippetEditor";
 import { canEdit, folderLabel, ImportRow, useFolders, useImports } from "../data";
 import { PageHead } from "../Shell";
+import { Conflict, conflictOf, NameConflictModal } from "./BaseDocs";
+import { SplitDialog } from "./SplitDialog";
 import { Badge, Banner, Empty, ErrorBanner, Field, Icon, Modal, Skeleton, Spinner, ago, useUI } from "../ui";
 
 type ImportDoc = ImportRow & { content: Doc; warnings: string[] };
-type Section = { title: string; start: number; end: number; blocks: number; level: number | null };
 type Created = { id: string; title: string; slug: string; warnings: string[] };
 
 export function ImportsPage({ me }: { me: Me }) {
@@ -51,17 +52,17 @@ export function ImportPage({ me }: { me: Me }) {
   const [panel, setPanel] = useState<"sel" | "split" | "base" | "vars" | null>(null);
   const [rev, setRev] = useState(0), [sel2, setSel2] = useState<{ picks: Pick[]; error: string }>({ picks: [], error: "" }), edRef = useRef<Editor | null>(null);
   const [range, setRange] = useState<[number, number]>([0, 1]), picked = useRef<unknown[]>([]);
-  const [folder, setFolder] = useState(""), [title, setTitle] = useState(""), [level, setLevel] = useState(1), [name, setName] = useState("");
+  const [folder, setFolder] = useState(""), [title, setTitle] = useState(""), [name, setName] = useState("");
   const f = folder || folders.data?.[0]?.id || "";
   const edit = canEdit(me), admin = isAdmin(me.org?.role);
-  const preview = useQuery({ queryKey: ["split", id, level], enabled: panel === "split", queryFn: () => api<Section[]>(`/imports/${id}/split?level=${level}`) });
   const done = (t: string) => { ui.toast(t); setPanel(null); qc.invalidateQueries(); };
   const sel = useMutation({ mutationFn: () => api<Created>(`/imports/${id}/selection-snippet`, "POST", { folder_id: f, title, blocks: picked.current }), // the blocks themselves: independent of the autosave reaching the server
      onSuccess: (r) => done(`Created snippet draft "${r.title}"${r.warnings.length ? ` (${r.warnings[0]})` : ""}`) });
-  const split = useMutation({ mutationFn: () => api<Created[]>(`/imports/${id}/split`, "POST", { folder_id: f, level }), onSuccess: (r) => done(`Created ${r.length} snippet drafts`) });
   // the editor holds the old text after the server replaced values: a new key makes it load the stored content again
   const applyVars = () => api(`/imports/${id}/variables`, "POST", { items: sel2.picks }).then(() => { if (sel2.picks.length) { setRev((r) => r + 1); return qc.invalidateQueries({ queryKey: qkey }); } });
-  const base = useMutation({ mutationFn: async () => { if (sel2.picks.length) await applyVars(); return api<{ name: string }>(`/imports/${id}/base-document`, "POST", { name }); }, onSuccess: (r) => done(`Saved as base document "${r.name}"`) });
+  const [clash, setClash] = useState<Conflict | null>(null), applied = useRef(false); // the variables are replaced once, even if the name must be changed and we retry
+  const base = useMutation({ mutationFn: async (body: { name?: string; base_document_id?: string }) => { if (sel2.picks.length && !applied.current) { await applyVars(); applied.current = true; } return api<{ name: string; version: number }>(`/imports/${id}/base-document`, "POST", body); },
+    onSuccess: (r) => { setClash(null); done(r.version > 1 ? `Saved as version ${r.version} of base document "${r.name}"` : `Saved as base document "${r.name}"`); }, onError: (e) => setClash(conflictOf(e)) });
   const vars = useMutation({ mutationFn: applyVars, onSuccess: () => done(`Replaced ${sel2.picks.length} value${sel2.picks.length === 1 ? "" : "s"} by variables`) });
   const insertSlot = async (named: boolean) => {
     const ed = edRef.current;
@@ -104,15 +105,7 @@ export function ImportPage({ me }: { me: Me }) {
             {folderPick}<Field label="Snippet title">{(i) => <input id={i} value={title} onChange={(e) => setTitle(e.target.value)} required autoFocus />}</Field><ErrorBanner e={sel.error} />
           </form>
         </Modal>)}
-      {panel === "split" && (
-        <Modal title="Split by headings" wide onClose={() => setPanel(null)} actions={<>{cancel}<button className="btn primary" disabled={!f || !preview.data?.length || split.isPending} onClick={() => split.mutate()}>Create {preview.data?.length ?? 0} snippets</button></>}>
-          <div className="stack">
-            <Field label="Split at">{(i) => <select id={i} value={level} onChange={(e) => setLevel(+e.target.value)}><option value={1}>Heading 1</option><option value={2}>Heading 1 and 2</option></select>}</Field>
-            {preview.isLoading ? <Skeleton rows={3} /> : <ol data-testid="split-preview" className="splitlist">{preview.data?.map((s) => <li key={s.start}>{s.title} <small>({s.blocks} blocks)</small></li>)}</ol>}
-            {preview.data?.length === 0 && <Banner kind="info">Nothing to split at this level.</Banner>}
-            {folderPick}<ErrorBanner e={split.error} />
-          </div>
-        </Modal>)}
+      {panel === "split" && <SplitDialog me={me} id={id} total={q.data?.content.content?.length ?? 0} onClose={() => setPanel(null)} />}
       {panel === "vars" && (
         <Modal title="Find variables" wide onClose={() => setPanel(null)} actions={<>{cancel}<button className="btn primary" disabled={!sel2.picks.length || !!sel2.error || vars.isPending} onClick={() => vars.mutate()}>Replace with variables</button></>}>
           <div className="stack"><p className="muted">Values that look like per-document data: cover text, header/footer text and fields, dates, version numbers. Tables of contents/figures, tables and the body are left alone. Chosen values become <code>{"{{ name }}"}</code> (formatting kept); the detected value is the default. Built-in names (<code>doc.title</code>, <code>doc.version</code>, <code>doc.date</code>, <code>author</code>, <code>org.name</code>) are filled by the exporter.</p>
@@ -120,13 +113,14 @@ export function ImportPage({ me }: { me: Me }) {
         </Modal>)}
       {panel === "base" && (
         <Modal title="Use as base document" onClose={() => setPanel(null)} actions={<>{cancel}<button className="btn primary" form="base-form" disabled={base.isPending || !!sel2.error}>Save as base document</button></>}>
-          <form id="base-form" className="stack" onSubmit={(e) => { e.preventDefault(); base.mutate(); }}>
+          <form id="base-form" className="stack" onSubmit={(e) => { e.preventDefault(); base.mutate({ name }); }}>
             <p className="muted">Keeps this file as it is — cover, table of contents, section breaks, header/footer, styles, numbering and page setup — and replaces the main body (from the first Heading 1, or at the <code>{"{{ CONTENT }}"}</code> paragraph you inserted) by the <code>{"{{ CONTENT }}"}</code> placeholder.</p>
             <h3>Per-document values</h3>
             <Candidates url={`/imports/${id}/variables`} onPicks={setSel2} />{sel2.error && <ErrorBanner e={new Error(sel2.error)} />}
-            <Field label="Base document name">{(i) => <input id={i} value={name} onChange={(e) => setName(e.target.value)} required autoFocus />}</Field><ErrorBanner e={base.error} />
+            <Field label="Base document name">{(i) => <input id={i} value={name} onChange={(e) => setName(e.target.value)} required autoFocus />}</Field><ErrorBanner e={clash ? null : base.error} />
           </form>
         </Modal>)}
+      {clash && <NameConflictModal c={clash} busy={base.isPending} error={base.error} onVersion={() => base.mutate({ base_document_id: clash.base_document_id })} onRename={() => setClash(null)} onClose={() => setClash(null)} />}
     </div>
   );
 }

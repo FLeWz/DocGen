@@ -256,8 +256,8 @@ export function Ribbon({ editor, ro, styles, mode = "body", onErr, structure, on
   const insert = <>
     <G label="Tables">
       <I i="table" t="Insert table 3×3" fn={() => run().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()} />
-      <select className="tb-sel" aria-label="Insert table with size" disabled={off} value="" onChange={(e) => { const [r, c] = e.target.value.split("x").map(Number); if (r) run().insertTable({ rows: r, cols: c, withHeaderRow: true }).run(); }}>
-        <option value="">Rows×cols</option>{["2x2", "3x2", "3x3", "4x3", "5x4", "6x5", "8x6", "10x4"].map((v) => <option key={v} value={v}>{v.replace("x", " × ")}</option>)}</select>
+      <select className="tb-sel tb-size" aria-label="Insert table with size" disabled={off} value="" onChange={(e) => { const [r, c] = e.target.value.split("x").map(Number); if (r) run().insertTable({ rows: r, cols: c, withHeaderRow: true }).run(); }}>
+        <option value="">Rows × cols</option>{["2x2", "3x2", "3x3", "4x3", "5x4", "6x5", "8x6", "10x4"].map((v) => <option key={v} value={v}>{v.replace("x", " × ")}</option>)}</select>
     </G>
     <G label="Illustrations">
       <I i="image" t="Insert image from file" fn={() => document.getElementById(hf ? "img-in-hf" : "img-in")?.click()} />

@@ -60,7 +60,7 @@ export const pretty = (v: unknown) => JSON.stringify(v, null, 2);
 export type BaseDocVersion = { id: string; sha: string; number: number; filename: string; size: number; message: string;
   placeholders: { content: boolean; slots: string[] }; variables: VarDecl[]; created_at: string };
 export type VarCandidate = { id: string; kind: string; value: string; locs: Record<string, number>; name: string; include: boolean };
-export type BaseDoc = { id: string; name: string; head: BaseDocVersion | null };
+export type BaseDoc = { id: string; name: string; head: BaseDocVersion | null; version_count: number; used_by: number; created_at: string; updated_at: string };
 export type Pin = { type: "commit" | "tag" | "latest"; value: string | null };
 export type Block = { id: string; slot: string } & (
   | { type: "snippet_ref"; folder_id: string; snippet_id: string; version: Pin }

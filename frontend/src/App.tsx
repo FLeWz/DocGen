@@ -1,12 +1,14 @@
 import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { AcceptInvite, Login } from "./auth";
 import { useMe } from "./data";
+import { BaseDocsPage } from "./pages/BaseDocs";
 import { CommitPage } from "./pages/Commit";
 import { Dashboard } from "./pages/Dashboard";
 import { FolderPage } from "./pages/Folder";
 import { HistoryPage } from "./pages/History";
 import { ImportPage, ImportsPage } from "./pages/Imports";
 import { Settings } from "./pages/Settings";
+import { StylesPage } from "./pages/Styles";
 import { SnippetPage } from "./pages/Snippet";
 import { DocumentPage } from "./pages/Document";
 import { Shell } from "./Shell";
@@ -28,6 +30,8 @@ export function App() {
           <Route path="documents/:id" element={<DocumentPage me={m} />} />
           <Route path="imports" element={<ImportsPage me={m} />} />
           <Route path="imports/:id" element={<ImportPage me={m} />} />
+          <Route path="base-documents" element={<BaseDocsPage me={m} />} />
+          <Route path="styles" element={<StylesPage me={m} />} />
           <Route path="commit/:folderId" element={<CommitPage me={m} />} />
           <Route path="history/:kind/:id" element={<HistoryPage me={m} />} />
           <Route path="settings/*" element={<Settings me={m} />} />

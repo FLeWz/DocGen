@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { FormEvent, useState } from "react";
 import { api, isAdmin, Me, Style } from "../api";
+import { PageHead } from "../Shell";
 import { Badge, ErrorBanner, Field, Icon, Modal, Skeleton, useUI } from "../ui";
 
 const num = (v: FormDataEntryValue | null) => (v === "" || v === null ? null : Number(v));
@@ -71,5 +72,14 @@ export function Styles({ me }: { me: Me }) {
           </form>
         </Modal>)}
     </section>
+  );
+}
+
+export function StylesPage({ me }: { me: Me }) {
+  return (
+    <div className="page">
+      <PageHead crumbs={[{ label: "Dashboard", to: "/" }, { label: "Styles" }]} title="Styles" />
+      <Styles me={me} />
+    </div>
   );
 }

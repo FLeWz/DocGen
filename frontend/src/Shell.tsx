@@ -212,6 +212,8 @@ export function Shell({ me }: { me: Me }) {
             <div className="navlinks">
               <NavLink to="/" end><Icon n="home" />Dashboard</NavLink>
               <NavLink to="/imports"><Icon n="upload" />Imports</NavLink>
+              <NavLink to="/base-documents"><Icon n="layers" />Base documents</NavLink>
+              <NavLink to="/styles"><Icon n="edit" />Styles</NavLink>
               <NavLink to="/settings"><Icon n="settings" />Settings</NavLink>
             </div>
             {me.org ? <Tree me={me} /> : null}
