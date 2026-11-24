@@ -20,6 +20,12 @@ async def csrf_guard(request: Request, call_next):
     return await call_next(request)
 
 
+@app.exception_handler(base_documents.NameExists)
+async def name_exists(request: Request, e: base_documents.NameExists):
+    # top-level fields for scripts, `detail.message` for the SPA's error banner
+    return JSONResponse({**e.body, "detail": {**e.body, "message": f"A base document named {e.body['name']} already exists"}}, status_code=409)
+
+
 for r in (auth, orgs, members, invites, folders, snippets, commits, styles, images, base_documents, documents, exports, library, imports, maintenance, render, overview):
     app.include_router(r.router, prefix="/api")
 

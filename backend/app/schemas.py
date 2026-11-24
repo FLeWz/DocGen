@@ -227,6 +227,14 @@ class BaseDocOut(BaseModel):
     id: UUID
     name: str
     head: BaseDocVersionOut | None = None
+    version_count: int = 0
+    used_by: int = 0  # documents (committed or draft) pinning it
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+class BaseDocRename(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
 
 
 SlotName = Field(default="CONTENT", pattern=r"^[A-Za-z_]\w{0,39}$")
@@ -404,7 +412,10 @@ class SelectionIn(BaseModel):
 
 class SplitIn(BaseModel):
     folder_id: UUID
-    level: int = Field(ge=1, le=2)  # 1 = split at Heading 1, 2 = at Heading 1 and 2
+    level: int | None = Field(default=None, ge=1, le=2)  # 1 = split at Heading 1, 2 = at Heading 1 and 2
+    headings: list[int] | None = Field(default=None, max_length=1000)  # ... or exactly these heading blocks (indexes)
+    titles: dict[int, str] | None = Field(default=None, max_length=1001)  # snippet title per heading index; -1 = preface
+    preface: bool = False  # explicit headings only: blocks before the first one become a 'Front matter' snippet
 
 
 class ImportBaseIn(BaseModel):

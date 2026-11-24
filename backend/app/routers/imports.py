@@ -14,14 +14,14 @@ from ..models import BaseDocument, Image, Import, Organization, Role
 from ..ooxml import rel_ids
 from ..schemas import VarPicks, ImportBaseIn, ImportPut, ImportSnippetOut, SelectionIn, SplitIn
 from . import images
-from .base_documents import _get as get_base, _read, _store
+from .base_documents import _get as get_base, _read, _store, add_base
 
 router = APIRouter(tags=["imports"])
 V = Depends(require(Role.viewer))
 E = Depends(require(Role.editor))
 A = Depends(require(Role.admin))
 DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-MAX_SECTIONS = 200
+MAX_SECTIONS = 1000
 
 
 def _get(ctx: Ctx, id: UUID) -> Import:
@@ -153,21 +153,38 @@ def export_import(import_id: UUID, ctx: Ctx = V):
         "X-Export-Warnings": str(len(warnings))})
 
 
-def _sections(content: dict, level: int) -> list[dict]:
-    """Top-level blocks cut before every Heading <= level; blocks before the first heading form 'Front matter'."""
-    blocks, cuts = content.get("content") or [], []
-    for k, b in enumerate(blocks):
-        if b.get("type") == "heading" and (b.get("attrs") or {}).get("level", 1) <= level:
-            cuts.append(k)
-    bounds = ([0] if not cuts or cuts[0] > 0 else []) + cuts + [len(blocks)]
+def _headings(content: dict) -> list[dict]:
+    """Every heading (top-level block): its block index, level, title, and the blocks/characters up to the next heading."""
+    blocks = content.get("content") or []
+    hs = [k for k, b in enumerate(blocks) if b.get("type") == "heading"]
+    out = []
+    for k, e in zip(hs, hs[1:] + [len(blocks)]):
+        out.append(dict(index=k, level=(blocks[k].get("attrs") or {}).get("level", 1), title=(D.block_text(blocks[k]).strip() or "Untitled section")[:200],
+                        blocks=e - k, chars=sum(len(D.block_text(b)) for b in blocks[k:e])))
+    return out
+
+
+def _sections(content: dict, level: int | None = None, cuts: list[int] | None = None, preface: bool = True, titles: dict | None = None) -> list[dict]:
+    """Top-level blocks cut before every Heading <= level (or before the explicit `cuts`: a snippet runs to the next
+    cut, so unselected headings merge into the previous one). Blocks before the first cut are 'Front matter' if `preface`."""
+    blocks = content.get("content") or []
+    if cuts is None:
+        cuts = [k for k, b in enumerate(blocks) if b.get("type") == "heading" and (b.get("attrs") or {}).get("level", 1) <= level]
+    bounds = ([0] if preface and (not cuts or cuts[0] > 0) else []) + cuts + [len(blocks)]
     out = []
     for s, e in zip(bounds, bounds[1:]):
         head = blocks[s] if s in cuts else None
         title = (D.block_text(head).strip() if head else "Front matter") or "Untitled section"
         if head is None and not any(D.block_text(b).strip() or b.get("type") != "paragraph" for b in blocks[s:e]):
             continue  # nothing but empty paragraphs before the first heading
+        title = ((titles or {}).get(s if head else -1) or "").strip() or title
         out.append(dict(title=title[:200], start=s, end=e, blocks=e - s, level=(head or {}).get("attrs", {}).get("level")))
     return out
+
+
+@router.get("/imports/{import_id}/headings")
+def headings(import_id: UUID, ctx: Ctx = V):
+    return _headings(_get(ctx, import_id).content)
 
 
 @router.get("/imports/{import_id}/split")
@@ -186,13 +203,27 @@ def _make(ctx: Ctx, folder, title: str, blocks: list) -> ImportSnippetOut:
 
 @router.post("/imports/{import_id}/split", status_code=201, response_model=list[ImportSnippetOut])
 def split_apply(import_id: UUID, body: SplitIn, ctx: Ctx = E):
+    """`level` (old: all headings up to it) or `headings` (explicit block indexes) + optional `titles` ({index: title},
+    -1 = the preface) and `preface`."""
     i, f = _get(ctx, import_id), vcs.get_folder(ctx, body.folder_id)
-    secs = _sections(i.content, body.level)
+    blocks = i.content.get("content") or []
+    if (body.level is None) == (body.headings is None):
+        raise HTTPException(422, "give either level or headings")
+    if body.headings is not None:
+        cuts = sorted(set(body.headings))
+        bad = [k for k in cuts if not 0 <= k < len(blocks) or blocks[k].get("type") != "heading"]
+        if bad:
+            raise HTTPException(422, f"not a heading block: {bad[:5]}")
+        secs = _sections(i.content, cuts=cuts, preface=body.preface, titles=body.titles)
+    else:
+        secs = _sections(i.content, body.level)
     if not secs:
         raise HTTPException(422, "nothing to split")
     if len(secs) > MAX_SECTIONS:
         raise HTTPException(422, f"too many sections (max {MAX_SECTIONS})")
-    out = [_make(ctx, f, s["title"], i.content["content"][s["start"]:s["end"]]) for s in secs]
+    if any(len(str(blocks[s["start"]:s["end"]])) > vcs.MAX_DOC for s in secs):
+        raise HTTPException(413, "a section is too large for a snippet")
+    out = [_make(ctx, f, s["title"], blocks[s["start"]:s["end"]]) for s in secs]
     ctx.db.commit()
     return out
 
@@ -225,7 +256,7 @@ def use_as_base(import_id: UUID, body: ImportBaseIn, ctx: Ctx = A):
     i = _get(ctx, import_id)
     if bool(body.name) == bool(body.base_document_id):
         raise HTTPException(422, "give either name (new base document) or base_document_id (new version)")
-    bd = get_base(ctx, body.base_document_id) if body.base_document_id else ctx.repo(BaseDocument).add(name=body.name)
+    bd = get_base(ctx, body.base_document_id) if body.base_document_id else add_base(ctx, body.name)
     try:
         data = D.as_base_doc(_orig(ctx, i), i.content, _asset(ctx))
     except Exception as e:

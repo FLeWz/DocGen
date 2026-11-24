@@ -375,3 +375,70 @@ def test_selection_blocks_payload_does_not_need_the_stored_copy(team, long_doc):
     assert ed.post(f"/api/imports/{iid}/selection-snippet", json={"folder_id": fo, "title": "evil", "blocks": bad}).status_code == 422
     assert ed.post(f"/api/imports/{iid}/selection-snippet", json={"folder_id": fo, "title": "none"}).status_code == 422
     assert team["viewer"].post(f"/api/imports/{iid}/selection-snippet", json={"folder_id": fo, "title": "v", "blocks": new[:1]}).status_code == 403
+
+
+# ---- explicit heading split (round 6) ----
+
+def heading_doc(spec):
+    """spec: list of (level, title) or str paragraphs -> docx bytes"""
+    d = Document()
+    for x in spec:
+        d.add_heading(x[1], x[0]) if isinstance(x, tuple) else d.add_paragraph(x)
+    b = io.BytesIO()
+    d.save(b)
+    return b.getvalue()
+
+
+def split_titles(c, fo, iid, **body):
+    r = c.post(f"/api/imports/{iid}/split", json={"folder_id": fo, **body})
+    assert r.status_code == 201, r.text
+    return [s["title"] for s in r.json()]
+
+
+def drafts(c, fo):
+    return {s["title"]: len(c.get(f"/api/snippets/{s['id']}/draft").json()["content"]["content"]) for s in c.get(f"/api/folders/{fo}/snippets").json()}
+
+
+def test_split_explicit_headings_merge_preface_and_titles(team):
+    ed = team["editor"]
+    iid = imp(ed, heading_doc(["intro text", (1, "A"), "a1", (2, "A.1"), "a11", (3, "A.1.1"), "a111", (1, "B"), "b1", (2, "B.1"), "b11"]), "h.docx").json()["id"]
+    hs = ed.get(f"/api/imports/{iid}/headings").json()
+    assert [(h["level"], h["title"]) for h in hs] == [(1, "A"), (2, "A.1"), (3, "A.1.1"), (1, "B"), (2, "B.1")]
+    assert [h["index"] for h in hs] == [1, 3, 5, 7, 9] and [h["blocks"] for h in hs] == [2, 2, 2, 2, 2] and hs[0]["chars"] == len("A") + len("a1")
+    idx = {h["title"]: h["index"] for h in hs}
+    fo = folder(ed)
+    # two non-adjacent headings: unselected A.1/A.1.1 merge into A, B.1 into B; no preface by default
+    assert split_titles(ed, fo, iid, headings=[idx["B"], idx["A"]]) == ["A", "B"]
+    assert drafts(ed, fo) == {"A": 6, "B": 4}
+    # nested subset + preface + custom title (the others keep the heading text)
+    fo2 = folder(ed, "F2")
+    assert split_titles(ed, fo2, iid, headings=[idx["A.1"], idx["B.1"]], preface=True, titles={idx["A.1"]: "  Renamed ", -1: "Intro"}) == ["Intro", "Renamed", "B.1"]
+    assert drafts(ed, fo2) == {"Intro": 3, "Renamed": 6, "B.1": 2}  # preface+A+a1 | A.1..B+b1 | B.1+b11
+    # same titles again in a folder: slugs get a suffix, no 409
+    assert split_titles(ed, fo2, iid, headings=[idx["A.1"]]) == ["A.1"]
+    assert len({s["slug"] for s in ed.get(f"/api/folders/{fo2}/snippets").json()}) == 4
+    # old level parameter still works
+    assert split_titles(ed, folder(ed, "F3"), iid, level=1) == ["Front matter", "A", "B"]
+
+
+def test_split_explicit_validation(team):
+    ed = team["editor"]
+    iid = imp(ed, heading_doc(["p", (1, "A"), "x"]), "h.docx").json()["id"]
+    fo = folder(ed)
+    for body in ({"headings": [0]}, {"headings": [99]}, {"headings": [-1]}, {"headings": []}, {}, {"level": 1, "headings": [1]},
+                 {"headings": [1], "titles": {"x": "y"}}):
+        assert ed.post(f"/api/imports/{iid}/split", json={"folder_id": fo, **body}).status_code == 422, body
+    assert team["viewer"].post(f"/api/imports/{iid}/split", json={"folder_id": fo, "headings": [1]}).status_code == 403
+    assert team["viewer"].get(f"/api/imports/{iid}/headings").status_code == 200
+    assert ed.get(f"/api/folders/{fo}/snippets").json() == []  # nothing half-created
+
+
+def test_split_500_headings(team):
+    ed = team["editor"]
+    iid = imp(ed, heading_doc([x for i in range(520) for x in ((1 if i % 7 == 0 else 2, f"H{i}"), f"t{i}")]), "big.docx").json()["id"]
+    hs = ed.get(f"/api/imports/{iid}/headings").json()
+    assert len(hs) == 520
+    pick = [h["index"] for h in hs if h["level"] == 1]
+    assert len(split_titles(ed, folder(ed), iid, headings=pick)) == len(pick) == 75
+    assert split_titles(ed, folder(ed, "all"), iid, headings=[h["index"] for h in hs]) == [h["title"] for h in hs]
+    assert ed.post(f"/api/imports/{iid}/split", json={"folder_id": folder(ed, "x"), "headings": list(range(1001))}).status_code == 422

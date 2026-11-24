@@ -162,6 +162,9 @@ COVERED = {  # every API route must be listed: a new endpoint forces a new isola
     "DELETE /api/imports/{import_id}", "DELETE /api/snippets/{snippet_id}", "POST /api/maintenance/cleanup",
     # UI round: test_overview.py::test_overview_counts_and_isolation
     "GET /api/overview",
+    # round 6: test_base_manage.py (roles), test_b_cannot_touch_a_documents/_imports (isolation)
+    "PATCH /api/base-documents/{id}", "DELETE /api/base-documents/{id}", "GET /api/base-documents/{id}/usage",
+    "GET /api/imports/{import_id}/headings",
 }
 
 
@@ -306,6 +309,8 @@ def test_b_cannot_touch_a_documents(world):
         ("put", f"/api/documents/{bdoc}/draft", body),  # B referencing A's snippet
         ("put", f"/api/documents/{bdoc}/draft", {"base_document": {"id": bd["id"]}}),  # ... or A's base doc
         ("get", f"/api/styles?base_doc={bd['id']}", None),
+        ("patch", f"/api/base-documents/{bd['id']}", {"name": "mine"}), ("delete", f"/api/base-documents/{bd['id']}", None),
+        ("get", f"/api/base-documents/{bd['id']}/usage", None),
     ]
     for method, url, jb in calls:
         r = getattr(b, method)(url, **({"json": jb} if jb is not None else {}))
@@ -320,6 +325,8 @@ def test_b_cannot_touch_a_documents(world):
     from app.git import repo as git
     assert git.base_repo_path(world["a_org"]) != git.base_repo_path(b.get("/api/orgs/current").json()["id"])
     assert len(a.get("/api/base-documents").json()) == 1
+    assert b.post("/api/base-documents", data={"name": "base"}).status_code == 201  # names are unique per org, not globally
+    assert [x["name"] for x in a.get("/api/base-documents").json()] == ["Base"]
 
 
 def test_rls_blocks_cross_org_document_rows(world):
@@ -349,7 +356,8 @@ def test_b_cannot_touch_a_imports(world):
     calls = [
         ("get", f"/api/imports/{iid}", None), ("put", f"/api/imports/{iid}", {"content": {"type": "doc", "content": []}}),
         ("get", f"/api/imports/{iid}/export", None), ("get", f"/api/imports/{iid}/split?level=1", None),
-        ("get", f"/api/imports/{iid}/headers-footers", None),
+        ("get", f"/api/imports/{iid}/headers-footers", None), ("get", f"/api/imports/{iid}/headings", None),
+        ("post", f"/api/imports/{iid}/split", {"folder_id": bfo, "headings": [0]}),
         ("post", f"/api/imports/{iid}/split", {"folder_id": bfo, "level": 1}),  # A's import into B's folder
         ("post", f"/api/imports/{iid}/selection-snippet", {**sel, "folder_id": bfo}),
         ("post", f"/api/imports/{iid}/base-document", {"name": "stolen"}),
