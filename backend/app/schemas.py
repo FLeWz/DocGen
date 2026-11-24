@@ -7,6 +7,8 @@ from typing import Annotated, Any, Literal, Union
 
 from pydantic import BaseModel as _B, ConfigDict, EmailStr, Field, field_validator, model_validator
 
+from .dates import parse_date
+
 
 class BaseModel(_B):
     model_config = ConfigDict(from_attributes=True)
@@ -334,17 +336,14 @@ class VarDecl(BaseModel):
     columns: list[Annotated[str, Field(pattern=r"^[A-Za-z_]\w*$", max_length=40)]] = Field(default=[], max_length=20)
 
 
-def _check_value(t: str, v: Any) -> None:
+def _check_value(t: str, v: Any) -> None:  # date values are stored as ISO by Variables._typed
     scalar = (str, int, float, bool, type(None))
     if v is None:
         return
     if t in ("text", "date") and not isinstance(v, str):
         raise ValueError("expected text")
-    if t == "date":
-        try:
-            datetime.fromisoformat(v) if v else None
-        except ValueError:
-            raise ValueError("expected an ISO date (YYYY-MM-DD)")
+    if t == "date" and v and parse_date(v) is None:
+        raise ValueError("expected a date (DD.MM.YYYY or YYYY-MM-DD)")
     if t == "number" and (isinstance(v, bool) or not isinstance(v, (int, float))):
         raise ValueError("expected a number")
     if t == "list":
@@ -368,6 +367,11 @@ class Variables(BaseModel):
                     _check_value(d.type, v)
                 except ValueError as e:
                     raise ValueError(f"variable {d.name}: {what}: {e}")
+            if d.type == "date":  # canonical storage: ISO, whatever was typed
+                if self.values.get(d.name):
+                    self.values[d.name] = parse_date(self.values[d.name]).isoformat()
+                if d.default:
+                    d.default = parse_date(d.default).isoformat()
         return self
 
 

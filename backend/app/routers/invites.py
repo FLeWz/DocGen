@@ -35,7 +35,7 @@ def send(ctx: Ctx, i: Invite, token: str) -> bool:
     link = f"{config.PUBLIC_URL}/accept-invite?token={token}"
     return mail.send_mail(i.email, f"You're invited to {org.name} on DocGen",
         f"{ctx.user.name} invited you to join {org.name} as {i.role}.\n\nAccept: {link}\n\n"
-        f"The link works once and expires on {i.expires_at:%Y-%m-%d}.")
+        f"The link works once and expires on {i.expires_at:%d.%m.%Y}.")
 
 
 @router.post("", status_code=201, response_model=InviteOut)

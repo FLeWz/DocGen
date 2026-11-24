@@ -233,7 +233,7 @@ class _Parser:
             elif t == "docgenField":
                 code, arg = c.get("code"), c.get("arg") or ""
                 if code in HF_VARS:
-                    out.append({"type": "variable", "attrs": {"name": HF_VARS[code], "default": "", "filter": "date:YYYY-MM-DD" if "date" in HF_VARS[code] else None}, **({"marks": mk} if mk else {})})
+                    out.append({"type": "variable", "attrs": {"name": HF_VARS[code], "default": "", "filter": "date:DD.MM.YYYY" if "date" in HF_VARS[code] else None}, **({"marks": mk} if mk else {})})
                 else:
                     out.append({"type": "field", "attrs": {"code": code, "arg": arg, "text": c.get("text") or ""}, **({"marks": mk} if mk else {})})
             elif t == "br":

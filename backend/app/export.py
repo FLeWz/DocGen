@@ -11,6 +11,7 @@ from fastapi import HTTPException
 
 import httpx
 
+from .dates import dmy
 from . import base_docs, config, docs, docx_export, files, vcs
 from .db import SessionLocal, set_ctx
 from .deps import Ctx
@@ -143,7 +144,7 @@ def revision_rows(ctx: Ctx, d: Document, blocks: list[dict], base: dict | None =
                 continue
             c = vcs.commit_out(c, tm)
             subject = c["message"].split("\n")[0]
-            rows[c["sha"]] = dict(version=(c["tags"] or [c["sha"][:7]])[0], date=c["date"][:10], author=c["author_name"], message=subject,
+            rows[c["sha"]] = dict(version=(c["tags"] or [c["sha"][:7]])[0], date=dmy(c["date"][:10]), author=c["author_name"], message=subject,
                                   sections=sec, commit=subject, _k=(c["date"], c["sha"]))
 
     repo = vcs.repo_of(ctx, d.folder_id)

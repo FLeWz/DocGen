@@ -45,6 +45,7 @@ def test_sections_and_commit_per_revision(ws):
     assert "Upload version 1" not in by  # the first upload is not a revision
     assert "Manual chapter" in by["Release R9"]["sections"] and "Guide" in by["Release R9"]["sections"]
     assert all(x["message"] == x["commit"] and set(x) == {"version", "date", "author", "message", "sections", "commit"} for x in rows)  # old keys stay
+    assert all(__import__("re").fullmatch(r"\d\d\.\d\d\.\d{4}", x["date"]) for x in rows)  # round 11: DD.MM.YYYY
     assert rows == c.get(f"/api/documents/{ws['doc']}/revision-history").json()  # deterministic
 
 

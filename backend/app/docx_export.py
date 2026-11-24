@@ -11,6 +11,8 @@ import json
 import re
 from datetime import datetime
 
+from .dates import FMT, dmy, parse_date
+
 from docx import Document
 from docx.opc.constants import RELATIONSHIP_TYPE as RT
 from docx.oxml import OxmlElement
@@ -65,11 +67,11 @@ def make_env(missing: set) -> SandboxedEnvironment:
     def datefmt(v, fmt):
         if isinstance(v, Undefined):
             return v
-        try:
-            d = datetime.fromisoformat(str(v))
-        except ValueError:
+        d = parse_date(v)
+        if d is None:
             return v
-        return d.strftime(re.sub("|".join(_DATE), lambda m: _DATE[m[0]], fmt))
+        fmt = (fmt or "").strip() or FMT  # no format: DD.MM.YYYY
+        return datetime(d.year, d.month, d.day).strftime(re.sub("|".join(_DATE), lambda m: _DATE[m[0]], fmt))
     env.filters["datefmt"] = datefmt
     return env
 
@@ -193,11 +195,14 @@ def context(spec: dict) -> dict:
             ctx[a][b] = val
         else:
             ctx[a] = val
+    for d in [*spec.get("base_variables", []), *v.get("declarations", [])]:  # date variables always render DD.MM.YYYY
+        if d.get("type") == "date" and "." not in d["name"] and d["name"] in ctx:
+            ctx[d["name"]] = dmy(ctx[d["name"]])
     bi = spec["built_ins"]
-    ctx.update({"doc": {"title": bi["doc.title"], "version": bi["doc.version"], "date": bi["doc.date"]},
+    ctx.update({"doc": {"title": bi["doc.title"], "version": bi["doc.version"], "date": dmy(bi["doc.date"])},
                 "org": {"name": bi["org.name"]}, "author": bi["author"],
                 "linked_documents": [_clean(l, id=l.get("doc_id"), link=l.get("url")) for l in spec.get("links", [])],
-                "revision_history": [_clean(r) for r in spec.get("revision_history") or []]})
+                "revision_history": [_clean(r, date=dmy(r.get("date"))) for r in spec.get("revision_history") or []]})
     return ctx
 
 
@@ -718,7 +723,7 @@ def build(spec: dict, base: bytes, load_content, load_asset) -> tuple[bytes, lis
     b.write_notes()
     roots = [body] + [r.target_part.element for r in doc.part.rels.values() if r.reltype in (RT.HEADER, RT.FOOTER)]
     missing: set = set()
-    fix_fields(roots, spec["built_ins"], warnings)
+    fix_fields(roots, {**spec["built_ins"], "doc.date": dmy(spec["built_ins"]["doc.date"])}, warnings)
     tw = text_width(body.iter(qn("w:sectPr")))
     for r in roots[1:]:
         clip_tables(r, tw, warnings)
@@ -733,7 +738,7 @@ def build(spec: dict, base: bytes, load_content, load_asset) -> tuple[bytes, lis
     _fix_settings(doc)
     cp, bi = doc.core_properties, spec["built_ins"]
     cp.title, cp.author, cp.last_modified_by, cp.revision = bi["doc.title"], bi["author"], bi["author"], 1
-    cp.created = cp.modified = datetime.fromisoformat(bi["doc.date"])
+    cp.created = cp.modified = datetime.fromisoformat(parse_date(bi["doc.date"]).isoformat())
     out = io.BytesIO()
     doc.save(out)
     return stable_zip(out.getvalue()), warnings

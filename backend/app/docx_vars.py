@@ -13,6 +13,8 @@ import zipfile
 
 from lxml import etree
 
+from .dates import dmy, parse_date
+
 W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 W = "{%s}" % W_NS
 KEEP = {"PAGE", "NUMPAGES", "SECTIONPAGES", "SECTION", "PAGEREF", "TOC", "TOA", "TC", "XE", "SEQ", "HYPERLINK", "NOTEREF",
@@ -23,7 +25,6 @@ DOCPROP = {"title": "doc.title", "author": "author", "company": "org.name", "las
            "createtime": "doc.date", "savetime": "doc.date"}
 HINTS = (("title", "doc.title"), ("version", "doc.version"), ("revision", "doc.version"), ("date", "doc.date"),
          ("author", "author"), ("prepared", "author"), ("company", "org.name"), ("organi", "org.name"))
-DATE_RE = re.compile(r"\d{1,2}[./-]\d{1,2}[./-]\d{2,4}|\d{4}-\d{2}-\d{2}")
 VERSION_RE = re.compile(r"(?i)(v(ersion)?\.?\s*)?\d+(\.\d+)+|(v(ersion)?|rev(ision)?|issue)\.?\s*\d[\w.]*")
 NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)?")
 BUILTIN_ROOTS = {"doc", "org", "author", "revision_history", "linked_documents"}
@@ -189,7 +190,7 @@ def _walk(root, where: str, plain: bool, marks: set):
         v = text(p).strip()
         if not re.search(r"\w", v) or len(v) > 200:
             continue
-        kind = "date" if DATE_RE.fullmatch(v) else "version" if VERSION_RE.fullmatch(v) else "text"
+        kind = "date" if parse_date(v) else "version" if VERSION_RE.fullmatch(v) else "text"
         yield kind, v, style_of(p), style_of(p) in STRONG_STYLES, where, (lambda name, runs=runs: set_text(runs, "{{ %s }}" % name))
 
 
@@ -234,6 +235,8 @@ def scan(units: list) -> list[dict]:
                                         name=suggest(kind, hint, v, strong),
                                         include=kind != "text" or strong))
             c["locs"][wh] = c["locs"].get(wh, 0) + 1
+            if kind == "date":
+                c["display"] = dmy(v)
     out, used = list(seen.values()), set()
     for c in out:  # distinct values must not share a user variable name unless it is a built-in
         base, n = c["name"], 1
@@ -424,5 +427,6 @@ def package_vars(data: bytes, existing: list | None = None) -> list[dict]:
 
 def picks_decls(items) -> list[dict]:
     """Text variables for the picked names (built-ins are filled by the exporter and never declared); default = detected value."""
-    return [dict(name=i.name, type="text", default=None if i.value.startswith("Error!") else i.value)  # Word's own error text is no default
+    return [dict(name=i.name, **(dict(type="date", default=d.isoformat()) if (d := parse_date(i.value)) else dict(
+        type="text", default=None if i.value.startswith("Error!") else i.value)))  # Word's own error text is no default; dates: typed, stored ISO
             for i in items if i.name.split(".")[0] not in BUILTIN_ROOTS]

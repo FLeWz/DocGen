@@ -155,7 +155,7 @@ def test_revision_history_from_git_and_linked_documents(ws):
         revision_history=[{"version": "9.9", "date": "2020-01-01", "author": "Zed", "message": "Hand written"}])
     rows = texts(export_doc(c, ws["doc"])[0])
     h = rows.index(["Version", "Date", "Author", "Description"])
-    assert rows[h + 1] == ["9.9", "2020-01-01", "Zed", "Hand written"]
+    assert rows[h + 1] == ["9.9", "01.01.2020", "Zed", "Hand written"]
     assert not any("Release one" in x for r in rows for x in r)
     assert c.put(f"/api/documents/{ws['doc']}/draft", json={"revision_history": [{"message": "x" * 501}]}).status_code == 422
 
