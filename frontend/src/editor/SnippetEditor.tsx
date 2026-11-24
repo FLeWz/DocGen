@@ -8,6 +8,7 @@ import { blockRange, hasSelection, selectModeOn, setSelectMode } from "./blockra
 import { extractStyles, extractVariables, PMNode } from "./doc";
 import "./editor.css";
 import { headingNumbering, pagedExtensions } from "./extensions";
+import { TableTools } from "./TableTools";
 import { HeaderFooterEditor, HfPart, HfTarget } from "./HeaderFooter";
 import { Look, LookSrc, PageFrame, useLook, withHf } from "./look";
 import { Ribbon } from "./Ribbon";
@@ -162,7 +163,7 @@ export function RichEditor({ qkey, load, save, keyOf, me, idleSaved, notices = [
         <label>Preview <select aria-label="Preview mode" value={pv} onChange={(e) => setPv(e.target.value as typeof pv)}>
           <option value="live">Live (HTML)</option><option value="word">Render as Word does (PDF)</option><option value="off">Off</option></select></label>
         <label>Zoom <select aria-label="Zoom" value={zoom} onChange={(e) => setZoom(+e.target.value)}>
-          {[0.4, 0.45, 0.5, 0.6, 0.75, 1].map((z) => <option key={z} value={z}>{z * 100}%</option>)}</select></label>
+          {[0.4, 0.45, 0.5, 0.6, 0.75, 1, 1.5].map((z) => <option key={z} value={z}>{z * 100}%</option>)}</select></label>
         <button type="button" className={`btn sm ${guides ? "on" : ""}`} aria-pressed={guides} onClick={() => setGuides(!guides)}>Page guides</button>
         <button type="button" className={`btn sm ${struct ? "on" : ""}`} aria-pressed={struct} title="Outline of headings, marked sections, lists and captions" onClick={() => setStruct(!struct)}>Structure</button>
         {pv === "word" && <button type="button" className="btn sm" disabled={pdf.busy} onClick={renderWord}>{pdf.busy ? "Rendering…" : "Re-render PDF"}</button>}
@@ -177,7 +178,7 @@ export function RichEditor({ qkey, load, save, keyOf, me, idleSaved, notices = [
         <section className="pane" aria-label="Editor pane" ref={paneRef} onMouseDown={(e) => { downAt.current = [e.clientX, e.clientY]; }}
           onClick={(e) => { const d0 = downAt.current; if (d0 && Math.hypot(e.clientX - d0[0], e.clientY - d0[1]) > 4) return; if (!(window.getSelection()?.isCollapsed ?? true)) return; openHfAt(e.clientX, e.clientY); }}>
           <div className="pane-h">Editor{src.import && <span className="muted small" style={{ textTransform: "none", letterSpacing: 0, fontWeight: 400 }}> · click a page header or footer to edit it</span>}</div>
-          <div className="docx-stage"><PageFrame look={look} zoom={zoom} guides={guides} hdrHtml={lay ? pageParts(look, lay.pages[0], lay.total).hdr : undefined} ftrHtml={lay ? pageParts(look, lay.pages[lay.total - 1], lay.total).ftr : undefined}><EditorContent editor={editor} aria-label="Editor" /></PageFrame></div></section>
+          <TableTools editor={editor} ro={ro} /><div className="docx-stage"><PageFrame look={look} zoom={zoom} guides={guides} hdrHtml={lay ? pageParts(look, lay.pages[0], lay.total).hdr : undefined} ftrHtml={lay ? pageParts(look, lay.pages[lay.total - 1], lay.total).ftr : undefined}><EditorContent editor={editor} aria-label="Editor" /></PageFrame></div></section>
         {pv === "live" && <section className="pane" aria-label="Preview pane"><div className="pane-h">Preview</div><Preview doc={doc} styles={styles} look={look} zoom={zoom} guides={guides} /></section>}
         {pv === "word" && <section className="pane" aria-label="Word rendering pane"><div className="pane-h">Rendered as Word does</div>
           {pdf.err && <ErrorBanner e={new Error(pdf.err)} />}

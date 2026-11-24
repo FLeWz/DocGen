@@ -4,7 +4,7 @@
 import type { Editor } from "@tiptap/core";
 import { NodeSelection } from "@tiptap/pm/state";
 import { useEditorState } from "@tiptap/react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, Style } from "../api";
 import { Field, Icon, Modal, useUI } from "../ui";
 import { clearFormatting, indent, insertBlock, setFmt, setList, setPfmt } from "./commands";
@@ -13,6 +13,8 @@ import { findAll, replaceMatches, countWords, type Query } from "./find";
 import { captionLabel, entryText } from "./outline";
 import { blockRange } from "./blockrange";
 import { insertList, markList, markSection, type ListKind } from "./sections";
+import { tableActions, TableTab } from "./TableTools";
+import { textToTable } from "./tables";
 
 /** Fields (`row.x` chips) used in the table around the cursor; the last row's chips are the template. */
 function rowFields(editor: Editor): string[] {
@@ -51,8 +53,9 @@ const G = ({ label, children }: { label: string; children: React.ReactNode }) =>
 const num = (v: unknown) => (typeof v === "number" ? v : Number(v) || 0);
 
 type Dlg = null | "var" | "dyn" | "link" | "symbols" | "find" | "shortcuts" | "xref" | "section" | "list" | "caption" | "mark";
-type TabId = "home" | "insert" | "layout" | "refs" | "review";
+type TabId = "home" | "insert" | "layout" | "refs" | "review" | "table";
 const TABS: [TabId, string][] = [["home", "Home"], ["insert", "Insert"], ["layout", "Layout"], ["refs", "References"], ["review", "Review"]];
+const TABLE_TAB: [TabId, string] = ["table", "Table"];
 
 export function Ribbon({ editor, ro, styles, mode = "body", onErr, structure, onStructure }: {
   editor: Editor; ro: boolean; styles: Style[]; mode?: "body" | "hf"; onErr: (s: string) => void; structure?: boolean; onStructure?: () => void;
@@ -82,6 +85,11 @@ export function Ribbon({ editor, ro, styles, mode = "body", onErr, structure, on
   });
   const run = () => editor.chain().focus();
   const off = ro || !editor.isEditable;
+  const prevTab = useRef<TabId | null>(null);
+  useEffect(() => {  // the contextual Table tab: selected on entering a table, the previous tab comes back on leaving it
+    if (st.table && !ro) { if (tab !== "table") { prevTab.current = tab; setTab("table"); setCollapsed(false); } }
+    else if (tab === "table") setTab(prevTab.current ?? "home");
+  }, [st.table]); // eslint-disable-line react-hooks/exhaustive-deps
   const [lock, setLock] = useState(true);
 
   // shortcuts that open dialogs (Ctrl+K, Ctrl+F, Ctrl+/) come from the editor as `docgen:cmd`
@@ -291,6 +299,7 @@ export function Ribbon({ editor, ro, styles, mode = "body", onErr, structure, on
       <I i="table" t="Insert table 3×3" fn={() => run().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()} />
       <select className="tb-sel tb-size" aria-label="Insert table with size" disabled={off} value="" onChange={(e) => { const [r, c] = e.target.value.split("x").map(Number); if (r) run().insertTable({ rows: r, cols: c, withHeaderRow: true }).run(); }}>
         <option value="">Rows × cols</option>{["2x2", "3x2", "3x3", "4x3", "5x4", "6x5", "8x6", "10x4"].map((v) => <option key={v} value={v}>{v.replace("x", " × ")}</option>)}</select>
+      <I i="table" t="Convert the selected paragraphs to a table (columns split at tabs)" label="Text to table" fn={() => { if (!tableActions(editor, ui).r(textToTable)) onErr("Select some paragraphs outside a table first"); }} />
       {dynBtn}
     </G>
     <G label="Illustrations">
@@ -381,15 +390,17 @@ export function Ribbon({ editor, ro, styles, mode = "body", onErr, structure, on
     <G label="Comments"><span className="small muted" title="Comments of an imported DOCX are kept and written back; adding new ones is not supported.">Existing comments are kept</span></G>
   </>;
 
-  const body = { home, insert, layout, refs, review }[tab];
+  const tabs = st.table && !ro ? [...TABS, TABLE_TAB] : TABS, shown = tab === "table" && !(st.table && !ro) ? "home" : tab;
+  const table = <TableTab editor={editor} ui={ui} off={off} styles={styles} onCaption={() => { setCap({ label: "Table", text: "" }); setDlg("caption"); }} />;
+  const body = { home, insert, layout, refs, review, table }[shown];
   return (
     <div className="ribbon" data-testid="ribbon" onKeyDown={(e) => e.stopPropagation()}>
       <div className="rtabs" role="tablist" aria-label="Ribbon">
-        {TABS.map(([id, label]) => <button key={id} type="button" role="tab" id={`rtab-${hf ? "hf-" : ""}${id}`} className="rtab" aria-selected={tab === id} aria-controls={`rbody-${hf ? "hf" : "doc"}`} onClick={() => pick(id)}>{label}</button>)}
+        {tabs.map(([id, label]) => <button key={id} type="button" role="tab" id={`rtab-${hf ? "hf-" : ""}${id}`} className={`rtab ${id === "table" ? "ctx" : ""}`} aria-selected={shown === id} aria-controls={`rbody-${hf ? "hf" : "doc"}`} onClick={() => pick(id)}>{label}</button>)}
         <span style={{ flex: 1 }} />
         <button type="button" className="tb" title={collapsed ? "Expand the ribbon" : "Collapse the ribbon"} aria-label={collapsed ? "Expand ribbon" : "Collapse ribbon"} aria-expanded={!collapsed} onClick={toggle}><Icon n={collapsed ? "chevD" : "chevU"} /></button>
       </div>
-      <div className={`rbody ${collapsed ? "collapsed" : ""}`} role="tabpanel" id={`rbody-${hf ? "hf" : "doc"}`} aria-label={TABS.find((t) => t[0] === tab)?.[1]}>{body}</div>
+      <div className={`rbody ${collapsed ? "collapsed" : ""}`} role="tabpanel" id={`rbody-${hf ? "hf" : "doc"}`} aria-label={tabs.find((t) => t[0] === shown)?.[1]}>{body}</div>
 
       {dlg === "var" && <Modal title={vf.existing ? "Edit variable" : "Make variable"} onClose={() => setDlg(null)} actions={<><button className="btn" type="button" onClick={() => setDlg(null)}>Cancel</button><button className="btn primary" form="var-form">{vf.existing ? "Update" : "Create"} variable</button></>}>
         <form id="var-form" className="stack" onSubmit={(e) => { e.preventDefault(); saveVariable(); }}>

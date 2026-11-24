@@ -133,8 +133,8 @@ const cap = (fn: (state: EditorState, d: (tr: Transaction) => void) => boolean, 
 const noNull = (o: Record<string, unknown>) => { const r = Object.fromEntries(Object.entries(o).filter(([, v]) => v !== null && v !== undefined && v !== "")); return Object.keys(r).length ? r : null; };
 
 /** Write `grid` into the table and every cell's colwidth (attr-only: positions do not move). `fixed` = the table gets a fixed layout and a dxa width. */
-export function applyGrid(tr: Transaction, tablePos: number, grid: number[], opts: { fixed?: boolean; width?: Record<string, unknown> | null; layout?: string } = {}): Transaction {
-  const table = tr.doc.nodeAt(tablePos)!, map = TableMap.get(table);
+export function applyGrid(tr: Transaction, tablePos: number, grid0: number[], opts: { fixed?: boolean; width?: Record<string, unknown> | null; layout?: string } = {}): Transaction {
+  const grid = grid0.map(Math.round), table = tr.doc.nodeAt(tablePos)!, map = TableMap.get(table);
   for (const k of cellsOf(table, map)) {
     const cw = grid.slice(k.col, k.col + k.cs).map((g) => Math.round(g / 15));
     if (JSON.stringify(cw) !== JSON.stringify(k.node.attrs.colwidth)) tr.setNodeMarkup(tablePos + 1 + k.pos, undefined, { ...k.node.attrs, colwidth: cw });
@@ -334,6 +334,12 @@ export function selectedCells(state: EditorState): { pos: number; node: PMNode }
 export const cellFmt = (patch: Record<string, unknown>): Op => (state) => {
   const tr = state.tr, cells = selectedCells(state);
   cells.forEach((k) => tr.setNodeMarkup(k.pos, undefined, { ...k.node.attrs, cfmt: noNull({ ...(k.node.attrs.cfmt ?? {}), ...patch }) }));
+  return cells.length ? tr : null;
+};
+/** Cell padding (twips) of the given sides of the selected cells; the other sides keep what they had. */
+export const cellMargin = (sides: ("top" | "left" | "bottom" | "right")[], tw: number): Op => (state) => {
+  const tr = state.tr, cells = selectedCells(state);
+  cells.forEach((k) => tr.setNodeMarkup(k.pos, undefined, { ...k.node.attrs, cfmt: noNull({ ...(k.node.attrs.cfmt ?? {}), mar: { ...(k.node.attrs.cfmt?.mar ?? k.node.attrs.eff?.mar ?? {}), ...Object.fromEntries(sides.map((x) => [x, tw])) } }) }));
   return cells.length ? tr : null;
 };
 /** Horizontal alignment: pfmt.jc of every paragraph in the selected cells. */

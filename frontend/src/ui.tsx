@@ -8,7 +8,7 @@ const P: Record<string, string> = {
   upload: "M12 16V4M7 9l5-5 5 5M4 20h16",
   download: "M12 4v12M7 11l5 5 5-5M4 20h16",
   plus: "M12 5v14M5 12h14", x: "M6 6l12 12M18 6L6 18", check: "M5 12l5 5 9-10",
-  chevR: "M9 6l6 6-6 6", chevD: "M6 9l6 6 6-6", more: "M5 12h.01M12 12h.01M19 12h.01",
+  chevR: "M9 6l6 6-6 6", chevL: "M15 6l-6 6 6 6", chevD: "M6 9l6 6 6-6", more: "M5 12h.01M12 12h.01M19 12h.01",
   search: "M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14zM20 20l-4-4", home: "M4 11l8-7 8 7v9h-5v-6H9v6H4z",
   settings: "M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6zM12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1",
   user: "M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM4 21c0-4 4-6 8-6s8 2 8 6", users: "M9 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM3 20c0-3 3-5 6-5s6 2 6 5M16 5a3 3 0 0 1 0 6M18 15c2 .5 3 2 3 5",

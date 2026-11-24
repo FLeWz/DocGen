@@ -138,3 +138,21 @@
 .docx .ProseMirror table[data-dynamic-list]::before { content: "dynamic: " attr(data-dynamic-list); display: table-caption; caption-side: top; text-align: left; font: 600 11px/1.6 system-ui, sans-serif; color: var(--primary, #2563eb); user-select: none; }
 .docx .ProseMirror table[data-dynamic-list] tr:last-child > * { background-image: linear-gradient(#2563eb14, #2563eb14); }
 .row-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+
+/* table tools overlay (TableTools.tsx): fixed over the editor stage, clipped to it, only the grips/handles take pointer events */
+.tt-root { position: fixed; z-index: 20; overflow: hidden; pointer-events: none; }
+.tt-root > * { position: absolute; pointer-events: auto; }
+.tt-bar { display: flex; gap: 2px; align-items: center; padding: 2px 4px; background: var(--surface, #fff); border: 1px solid var(--border, #ccd); border-radius: 6px; box-shadow: 0 2px 8px #0003; white-space: nowrap; }
+.tt-col, .tt-row { background: #dbe4f5; border: 1px solid #9fb2d8; cursor: pointer; box-sizing: border-box; }
+.tt-col { height: 9px; } .tt-row { width: 9px; }
+.tt-col:hover, .tt-row:hover, .tt-col:focus-visible, .tt-row:focus-visible, .tt-corner:hover, .tt-corner:focus-visible { background: #8fb0ee; outline: none; }
+.tt-corner { width: 14px; height: 14px; background: #dbe4f5; border: 1px solid #9fb2d8; border-radius: 3px; cursor: pointer; box-sizing: border-box; }
+.tt-grip { background: transparent; z-index: 2; } .tt-grip:hover { background: #2563eb55; }
+.tt-vgrip { width: 8px; cursor: col-resize; z-index: 3; } .tt-hgrip { height: 8px; cursor: row-resize; }
+.tt-size { width: 10px; height: 10px; background: #2563eb; border: 1px solid #fff; cursor: nwse-resize; border-radius: 2px; z-index: 3; }
+.tt-guide { pointer-events: none !important; background: #2563eb; z-index: 4; } .tt-guide.v { width: 1px; } .tt-guide.h { height: 1px; }
+.tt-tip { pointer-events: none !important; background: #1f2937; color: #fff; padding: 2px 8px; border-radius: 4px; font: 12px/1.5 system-ui, sans-serif; white-space: nowrap; z-index: 5; }
+.tt-menu { position: fixed !important; min-width: 210px; padding: 4px; background: var(--surface, #fff); border: 1px solid var(--border, #ccd); border-radius: 6px; box-shadow: 0 6px 24px #0004; z-index: 40; display: flex; flex-direction: column; }
+.tt-menu button { text-align: left; padding: 5px 10px; background: none; border: 0; border-radius: 4px; font: inherit; font-size: 13px; cursor: pointer; color: inherit; }
+.tt-menu button:hover:not(:disabled), .tt-menu button:focus-visible { background: var(--primary-soft, #e0e9ff); outline: none; } .tt-menu button:disabled { opacity: .4; cursor: default; } .tt-menu hr { margin: 3px 0; border: 0; border-top: 1px solid var(--border, #ddd); }
+.rtab.ctx { color: var(--primary, #2563eb); font-weight: 600; }
