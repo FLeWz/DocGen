@@ -37,6 +37,8 @@ PPR_ORDER = ("pStyle keepNext keepLines pageBreakBefore framePr widowControl num
              "snapToGrid spacing ind contextualSpacing mirrorIndents suppressOverlap jc textDirection textAlignment "
              "textboxTightWrap outlineLvl divId cnfStyle rPr sectPr pPrChange").split()
 TRPR_ORDER = "cnfStyle divId gridBefore gridAfter wBefore wAfter cantSplit trHeight tblHeader tblCellSpacing jc hidden".split()
+TBLPR_ORDER = ("tblStyle tblpPr tblOverlap bidiVisual tblStyleRowBandSize tblStyleColBandSize tblW jc tblCellSpacing tblInd tblBorders shd "
+               "tblLayout tblCellMar tblLook tblCaption tblDescription").split()
 TCPR_ORDER = ("cnfStyle tcW gridSpan hMerge vMerge tcBorders shd noWrap tcMar textDirection tcFitText vAlign hideMark").split()
 
 loc = lambda e: e.tag.rpartition("}")[2] if isinstance(e.tag, str) else ""
@@ -496,3 +498,37 @@ def write_row(trpr, d: dict) -> None:
         insert_ordered(trpr, _el("jc", val=d["jc"]), TRPR_ORDER)
     if isinstance(d, dict) and d.get("cant") is True and trpr.find(W + "cantSplit") is None:
         insert_ordered(trpr, _el("cantSplit"), TRPR_ORDER)
+
+
+def write_tbl(tblpr, d: dict, grid: list | None = None) -> None:
+    """Table-level edits (tfmt) onto tblPr, which keeps whatever the import had: only keys that differ from the direct
+    values already in the XML are written. `grid` (twips) keeps a dxa tblW equal to the column sum."""
+    if not isinstance(d, dict):
+        d = {}
+    cur = tbl_fmt(tblpr)
+    if d.get("jc") in ("left", "center", "right") and d["jc"] != cur.get("jc"):
+        _set(tblpr, TBLPR_ORDER, "jc", val=d["jc"])
+    w = d.get("width")
+    if isinstance(w, dict) and w != cur.get("width"):
+        if w.get("type") == "auto":
+            _set(tblpr, TBLPR_ORDER, "tblW", w=0, type="auto")
+        elif w.get("type") in ("dxa", "pct") and (n := _int(w.get("w"), 1, 200000)):
+            _set(tblpr, TBLPR_ORDER, "tblW", w=n, type=w["type"])
+    elif grid and (e := tblpr.find(W + "tblW")) is not None and e.get(W + "type") == "dxa" and not isinstance(w, dict):
+        e.set(W + "w", str(sum(grid)))
+    if (n := _int(d.get("ind"), -31680, 31680)) is not None and n != cur.get("ind"):
+        _set(tblpr, TBLPR_ORDER, "tblInd", w=n, type="dxa")
+    if d.get("layout") in ("fixed", "autofit") and d["layout"] != cur.get("layout", "autofit"):
+        _set(tblpr, TBLPR_ORDER, "tblLayout", type=d["layout"])
+    if isinstance(d.get("mar"), dict) and d["mar"] != cur.get("mar"):
+        box = _el("tblCellMar")
+        for k in ("top", "left", "bottom", "right"):
+            if (n := _int(d["mar"].get(k), 0, 31680)) is not None:
+                box.append(_el(k, w=n, type="dxa"))
+        if len(box):
+            old = tblpr.find(W + "tblCellMar")
+            if old is not None:
+                tblpr.remove(old)
+            insert_ordered(tblpr, box, TBLPR_ORDER)
+    if isinstance(d.get("bdr"), dict) and d["bdr"] != cur.get("bdr"):
+        _write_borders(tblpr, TBLPR_ORDER, "tblBorders", d["bdr"], SIDES + ("insideH", "insideV"))

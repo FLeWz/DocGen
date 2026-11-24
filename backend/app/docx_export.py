@@ -464,24 +464,17 @@ class Builder(Rich):
             t._tbl.insert(0, pr)
         elif s := self.style(ta.get("styleId"), "TableGrid"):
             t._tbl.tblPr.style = s
-        jc = (ta.get("tfmt") or {}).get("jc")
-        if jc in fmt.JC:  # table alignment chosen in the ribbon (tblPr jc sits before the spacing/indent/borders/layout/look elements)
-            tp = t._tbl.tblPr
-            for old in tp.findall(qn("w:jc")):
-                tp.remove(old)
-            e = OxmlElement("w:jc")
-            e.set(qn("w:val"), fmt.JC[jc])
-            nxt = next((c for c in tp if c.tag.split("}")[1] in ("tblCellSpacing", "tblInd", "tblBorders", "shd", "tblLayout", "tblCellMar", "tblLook", "tblCaption", "tblDescription")), None)
-            nxt.addprevious(e) if nxt is not None else tp.append(e)
         grid = ta.get("grid")
-        if isinstance(grid, list) and len(grid) == ncols and all(isinstance(g, int) and g > 0 for g in grid):
+        if not (isinstance(grid, list) and len(grid) == ncols and all(isinstance(g, int) and not isinstance(g, bool) and 0 < g < 200000 for g in grid)):
+            grid = self.grid_from_cells(placed, ncols)  # edited tables: cell widths (px) when the grid is stale
+        if grid:
             for gc, g in zip(t._tbl.tblGrid.findall(qn("w:gridCol")), grid):
                 gc.set(qn("w:w"), str(g))
-        else:
-            grid = None
-        if all(c.get("type") == "tableHeader" for c in rows[0].get("content") or [{}]):
-            rpr = t.rows[0]._tr.get_or_add_trPr()
-            rpr.append(OxmlElement("w:tblHeader"))
+        fmt.write_tbl(t._tbl.tblPr, ta.get("tfmt") or {}, grid)
+        for ri, row in enumerate(rows):  # leading all-header rows repeat on each page (Word needs them contiguous from the top)
+            if not (row.get("content") and all(c.get("type") == "tableHeader" for c in row["content"])):
+                break
+            t.rows[ri]._tr.get_or_add_trPr().append(OxmlElement("w:tblHeader"))
         for ri, row in enumerate(rows):
             if (row.get("attrs") or {}).get("rfmt"):
                 fmt.write_row(t.rows[ri]._tr.get_or_add_trPr(), row["attrs"]["rfmt"])
@@ -500,6 +493,15 @@ class Builder(Rich):
             self.nodes(cell.get("content"), m, ctx)
             if m._tc.find(qn("w:p")) is None:
                 m._tc.append(OxmlElement("w:p"))
+        if grid:  # vMerge continuation cells too: every tc is as wide as the grid columns it covers
+            for tr in t._tbl.findall(qn("w:tr")):
+                ci = 0
+                for tc in tr.findall(qn("w:tc")):
+                    pr_ = tc.get_or_add_tcPr()
+                    gs = pr_.find(qn("w:gridSpan"))
+                    cs = int(gs.get(qn("w:val"))) if gs is not None else 1
+                    pr_.width = Twips(sum(grid[ci:ci + cs]))
+                    ci += cs
         name = (n.get("attrs") or {}).get("dynamicList")
         if name and not re.fullmatch(r"[A-Za-z_]\w*", str(name)):
             self.warn.append(f"dynamic table: invalid list name {name!r}")
@@ -508,6 +510,17 @@ class Builder(Rich):
             last = t.rows[-1]._tr
             for tag, txt in (("addprevious", f"{{%tr for row in {name} %}}"), ("addnext", "{%tr endfor %}")):
                 getattr(last, tag)(_marker_row(txt))
+
+    @staticmethod
+    def grid_from_cells(placed, ncols):
+        """Column widths (twips) from the cells' colwidth (px, 15 twips each); None unless every column is known."""
+        w: list = [None] * ncols
+        for _, ci, cs, _, cell in placed:
+            cw = (cell.get("attrs") or {}).get("colwidth")
+            if isinstance(cw, list) and len(cw) == cs and all(isinstance(x, (int, float)) and not isinstance(x, bool) and 0 < x < 5000 for x in cw):
+                for k, x in enumerate(cw):
+                    w[ci + k] = int(round(x * 15))
+        return w if all(w) else None
 
     def image(self, a: dict, cont, ctx) -> None:
         data = self.load_asset(ctx, a.get("imageId"))
