@@ -172,9 +172,9 @@ def run_suite(page, ed, iid, nth, label, zoom_checks=True):
     wait_saved(page)
     assert len(tables(page, iid)[nth]["content"]) == nrows + 1
     # delete them again with the ribbon
-    ed.locator("table.dtbl:not(.ox)").nth(nth).locator("td, th").first.click()
+    tbl.locator("tr").nth(1).locator("td, th").nth(1).click()               # the inserted row and column (their crossing cell)
+    page.get_by_role("button", name="Delete column", exact=True).first.click()   # (the cursor stays in the inserted row)
     page.get_by_role("button", name="Delete row", exact=True).first.click()
-    page.get_by_role("button", name="Delete column", exact=True).first.click()
     wait_saved(page)
     t = tables(page, iid)[nth]
     assert len(t["content"]) == nrows and len(t["attrs"]["grid"]) == ncols, (len(t["content"]), nrows)
@@ -232,6 +232,47 @@ def grid_of_model(page, iid, nth):
     if g:
         return g
     return [c["attrs"]["colwidth"][0] * 15 for c in t["content"][0]["content"] if c["attrs"].get("colwidth")] or [3000] * len(t["content"][0]["content"])
+
+
+def fragments(pdf):
+    from pypdf import PdfReader
+    out = []
+    for n, pg in enumerate(PdfReader(io.BytesIO(pdf)).pages):
+        pg.extract_text(visitor_text=lambda t, cm, tm, fd, fs, n=n: out.append((t.strip(), tm[4] * cm[0] + cm[4], n)) if t.strip() else None)
+    return out
+
+
+def libreoffice_check(page, iid, nth):
+    """Render the edited import with the real exporter + LibreOffice: header cell texts sit where the model's grid says (editor == LibreOffice)."""
+    csrf = next(c["value"] for c in page.context.cookies() if c["name"] == "docgen_csrf")
+    content = page.evaluate("(id) => fetch('/api/imports/' + id).then(r => r.json())", iid)["content"]
+    r = page.context.request.post(f"{BASE}/api/render/pdf", data={"content": content, "import_id": iid}, headers={"X-CSRF-Token": csrf})
+    assert r.ok, (r.status, r.text()[:200])
+    frag = {}
+    for t, x, n in fragments(r.body()):
+        frag.setdefault(t, x)
+    g = tables(page, iid)[nth]["attrs"]["grid"]
+    xs = [frag[f"r0c{k}"] for k in range(len(g)) if f"r0c{k}" in frag]
+    assert len(xs) == len(g), (list(frag)[:20], len(g))
+    for k in range(1, len(g)):
+        assert abs((xs[k] - xs[k - 1]) - g[k - 1] / 20) < 2.5, (k, xs, g)     # pt
+    print("LibreOffice column x offsets (pt):", [round(x - xs[0], 1) for x in xs], "model grid (pt):", [round(sum(g[:k]) / 20, 1) for k in range(len(g))])
+
+
+def dom_vs_grid(page, iid):
+    """Every imported table is drawn with the column widths of its tblGrid (editor == the DOCX), at zoom 1."""
+    page.get_by_label("Zoom").select_option("1")
+    model = tables(page, iid)
+    res = page.evaluate("""() => [...document.querySelectorAll('.ProseMirror table.dtbl:not(.ox)')].map(t => { const z = t.getBoundingClientRect().width / t.offsetWidth;
+        return [...t.rows[0].cells].map(c => c.getBoundingClientRect().width / z * 15); })""")
+    worst = 0
+    for m, cols in zip(model, res):
+        g = m["attrs"].get("grid") or []
+        if len(g) == len(cols) and all(not c.get("colspan", 1) > 1 for c in m["content"][0]["content"] for c in [c["attrs"]]):
+            worst = max(worst, max(abs(a - b) / max(b, 1) for a, b in zip(cols, g)))
+    assert len(res) == len(model) and worst < 0.02, (len(res), len(model), worst)
+    print(f"{len(model)} imported tables: drawn column widths within {worst * 100:.1f} % of their tblGrid")
+    page.get_by_label("Zoom").select_option("0.6")
 
 
 def mergeless(t):
@@ -327,6 +368,7 @@ with sync_playwright() as pw:
                 wait_saved(page)
                 assert len(tables(page, iid)[0]["content"]) == 4
                 run_suite(page, ed, iid, 0, label)
+                libreoffice_check(page, iid, 0)
                 # make dynamic: the first table has merged cells (refused with an explanation), the second converts
                 ed.locator("table.dtbl:not(.ox)").first.locator("td, th").first.click()
                 page.get_by_role("tab", name="Insert").click()
@@ -348,6 +390,7 @@ with sync_playwright() as pw:
                 page.keyboard.press("Control+z")
                 assert ed.locator("table.dtbl:not(.ox)").count() == 2
             else:
+                dom_vs_grid(page, iid)
                 # real manual: first table with >= 3 columns that is not a cover table
                 idx = next(i for i in range(ed.locator("table.dtbl:not(.ox)").count()) if ed.locator("table.dtbl:not(.ox)").nth(i).locator("tr").first.locator("td, th").count() >= 3)
                 run_suite(page, ed, iid, idx, label, zoom_checks=True)
