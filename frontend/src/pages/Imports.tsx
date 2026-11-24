@@ -48,6 +48,13 @@ export function ImportPage({ me }: { me: Me }) {
   const { id = "" } = useParams(), qc = useQueryClient(), ui = useUI();
   const qkey = useMemo(() => ["import", id], [id]);
   const q = useQuery({ queryKey: qkey, queryFn: () => api<ImportDoc>(`/imports/${id}`) });
+  // what "Use as base document" keeps (mirrors docx_import.as_base_doc): an inserted CONTENT paragraph wins, else the body from the first Heading 1 on goes
+  const kept = (() => {
+    const bs = (q.data?.content.content ?? []) as { type: string; attrs?: Record<string, any> }[];
+    const slot = bs.findIndex((b) => b.attrs?.slot === "CONTENT"), h = bs.findIndex((b) => b.type === "heading" && (b.attrs?.level ?? 1) <= 1);
+    const cut = slot >= 0 ? 1 : h >= 0 ? bs.length - h : 0;
+    return { n: bs.length - cut, cut, slot: slot >= 0 };
+  })();
   const folders = useFolders(me);
   const [panel, setPanel] = useState<"sel" | "split" | "base" | "vars" | null>(null);
   const [rev, setRev] = useState(0), [sel2, setSel2] = useState<{ picks: Pick[]; error: string }>({ picks: [], error: "" }), edRef = useRef<Editor | null>(null);
@@ -109,15 +116,20 @@ export function ImportPage({ me }: { me: Me }) {
       {panel === "vars" && (
         <Modal title="Find variables" wide onClose={() => setPanel(null)} actions={<>{cancel}<button className="btn primary" disabled={!sel2.picks.length || !!sel2.error || vars.isPending} onClick={() => vars.mutate()}>Replace with variables</button></>}>
           <div className="stack"><p className="muted">Values that look like per-document data: cover text, header/footer text and fields, dates, version numbers. Tables of contents/figures, tables and the body are left alone. Chosen values become <code>{"{{ name }}"}</code> (formatting kept); the detected value is the default. Built-in names (<code>doc.title</code>, <code>doc.version</code>, <code>doc.date</code>, <code>author</code>, <code>org.name</code>) are filled by the exporter.</p>
-            <Candidates url={`/imports/${id}/variables`} onPicks={setSel2} />{sel2.error && <ErrorBanner e={new Error(sel2.error)} />}<ErrorBanner e={vars.error} /></div>
+            <div className="scrollbox"><Candidates url={`/imports/${id}/variables`} onPicks={setSel2} /></div>{sel2.error && <ErrorBanner e={new Error(sel2.error)} />}<ErrorBanner e={vars.error} /></div>
         </Modal>)}
       {panel === "base" && (
         <Modal title="Use as base document" onClose={() => setPanel(null)} actions={<>{cancel}<button className="btn primary" form="base-form" disabled={base.isPending || !!sel2.error}>Save as base document</button></>}>
           <form id="base-form" className="stack" onSubmit={(e) => { e.preventDefault(); base.mutate({ name }); }}>
-            <p className="muted">Keeps this file as it is — cover, table of contents, section breaks, header/footer, styles, numbering and page setup — and replaces the main body (from the first Heading 1, or at the <code>{"{{ CONTENT }}"}</code> paragraph you inserted) by the <code>{"{{ CONTENT }}"}</code> placeholder.</p>
+            <Field label="Base document name" hint="Unique in the organization. An existing name offers a new version instead.">{(i) => <input id={i} value={name} onChange={(e) => setName(e.target.value)} required autoFocus maxLength={100} />}</Field>
+            <div className="keepbox" data-testid="base-keep">
+              <div><h4>Kept as it is</h4><ul><li>{kept.n} block{kept.n === 1 ? "" : "s"} before the body (cover, approval, table of contents…)</li><li>section breaks, header/footer, styles, numbering, page setup</li></ul></div>
+              <div><h4>Replaced by <code>{"{{ CONTENT }}"}</code></h4><ul><li>{kept.cut} block{kept.cut === 1 ? "" : "s"} {kept.slot ? "(the CONTENT paragraph you inserted)" : "from the first Heading 1 to the end"}</li><li>documents built on this base put their snippets there</li></ul></div>
+            </div>
             <h3>Per-document values</h3>
-            <Candidates url={`/imports/${id}/variables`} onPicks={setSel2} />{sel2.error && <ErrorBanner e={new Error(sel2.error)} />}
-            <Field label="Base document name">{(i) => <input id={i} value={name} onChange={(e) => setName(e.target.value)} required autoFocus />}</Field><ErrorBanner e={clash ? null : base.error} />
+            <p className="muted small">Tick the values that change per document; they become variables (the detected value is the default).</p>
+            <div className="scrollbox"><Candidates url={`/imports/${id}/variables`} onPicks={setSel2} /></div>{sel2.error && <ErrorBanner e={new Error(sel2.error)} />}
+            <ErrorBanner e={clash ? null : base.error} />
           </form>
         </Modal>)}
       {clash && <NameConflictModal c={clash} busy={base.isPending} error={base.error} onVersion={() => base.mutate({ base_document_id: clash.base_document_id })} onRename={() => setClash(null)} onClose={() => setClash(null)} />}

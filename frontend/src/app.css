@@ -97,8 +97,10 @@ form.inline { display: flex; gap: var(--sp-3); align-items: flex-end; flex-wrap:
 .cnt { font-size: 11px; font-weight: 600; background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; padding: 0 6px; color: var(--muted); }
 
 /* ---- dialogs, toasts, menus ---- */
-dialog.modal { border: 0; border-radius: 12px; padding: 0; width: min(480px, calc(100vw - 32px)); max-height: calc(100vh - 48px); box-shadow: var(--shadow-lg); color: var(--text); background: var(--surface); overflow: hidden; }
-dialog.modal[open] { display: flex; flex-direction: column; } dialog.modal.wide { width: min(980px, calc(100vw - 32px)); }
+dialog.modal { border: 0; border-radius: 12px; padding: 0; width: min(720px, 92vw); max-height: calc(100vh - 48px); box-shadow: var(--shadow-lg); color: var(--text); background: var(--surface); overflow: hidden; }
+dialog.modal[open] { display: flex; flex-direction: column; } dialog.modal.sm { width: min(440px, 92vw); } dialog.modal.wide { width: min(980px, 92vw); }
+.scrollbox { max-height: 280px; overflow: auto; border: 1px solid var(--border); border-radius: var(--radius); } .scrollbox table { margin: 0; }
+.keepbox { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-3); } .keepbox > div { border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 12px; background: var(--surface-2); } .keepbox h4 { margin: 0 0 4px; font-size: 13px; } .keepbox ul { margin: 0; padding-left: 18px; font-size: 13px; }
 dialog.modal::backdrop { background: #10162066; }
 .modal-h { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px 10px 20px; border-bottom: 1px solid var(--border); } .modal-h h2 { font-size: 16px; }
 .modal-b { padding: var(--sp-4) 20px; overflow: auto; flex: 1; } .modal-f { display: flex; justify-content: flex-end; gap: var(--sp-2); padding: 12px 20px; border-top: 1px solid var(--border); background: var(--surface-2); }
@@ -175,6 +177,8 @@ dialog.modal::backdrop { background: #10162066; }
 .pane > .docx-stage, .pane > .docx { flex: 1; min-height: 0; max-height: none; } .pane .docx-stage { max-height: none; }
 .pane > .word-pdf, .word-pdf { flex: 1; width: 100%; height: 100%; min-height: 400px; border: 0; background: #fff; } .pane-msg { padding: 24px; color: var(--muted); display: flex; gap: 8px; align-items: center; }
 .page.fill .docx-stage { max-height: none; }
+.pdfprev { display: flex; flex-direction: column; gap: var(--sp-2); } .pdfbar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-3); } .pdfprev .word-pdf { height: 68vh; min-height: 320px; border: 1px solid var(--border); border-radius: var(--radius); }
+.pedit { flex: 1; min-width: 0; } .ptools { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin: 4px 0; } .pbody { border: 1px solid var(--border); border-radius: var(--radius); background: #fff; padding: 6px 10px; color: #000; } .pbody .ProseMirror { outline: none; min-height: 28px; display: flex; flex-direction: column; }
 
 /* ---- commit / history / diff ---- */
 .commitgrid { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(250px, 340px) minmax(0, 1fr); gap: var(--sp-4); }
