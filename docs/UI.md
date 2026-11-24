@@ -26,7 +26,7 @@
 Shell: top bar (product, org switcher, search over `/api/overview`, user menu) · left sidebar (folder tree with counts, context menu, collapsible nodes; Imports and Settings links) · main (breadcrumbs, tabs, page) · right context panel (collapsible, per page). The last open folder is remembered in `localStorage`.
 
 ## Test hooks
-Stable `data-testid`s are used by `e2e/*.py`: `preview`, `word-pdf`, `save-status`, `doc-save-status`, `change-row`, `block`, `drop-zone`, `lib-item`, `bump-diff`, `missing-vars`, `import-warnings`, `import-msg`, `split-preview`. The editor area contains no checkbox.
+Stable `data-testid`s are used by `e2e/*.py`: `preview`, `word-pdf`, `save-status`, `doc-save-status`, `change-row`, `block`, `drop-zone`, `lib-item`, `bump-diff`, `missing-vars`, `import-warnings`, `import-msg`, `split-preview`, `slot-badge`, `var-candidates`, `base-doc-vars`, `base-vars`. The editor area contains no checkbox.
 
 ## e2e flake: root cause
 `page.get_by_role("checkbox").first.check()` ran right after opening the commit tab, while the change list was still loading. The only checkbox on the page then was another one (the editor's "Page guides" / a block's "numbered"), which got ticked; later `Commit 1` never became enabled and `click` timed out after 30 s. Fix: rows carry `data-testid="change-row"` and the scripts wait for the row before ticking its own checkbox; the options that were checkboxes are toggle buttons.
@@ -36,3 +36,6 @@ Stable `data-testid`s are used by `e2e/*.py`: `preview`, `word-pdf`, `save-statu
 - Pagination is an ESTIMATE (no line splitting, widow/orphan control or floats): the toolbar says "N pages (est.)". On the example manual: 11 pages, same as LibreOffice (was 12 before the opaque-paragraph spacing fix). `scripts/compare-render.py <docx> <outdir>` renders both side by side (needs the stack, pdftoppm, Pillow).
 - Tab stops (`pPr/tabs`, style tabs) are drawn in headers/footers/TOC/body (`tabs.ts`; tab-width decorations in the editor). Table styles (conditional formats, tblLook, borders, margins) are resolved by the backend into a derived per-cell `eff` attr (never exported); direct formatting stays in `cfmt`/`tfmt`/`rfmt`.
 - Import warnings and editor notices share one collapsed `NoticeBar`.
+
+## Base documents (round 5A)
+- Import page: badge `{{ CONTENT }}` set / none, buttons `{{ CONTENT }}` (Ctrl+Alt+C, inserts a dashed `p[data-slot]` at the cursor), *Insert slot…*, *Find variables*. The variables modal (`builder/FindVariables.tsx`) lists Use / Where / Detected value / Variable name; *Use as base document* embeds the same table. Settings > Base documents > Versions shows the head version's variables (editable defaults, list defaults as rows); the document builder shows them under *Base document*.
