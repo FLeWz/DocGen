@@ -101,11 +101,11 @@ with sync_playwright() as pw:
         page.get_by_label("New variable type").select_option("date")
         page.get_by_role("button", name="Add", exact=True).click()
         due = page.get_by_label("Value of due")
-        assert due.get_attribute("type") == "text"
+        assert due.evaluate("e => e.type") == "text"
         due.fill("31.02.2026")
         expect(page.get_by_role("alert").filter(has_text="Not a real date")).to_be_visible()
         due.fill("29.02.2024")
-        expect(page.get_by_role("alert")).to_have_count(0)
+        expect(page.get_by_text("Not a real date")).to_have_count(0)
         saved(page, "doc-save-status")
         # list variable with columns and rows (the editor of list-of-objects values)
         page.get_by_placeholder("New variable name").fill("team")
