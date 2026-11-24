@@ -14,7 +14,7 @@
 - **Password**: min 10, max 128, argon2id defaults. Login does a dummy verify for unknown users.
 - **Ids**: UUIDv4 generated in Python. Roles stored as varchar + CHECK (no PG enum).
 - **Sync SQLAlchemy** (psycopg 3, sync endpoints on FastAPI's threadpool); simplest with per-request RLS context.
-- **Frontend**: no router library (path switch on `/accept-invite`), plain forms, TanStack Query; dependencies pinned via `package-lock.json`, `npm ci` in Docker.
+- **Frontend** (superseded by the UI round: react-router, see below): no router library (path switch on `/accept-invite`), plain forms, TanStack Query; dependencies pinned via `package-lock.json`, `npm ci` in Docker.
 - **nginx** `web` is the only published app port (`WEB_PORT`); Mailpit UI on `MAIL_UI_PORT`; db/api/pdf are not published. Compose project name fixed to `docgen`.
 - **Tests** run in the api image (dev deps included, one image) against a separate database `docgen_test` created on demand; tables truncated per test. Mail is stubbed in tests, real Mailpit used in the compose smoke check.
 - **`.env` required**: compose refuses to start without secrets; `make up` copies `.env.example` if `.env` is missing.
@@ -109,3 +109,11 @@
 - Tables: borders/shading/widths/vAlign/merges are kept; conditional table-style formatting (banded rows, first-column) and cell margins are only drawn where written as direct formatting; nested tables stay opaque; table style paragraph defaults apply to the default paragraph style only.
 - Lists: format and nesting follow numbering.xml per level, but bullet glyphs are limited to disc/circle/square, restarts/continuation across separated lists are not drawn (each list restarts at 1 in the editor; the exported file keeps the original `numId`), and level indents come from the browser, not numbering.xml.
 - Editor adds no UI for colour/font/size (they are preserved and rendered, only alignment is a toolbar button); styles are chosen from the style dropdown.
+
+## UI round
+- **react-router v6 + one CSS file** (`app.css`, tokens as custom properties, light + `prefers-color-scheme` dark; system/Inter font stack, no CSS framework, icons are inline SVG paths in `ui.tsx`). Dialogs are native `<dialog>` (focus trap, Esc, a11y for free); `prompt/confirm/alert` are gone, replaced by `useUI().prompt/confirm/toast`.
+- **One org switcher, in the top bar** (not repeated in the sidebar). Search is client-side over `GET /api/overview` (the only backend addition: per-folder counts + all snippets/documents, capped at 2000 items; paginate/search server-side beyond that).
+- **Routes**: `/folders/:id`, `/snippets/:id`, `/documents/:id`, `/imports[/:id]`, `/commit/:folderId?select=<id>`, `/history/{folder|snippet|document}/:id`, `/settings/{members,invites,base-documents,styles,general}`. Last open folder in `localStorage` (`docgen.folder.<org>`), tree expansion and panel state likewise.
+- **Right panel** is filled by pages through a portal (`ContextPanel`); it defaults to open at >=1360 px, except for the document builder, whose variables/base document/links live there (open by default unless the user closed it).
+- **Conflict resolver**: base | theirs | mine rendered side by side plus an editable result (a TipTap instance) saved through the existing `/resolve` endpoint. Document conflicts are still "discard the draft" (backend has no 3-way for documents).
+- **e2e flake** (`Locator.click` timeout in `make test-e2e-docker`): the scripts ticked `get_by_role("checkbox").first` right after opening the commit tab while the change list was still loading, so they ticked an unrelated checkbox (editor "Page guides" / a block's "numbered") and `Commit 1` never enabled. The commit screen is now its own route with `data-testid="change-row"`; scripts wait for the row and tick its own checkbox; the editor is only `contenteditable` once its draft loaded, so the typing retry loops are gone.

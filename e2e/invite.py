@@ -3,17 +3,17 @@ log in -> invite a second user -> invite mail visible in Mailpit -> accept (new 
 import json
 import os
 import re
-import secrets
 import time
 import urllib.request
 
 from playwright.sync_api import expect, sync_playwright
 
-BASE = os.environ.get("E2E_BASE_URL", "http://localhost:8080")
+from common import ART, BASE, login, user
+
 MAIL = os.environ.get("MAIL_URL", "http://localhost:8025")
-ART = os.environ.get("E2E_ARTIFACTS", "e2e-artifacts")
-tag = (os.environ.get("E2E_TAG") or secrets.token_hex(4)) + "-invite"  # user+org come from `make test-e2e-docker` (sign-up is closed)
-owner, guest, pwd = f"e2e-{tag}@example.com", f"guest-{tag}@example.com", os.environ["E2E_PASSWORD"]
+owner, pwd, org_name = user("invite")
+tag = owner.split("e2e-")[1].split("@")[0]
+guest = f"guest-{tag}@example.com"
 
 
 def mail_to(addr):
@@ -30,37 +30,37 @@ with sync_playwright() as pw:
     browser = pw.chromium.launch(headless=True)
     a, b = browser.new_context().new_page(), browser.new_context().new_page()  # two browsers = two sessions
     try:
-        a.goto(BASE)
-        a.get_by_placeholder("Email").fill(owner)
-        a.get_by_placeholder("Password (min 10)").fill(pwd)
-        a.get_by_role("button", name="Log in").click()
-        expect(a.get_by_role("heading", name=f"E2E {tag}")).to_be_visible()
-
-        a.get_by_placeholder("Email").last.fill(guest)
+        login(a, owner, pwd)
+        a.get_by_role("link", name="Settings").click()
+        a.get_by_role("tab", name="Invites").click()
+        a.get_by_label("Email").fill(guest)
         a.get_by_role("button", name="Send invite").click()
-        expect(a.get_by_text(f"{guest} (editor) – pending")).to_be_visible()
+        row = a.get_by_test_id("invites").get_by_role("row").filter(has_text=guest)
+        expect(row).to_contain_text("pending")
 
         body = mail_to(guest)
-        token = re.search(r"token=(\S+)", body).group(1)
+        token = re.search(r"token=([\w\-.]+)", body).group(1)
         assert "invited you to join" in body
 
         b.goto(f"{BASE}/accept-invite?token={token}")
-        expect(b.get_by_role("heading", name=f"Join E2E {tag}")).to_be_visible()
-        b.get_by_placeholder("Your name").fill("Guest")
-        b.get_by_placeholder("Password (min 10)").fill(pwd)
+        expect(b.get_by_role("heading", name=f"Join {org_name}")).to_be_visible()
+        b.get_by_label("Your name").fill("Guest")
+        b.get_by_label("Password").fill(pwd)
         b.get_by_role("button", name="Create account & join").click()
-        expect(b.get_by_role("heading", name=f"E2E {tag}")).to_be_visible()
-        org = b.get_by_label("Organization")
-        expect(org).to_have_value(re.compile(r".+"))
-        expect(org.locator("option:checked")).to_have_text(f"E2E {tag} (editor)")
+        expect(b.get_by_role("heading", name=re.compile("Welcome back"))).to_be_visible()
+        org = b.get_by_role("button", name=f"Organization: {org_name}")
+        expect(org).to_contain_text("editor")
 
-        b.get_by_placeholder("New organization").fill(f"Second {tag}")
-        b.get_by_role("button", name="Create org").click()
-        expect(b.get_by_role("heading", name=f"Second {tag}")).to_be_visible()
-        org.select_option(label=f"E2E {tag} (editor)")
-        expect(b.get_by_role("heading", name=f"E2E {tag}")).to_be_visible()
+        b.get_by_role("button", name="Organization:").click()
+        b.get_by_role("menuitem", name="New organization…").click()
+        b.get_by_label("Organization name").fill(f"Second {tag}")
+        b.get_by_role("button", name="Create", exact=True).click()
+        expect(b.get_by_role("button", name=f"Organization: Second {tag}")).to_be_visible()
+        b.get_by_role("button", name="Organization:").click()
+        b.get_by_role("menuitem", name=f"{org_name} (editor)").click()
+        expect(b.get_by_role("button", name=f"Organization: {org_name}")).to_be_visible()
         a.reload()
-        expect(a.get_by_text(f"{guest} (editor) – accepted")).to_be_visible()
+        expect(a.get_by_test_id("invites").get_by_role("row").filter(has_text=guest)).to_contain_text("accepted")
         print("e2e invite OK")
     except Exception:
         os.makedirs(ART, exist_ok=True)

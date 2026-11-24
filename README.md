@@ -107,7 +107,8 @@ API: `GET /api/styles/css?import=<id>|base_doc=<id>`, `POST /api/render/pdf`. Sc
 * **Backend** `backend/app`: routers (thin) → `vcs.py`/`docs.py`/`export.py` → `git/` (git CLI plumbing) and
   `scoping.OrgRepo` (every tenant query filtered by the session's org). `docx_export.py` (ProseMirror JSON → OOXML),
   `docx_import.py` (DOCX → editable JSON with opaque OOXML blocks), `base_docs.py` (upload validation), `seed.py`.
-* **Frontend** `frontend/src`: React + TanStack Query; `editor/` (TipTap, live preview), `builder/` (document builder).
+* **Frontend** `frontend/src`: React + react-router + TanStack Query. `Shell.tsx` (top bar, folder tree, right panel), `ui.tsx` + `app.css` (design system: modals instead of `prompt`/`confirm`, toasts, menus), `pages/` (one file per screen, routes in `App.tsx`), `editor/` (TipTap, live preview, Word page), `builder/` (blocks, variables). IA and screens: `docs/UI.md`.
+* Visual walk-through of every screen (needs a seeded stack, e.g. a separate compose project with `SEED_DEMO=1`): `scripts/ui-walk.py`; screenshots land in the gitignored `e2e-artifacts/ui/`.
 * Exports are background jobs (rows in `exports`, 2-thread pool in the api process); the UI polls.
 
 ## How versioning works
@@ -162,7 +163,7 @@ Orphaned uploads can be pruned with `POST /api/maintenance/cleanup` (admin; `?dr
 ```sh
 make test               # pytest (in the api image) + Vitest (frontend image) + Playwright e2e (e2e image), all in Docker
 make test-backend       # 120 backend tests against a separate docgen_test database
-make test-frontend      # 15 Vitest tests
+make test-frontend      # Vitest unit tests
 make test-e2e-docker    # starts the stack, runs e2e/{smoke,docbuilder,import,invite,fidelity}.py in the `e2e` compose service
 make test-e2e           # same scripts from the host (.venv with playwright, PLAYWRIGHT_BROWSERS_PATH=$PWD/.playwright,
                         #   E2E_BASE_URL=http://localhost:$WEB_PORT, MAIL_URL=http://localhost:$MAIL_UI_PORT)

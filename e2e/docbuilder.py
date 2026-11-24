@@ -1,78 +1,45 @@
 """Document builder e2e against a running stack:
   PLAYWRIGHT_BROWSERS_PATH=$PWD/.playwright .venv/bin/python e2e/docbuilder.py   (E2E_BASE_URL, default http://localhost:8080)
-Snippet in folder A -> document in folder B pinned to v1 -> snippet gets v2 -> 'update available' -> bump -> download DOCX.
+Snippet in folder A -> document in folder B pinned to v1 -> snippet gets v2 -> 'update available' -> bump -> download DOCX/PDF.
 Logs in as a throwaway user created by scripts/e2e-users.sh (needs E2E_TAG, E2E_PASSWORD); leaves its org in the dev DB."""
 import os
-import secrets
+import re
 import shutil
 import subprocess
 import zipfile
 
 from playwright.sync_api import expect, sync_playwright
 
-BASE = os.environ.get("E2E_BASE_URL", "http://localhost:8080")
-tag = (os.environ.get("E2E_TAG") or secrets.token_hex(4)) + "-docbuilder"  # user+org come from `make test-e2e-docker` (sign-up is closed)
-email, password = f"e2e-{tag}@example.com", os.environ["E2E_PASSWORD"]
-ART = os.environ.get("E2E_ARTIFACTS", "e2e-artifacts")
+from common import ART, commit, commit_from_editor, editor_ready, login, new_folder, new_item, open_folder, open_item, saved, type_into, user
 
-
-def type_into(page, text):
-    """Type into the (only) editor; the first keystrokes are lost if the draft loads right after the click, so retry."""
-    ed, prev = page.locator(".ProseMirror"), page.get_by_test_id("preview")
-    for _ in range(5):
-        ed.click()
-        page.keyboard.type(text)
-        try:
-            expect(prev).to_contain_text(text, timeout=1500)
-            return
-        except AssertionError:
-            page.keyboard.press("Control+A")
-            page.keyboard.press("Delete")
-    raise AssertionError(f"could not type {text!r} into the editor")
-
-
-def commit_folder(page, message):
-    page.get_by_role("button", name="Commit…").click()
-    page.get_by_role("checkbox").first.check()
-    page.get_by_placeholder("Commit message").fill(message)
-    page.get_by_role("button", name="Commit 1").click()
-    expect(page.get_by_text("No changes.")).to_be_visible()
-
+email, password, _ = user("docbuilder")
 
 with sync_playwright() as pw:
     browser = pw.chromium.launch(headless=True)
     page = browser.new_page(viewport={"width": 1700, "height": 1000}, accept_downloads=True)
     try:
-        page.goto(BASE)
-        page.get_by_placeholder("Email").fill(email)
-        page.get_by_placeholder("Password (min 10)").fill(password)
-        page.get_by_role("button", name="Log in").click()
+        login(page, email, password)
+        for name in ("Security", "Product"):
+            new_folder(page, name)
 
-        for name in ("Security", "Product"):  # siblings: nothing selected while creating
-            page.once("dialog", lambda d, n=name: d.accept(n))
-            page.get_by_role("button", name="+ Folder").click()
-            expect(page.get_by_text(f"📁 {name}")).to_be_visible()
-
-        # org settings: bundled default base document
-        page.get_by_placeholder("Base document name").fill("Corporate")
-        page.get_by_role("button", name="Upload (no file = bundled default)").click()
-        expect(page.get_by_text("Corporate")).to_be_visible()
+        # org settings: a base document (bundled default)
+        page.get_by_role("link", name="Settings").click()
+        page.get_by_role("tab", name="Base documents").click()
+        page.get_by_role("button", name="New base document").click()
+        page.get_by_label("Base document name").fill("Corporate")
+        page.get_by_role("button", name="Create", exact=True).click()
+        expect(page.get_by_role("cell", name="Corporate")).to_be_visible()
 
         # snippet in folder A, committed as v1
-        page.get_by_text("📁 Security").click()
-        page.get_by_placeholder("New snippet title").fill("Intro")
-        page.get_by_role("button", name="Add snippet").click()
-        ed = page.locator(".ProseMirror")
-        expect(ed).to_be_visible()
-        type_into(page, "Version one text")
-        expect(page.get_by_test_id("save-status")).to_have_attribute("data-status", "saved")
-        commit_folder(page, "v1")
+        open_folder(page, "Security")
+        new_item(page, "snippet", "Intro")
+        type_into(page, "Version one text", end=False)
+        saved(page)
+        commit_from_editor(page, "v1")
 
         # document in folder B using the snippet from A
-        page.get_by_text("📁 Product").click()
-        page.get_by_role("button", name="documents").click()
-        page.get_by_placeholder("New document title").fill("Manual")
-        page.get_by_role("button", name="Add document").click()
+        open_folder(page, "Product")
+        new_item(page, "document", "Manual")
         expect(page.get_by_label("Document title")).to_have_value("Manual")
         expect(page.get_by_test_id("lib-item")).to_have_count(1)
         page.get_by_role("button", name="Add Intro").click()
@@ -81,7 +48,8 @@ with sync_playwright() as pw:
         expect(blk).to_contain_text("Security")
         expect(blk).to_contain_text("Intro")
         expect(page.get_by_test_id("badge-update")).to_have_count(0)
-        page.get_by_role("button", name="+ Heading").click()
+        page.get_by_role("button", name="Heading", exact=True).click()
+        expect(blk).to_have_count(2)
         # drag & drop: move the heading above the snippet
         page.get_by_label("Drag handle").nth(1).drag_to(page.get_by_test_id("drop-zone").first)
         expect(page.get_by_test_id("block").first.get_by_label("Heading text")).to_be_visible()
@@ -90,42 +58,35 @@ with sync_playwright() as pw:
         expect(page.get_by_test_id("block")).to_have_count(3)
         page.get_by_label("Remove block").last.click()
         expect(page.get_by_test_id("block")).to_have_count(2)
-        expect(page.get_by_test_id("doc-save-status")).to_have_attribute("data-status", "saved")
+        saved(page, "doc-save-status")
         page.get_by_role("button", name="Preview").click()
-        expect(page.get_by_test_id("preview")).to_contain_text("Version one text")
-        commit_btn = page.get_by_role("button", name="Commit…")
-        commit_btn.click()
-        page.get_by_role("checkbox").first.check()
-        page.get_by_placeholder("Commit message").fill("doc v1")
-        page.get_by_role("button", name="Commit 1").click()
-        expect(page.get_by_text("No changes.")).to_be_visible()
+        expect(page.get_by_role("dialog").get_by_test_id("preview")).to_contain_text("Version one text")
+        page.keyboard.press("Escape")
+        page.get_by_role("button", name="Commit…").click()
+        commit(page, "doc v1", "Manual")
 
         # snippet gets v2 in folder A
-        page.get_by_text("📁 Security").click()
-        page.get_by_role("link", name="Intro").click()
-        expect(page.locator(".ProseMirror")).to_have_attribute("contenteditable", "true")  # read-only until the draft is loaded
-        page.locator(".ProseMirror").click()
-        page.keyboard.press("Control+End")
-        page.keyboard.type(" and version two")
-        expect(page.get_by_test_id("save-status")).to_have_attribute("data-status", "saved")
-        commit_folder(page, "v2")
-        page.get_by_role("button", name="snippets").click()
-        page.get_by_role("button", name="Close").click()
-        page.get_by_role("link", name="Intro").click()
-        expect(page.get_by_text("No committed document references")).to_have_count(0)  # used-by shows the doc
-        expect(page.get_by_text("Manual", exact=False).first).to_be_visible()
+        open_folder(page, "Security")
+        open_item(page, "Intro")
+        type_into(page, " and version two")
+        saved(page)
+        commit_from_editor(page, "v2")
+        open_folder(page, "Security")
+        open_item(page, "Intro")
+        editor_ready(page)
+        page.get_by_role("tab", name="Used by").click()  # right panel: the document pins it
+        expect(page.get_by_role("link", name="Manual")).to_be_visible()
 
         # back in the document: update available -> bump with diff
-        page.get_by_text("📁 Product").click()
-        page.get_by_role("button", name="documents").click()
-        page.get_by_role("link", name="Manual").click()
+        open_folder(page, "Product")
+        open_item(page, "Manual")
         expect(page.get_by_test_id("badge-update")).to_be_visible()
         page.get_by_role("button", name="Bump…").click()
         expect(page.get_by_test_id("bump-diff")).to_contain_text("version two")
         page.get_by_role("button", name="Apply bump").click()
         expect(page.get_by_test_id("badge-update")).to_have_count(0)
 
-        # variables: a declared variable without value/default blocks the export and is listed
+        # variables: a declared variable without value/default blocks the export and is listed as a checklist
         page.get_by_placeholder("New variable name").fill("owner")
         page.get_by_role("button", name="Add", exact=True).click()
         page.get_by_role("button", name="Download DOCX").click()
@@ -137,11 +98,12 @@ with sync_playwright() as pw:
         page.get_by_role("button", name="Add", exact=True).click()
         page.get_by_label("Columns of team").fill("name, qty")
         page.get_by_label("Columns of team").blur()
-        page.get_by_role("button", name="+ Row").first.click()
+        page.get_by_role("button", name="Row", exact=True).first.click()
         page.get_by_label("team 1 name").fill("Ann")
         expect(page.get_by_label("team 1 qty")).to_be_visible()
+        page.get_by_text("Revision history", exact=True).click()  # accordion
         expect(page.get_by_test_id("revision-history").get_by_label("Revision 2 message")).to_have_value("doc v1")  # oldest first: v1, doc v1, v2
-        expect(page.get_by_test_id("doc-save-status")).to_have_attribute("data-status", "saved")
+        saved(page, "doc-save-status")
 
         # download DOCX (background job, UI polls)
         with page.expect_download(timeout=60_000) as dl:
