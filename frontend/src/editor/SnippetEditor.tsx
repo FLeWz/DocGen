@@ -4,7 +4,7 @@ import { NodeSelection } from "@tiptap/pm/state";
 import { EditorContent, useEditor, useEditorState } from "@tiptap/react";
 import { ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, apiBlob, BaseDoc, Doc, Draft, Me, Style } from "../api";
-import { Banner, ErrorBanner, Field, Icon, Modal, Spinner, useUI } from "../ui";
+import { ErrorBanner, Field, Icon, Modal, Notice, NoticeBar, Spinner, useUI } from "../ui";
 import { effectiveStyle, extractStyles, extractVariables, NAME_RE, PMNode } from "./doc";
 import "./editor.css";
 import { extensions, headingNumbering } from "./extensions";
@@ -30,10 +30,10 @@ export type EditorData = { title: string; content: Doc };
 export type SaveBody = { title?: string; content: PMNode; styles: string[]; variables: string[] };
 
 /** TipTap editor + toolbar + preview over any document source (snippet draft, imported DOCX). Saves are debounced 800 ms. */
-export function RichEditor({ qkey, load, save, keyOf, me, idleSaved, banner, actions, onSaved, lookSrc }: {
+export function RichEditor({ qkey, load, save, keyOf, me, idleSaved, notices = [], noticeBar = "editor", noticeTestId, actions, onSaved, lookSrc }: {
   lookSrc?: LookSrc; // fixed look (imported DOCX); else the user picks a base document
   qkey: unknown[]; load: () => Promise<EditorData>; save: (b: SaveBody) => Promise<EditorData>; keyOf: (d: EditorData) => string; me: Me;
-  idleSaved?: boolean; banner?: ReactNode; actions?: (h: { editor: Editor; flush: () => Promise<unknown> }) => ReactNode; onSaved?: () => void;
+  idleSaved?: boolean; notices?: Notice[]; noticeBar?: string; noticeTestId?: string; actions?: (h: { editor: Editor; flush: () => Promise<unknown> }) => ReactNode; onSaved?: () => void;
 }) {
   const qc = useQueryClient();
   const ro = me.org?.role === "viewer";
@@ -180,7 +180,6 @@ export function RichEditor({ qkey, load, save, keyOf, me, idleSaved, banner, act
         {status === "error" && <button className="btn sm" onClick={() => flush()}>Retry</button>}
         <div className="actions">{actions?.({ editor, flush })}</div>
       </div>
-      {banner}
       <div className="tbar" role="toolbar" aria-label="Formatting">
         <div className="tgroup">
           <select aria-label="Paragraph style" title="Paragraph style" disabled={ro} value={st?.style ?? "Normal"} onChange={(e) => applyStyle(e.target.value)}>
@@ -212,7 +211,7 @@ export function RichEditor({ qkey, load, save, keyOf, me, idleSaved, banner, act
         </div>}
         <div className="tgroup"><B i="var" t="Make variable" label={st?.variable ? "Edit variable" : "Variable"} on={st?.variable} fn={openVariable} /></div>
       </div>
-      <ErrorBanner e={err ? new Error(err) : null} />
+      <NoticeBar bar={noticeBar} testid={noticeTestId} notices={[...notices, ...(err ? [{ id: "err", kind: "err" as const, text: err }] : [])]} />
       <div className="viewbar" role="group" aria-label="View options">
         {!lookSrc && <label>Look <select aria-label="Look" value={src.base_doc ?? ""} onChange={(e) => { setPick(e.target.value); localStorage.setItem(`docgen.look.${me.org?.id}`, e.target.value); }}>
           <option value="">Organization styles</option>{bases.data?.map((b) => <option key={b.id} value={b.id}>Base: {b.name}</option>)}</select></label>}
@@ -282,7 +281,7 @@ export function SnippetEditor({ id, me, epoch, onCommit, onDiscarded }: { id: st
       save={(b) => api<Draft>(`/snippets/${id}/draft`, "PUT", b)}
       keyOf={(x) => { const y = x as Draft; return [id, epoch, bump, y.base_sha, y.conflict, y.head_sha].join(); }}
       onSaved={() => qc.invalidateQueries({ queryKey: ["changes"] })}
-      banner={d?.conflict && <Banner kind="warn">HEAD moved since your draft started — resolve it on the commit screen.</Banner>}
+      noticeBar={`snippet:${id}`} notices={d?.conflict ? [{ id: "conflict", kind: "warn", text: "HEAD moved since your draft started — resolve it on the commit screen." }] : []}
       actions={({ flush }) => <>
         {me.org?.role !== "viewer" && <button className="btn" onClick={async () => { if (await ui.confirm({ title: "Discard your draft?", danger: true, ok: "Discard draft", body: "Your uncommitted changes to this snippet are lost; the last committed version is restored." })) discard.mutate(); }}><Icon n="trash" />Discard draft</button>}
         <button className="btn primary" onClick={async () => { await flush(); onCommit(); }}><Icon n="commit" />Commit…</button>

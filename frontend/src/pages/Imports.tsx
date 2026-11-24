@@ -62,10 +62,7 @@ export function ImportPage({ me }: { me: Me }) {
   return (
     <div className="page fill">
       <PageHead crumbs={[{ label: "Dashboard", to: "/" }, { label: "Imports", to: "/imports" }, { label: q.data?.title ?? "Import" }]} />
-      {warnings.length > 0 && (
-        <details className="banner warn warnbox" open data-testid="import-warnings"><summary><Icon n="alert" /><b>Not fully editable ({warnings.length})</b> <span className="muted">— kept as-is and written back unchanged on export</span></summary>
-          <ul>{warnings.map((w) => <li key={w}>{w}</li>)}</ul></details>)}
-      <RichEditor qkey={qkey} me={me} keyOf={() => id} lookSrc={{ import: id }}
+      <RichEditor qkey={qkey} me={me} notices={warnings.length ? [{ id: "warn", kind: "warn", text: `${warnings.length} element${warnings.length === 1 ? "" : "s"} not editable`, items: warnings }] : []} noticeBar={`import:${id}`} noticeTestId="import-warnings" keyOf={() => id} lookSrc={{ import: id }}
         load={() => api<ImportDoc>(`/imports/${id}`)} save={(b) => api<ImportDoc>(`/imports/${id}`, "PUT", { title: b.title, content: b.content })}
         actions={({ editor: ed, flush }) => <>
           {edit && <button className="btn" onClick={async () => { await flush(); setRange(blockRange(ed)); setTitle(""); setPanel("sel"); }}><Icon n="file" />Create snippet from selection</button>}

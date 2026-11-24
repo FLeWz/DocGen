@@ -42,6 +42,29 @@ export const Empty = ({ icon = "file", title, children }: { icon?: string; title
 export const ErrorBanner = ({ e }: { e: unknown }) => (e ? <div className="banner err" role="alert"><Icon n="alert" />{(e as Error).message ?? String(e)}</div> : null);
 export const Banner = ({ kind = "warn", children, ...r }: { kind?: "warn" | "info" | "err" | "ok"; children: ReactNode } & React.HTMLAttributes<HTMLDivElement>) =>
   <div className={`banner ${kind}`} role={kind === "err" ? "alert" : "note"} {...r}><Icon n={kind === "info" || kind === "ok" ? "info" : "alert"} /><div>{children}</div></div>;
+export type Notice = { id: string; kind?: "warn" | "info" | "err"; text: string; items?: string[] };
+/** One compact bar for every notice above the editor: collapsed by default (a single line), expandable, state kept per
+ *  session under `bar`. A lone notice without details is just the line (no chevron). */
+export function NoticeBar({ notices, bar, testid = "notices" }: { notices: Notice[]; bar: string; testid?: string }) {
+  const key = `docgen.notices.${bar}`;
+  const [open, setOpen] = useState(() => sessionStorage.getItem(key) === "1");
+  if (!notices.length) return null;
+  const kind = notices.some((n) => n.kind === "err") ? "err" : notices.some((n) => n.kind !== "info") ? "warn" : "info";
+  const count = notices.reduce((a, n) => a + (n.items?.length ?? 0), 0);
+  const expandable = count > 0 || notices.length > 1;
+  const toggle = () => { sessionStorage.setItem(key, open ? "0" : "1"); setOpen(!open); };
+  return (
+    <div className={`banner noticebar ${kind}`} role={kind === "err" ? "alert" : "note"} data-testid={testid} data-open={open && expandable}>
+      <button type="button" className="noticehead" aria-expanded={expandable ? open : undefined} disabled={!expandable} onClick={toggle}>
+        <Icon n={kind === "info" ? "info" : "alert"} />
+        <span className="noticetext">{notices.map((n) => n.text).join(" · ")}</span>
+        {count > 0 && <span className="badge amber" aria-label={`${count} items`}>{count}</span>}
+        {expandable && <Icon n={open ? "chevD" : "chevR"} />}
+      </button>
+      {open && expandable && <div className="noticebody">{notices.map((n) => <div key={n.id}>{notices.length > 1 && <b>{n.text}</b>}{n.items && <ul>{n.items.map((w) => <li key={w}>{w}</li>)}</ul>}</div>)}</div>}
+    </div>
+  );
+}
 export const Badge = ({ kind = "gray", children, ...r }: { kind?: "gray" | "blue" | "green" | "amber" | "red" | "violet"; children: ReactNode } & React.HTMLAttributes<HTMLSpanElement>) =>
   <span className={`badge ${kind}`} {...r}>{children}</span>;
 

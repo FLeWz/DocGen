@@ -43,6 +43,11 @@ with sync_playwright() as pw:
         ed = editor_ready(page)
         expect(ed.get_by_text("Callout paragraph with a custom style")).to_be_visible()
         w = page.get_by_test_id("import-warnings")
+        expect(w).to_contain_text("not editable")
+        expect(w.locator("li")).to_have_count(0)  # collapsed by default: one line, the list is not even rendered
+        assert w.bounding_box()["height"] < 45
+        w.get_by_role("button").click()
+        expect(w.locator("li").first).to_be_visible()
         for kind in ("text box", "content control", "tracked changes"):
             expect(w).to_contain_text(kind)
         expect(ed.locator(".opaque-view")).to_have_count(3)  # drawn from their OOXML, not grey chips

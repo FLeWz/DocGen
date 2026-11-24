@@ -220,3 +220,11 @@ dialog.modal::backdrop { background: #10162066; }
 @media (max-width: 1280px) { .body.withrp { grid-template-columns: var(--sb-w) minmax(0, 1fr) 290px; } .library { padding: var(--sp-2); } }
 @media (max-width: 1180px) { .orgbtn .role { display: none; } :root { --sb-w: 210px; } .page { padding: var(--sp-3); } }
 .warnbox { display: block; } .warnbox ul { margin: 6px 0 0 24px; padding: 0; }
+
+/* collapsed notice bar above the editor: one line, never pushes the page down more than that */
+.noticebar { display: block; padding: 0; margin: var(--sp-1) 0; }
+.noticehead { display: flex; align-items: center; gap: 8px; width: 100%; height: 30px; padding: 0 10px; background: none; border: 0; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.noticehead:disabled { cursor: default; }
+.noticetext { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.noticebody { max-height: 40vh; overflow: auto; padding: 0 12px 8px 36px; color: var(--text); border-top: 1px solid #0001; }
+.noticebody ul { margin: 4px 0 0; padding-left: 18px; }
