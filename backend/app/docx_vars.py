@@ -273,10 +273,49 @@ def fix_fields(roots: list, built_ins: dict, warnings: list) -> None:
                     warnings.append(f"field {kw} {arg}: reference source not found, kept the text {f['text'][:40]!r}")
                 elif kw in ("REF", "STYLEREF") and arg not in marks:
                     flatten(f, f["text"])
+                elif kw == "TOC":  # contents / lists of figures and tables of the base: Word refreshes them on open
+                    f["runs"][0].find(W + "fldChar").set(W + "dirty", "true")
                 else:
                     key = BUILTIN_FIELD.get(kw) or (DOCPROP.get(arg.lower()) if kw == "DOCPROPERTY" else None)
                     if key and built_ins.get(key) is not None:
                         set_text(f["result"], str(built_ins[key]))
+
+
+def text_width(sect_prs) -> int:
+    """Widest text area (twips) of the given sectPr elements: a table must overflow even that to be clipped."""
+    def tw(sp):
+        sz, mar = sp.find(W + "pgSz"), sp.find(W + "pgMar")
+        g = lambda e, k, d: int(e.get(W + k) or d) if e is not None else d
+        return g(sz, "w", 11906) - g(mar, "left", 1440) - g(mar, "right", 1440)
+    return max((tw(sp) for sp in sect_prs), default=9026)
+
+
+def clip_tables(root, width: int, warnings: list | None = None) -> None:
+    """Header/footer tables of a hand-edited base (a duplicated column pasted in Word) can be far wider than the page: the
+    extra cells are drawn over the right page edge. Trailing columns that lie mostly outside the text area are dropped;
+    tables with merged cells are left alone."""
+    for tbl in root.findall(W + "tbl"):
+        grid = tbl.find(W + "tblGrid")
+        cols = [int(g.get(W + "w") or 0) for g in grid] if grid is not None else []
+        ind = tbl.find(f"{W}tblPr/{W}tblInd")
+        start = int(ind.get(W + "w") or 0) if ind is not None else 0
+        rows = tbl.findall(W + "tr")
+        if len(cols) < 2 or any(len(r.findall(W + "tc")) != len(cols) or r.find(f".//{W}gridSpan") is not None
+                                or r.find(f".//{W}vMerge") is not None for r in rows):
+            continue
+        dropped = 0
+        while len(cols) > 1 and start + sum(cols) - width > cols[-1] / 2:
+            cols.pop()
+            grid.remove(grid[-1])
+            for r in rows:
+                r.remove(r.findall(W + "tc")[-1])
+            dropped += 1
+        if dropped:
+            w = tbl.find(f"{W}tblPr/{W}tblW")
+            if w is not None and w.get(W + "type") == "dxa":
+                w.set(W + "w", str(sum(cols)))
+            if warnings is not None:
+                warnings.append(f"header/footer table wider than the page: {dropped} column(s) beyond the right margin dropped")
 
 
 # ---- declarations of a base document -------------------------------------------------------------

@@ -22,7 +22,7 @@ export function entryText(n: PMNode): string {
 export function captionLabel(n: PMNode): string | null {
   let label: string | null = null;
   if (n.type !== "paragraph" && n.type !== "heading") return null;
-  walk(n, (x) => { if (label === null && x.type === "field" && x.attrs?.code === "SEQ") label = String(x.attrs?.arg ?? "").trim() || "Figure"; });
+  walk(n, (x) => { if (label === null && x.type === "field" && x.attrs?.code === "SEQ") label = String(x.attrs?.arg ?? "").split(/\s*\\/)[0].trim() || "Figure"; });
   return label;
 }
 

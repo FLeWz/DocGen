@@ -49,14 +49,21 @@ def sec_from_bookmark(name: str) -> dict | None:
     return {"id": m[2], "kind": m[1], "title": m[3].replace("_", " ").strip()} if m else None
 
 
+def seq_label(arg) -> str:
+    """Sequence identifier of a SEQ field arg; imported args keep their switches (`Table \\* ARABIC`)."""
+    return re.split(r"\s*\\", str(arg or ""), maxsplit=1)[0].strip() or "Figure"
+
+
 def instr_of(a: dict) -> tuple[str, str] | None:
     """field attrs -> (instruction text, cached result); None for anything not on the whitelist."""
     code, arg = a.get("code"), str(a.get("arg") or "")
+    if code == "SEQ":
+        arg = seq_label(arg)
     if code not in FIELD_CODES or not ARG_RE.fullmatch(arg):
         return None
     shown = str(a.get("text") or "")[:200] or {"PAGE": "1", "NUMPAGES": "1", "SECTIONPAGES": "1", "SEQ": "1"}.get(code, "")
     if code == "SEQ":
-        return f"SEQ {arg.strip() or 'Figure'} \\* ARABIC", shown
+        return f"SEQ {arg} \\* ARABIC", shown
     if code in ("REF", "PAGEREF"):
         return (f"{code} {arg} \\h", shown) if bm_name(arg) else None
     return code, shown
@@ -85,9 +92,9 @@ def seq_numbers(blocks: list) -> dict:
     for b in blocks:
         for x in _walk(b):
             if x.get("type") == "field" and (x.get("attrs") or {}).get("code") == "SEQ":
-                label = str(x["attrs"].get("arg") or "Figure").strip() or "Figure"
+                label = seq_label(x["attrs"].get("arg"))
                 count[label] = count.get(label, 0) + 1
-                out[id(x)] = count[label]
+                out[id(x)] = out[id(x["attrs"])] = count[label]  # field() sees the attrs, toc entries the node
     return out
 
 
@@ -101,7 +108,7 @@ def toc_entries(blocks: list, a: dict, seq: dict | None = None) -> list[tuple[in
         return [(lv, t) for lv, t in hs if lo <= lv <= hi and t.strip()]
     label = str(a.get("label") or ("Table" if kind == "tot" else "Figure"))
     return [(1, ptext(b, seq)) for b in blocks if b.get("type") in ("paragraph", "heading")
-            and any(x.get("type") == "field" and (x.get("attrs") or {}).get("code") == "SEQ" and str((x.get("attrs") or {}).get("arg") or "").strip() == label
+            and any(x.get("type") == "field" and (x.get("attrs") or {}).get("code") == "SEQ" and seq_label((x.get("attrs") or {}).get("arg")) == label
                     for x in _walk(b))]
 
 
@@ -111,7 +118,7 @@ class Rich:
     # ---- ids ----
     def _init_rich(self, next_bm: int = 9000):
         self.bm_id, self.notes, self.sec_open = next_bm, {"footnote": [], "endnote": []}, None
-        self.seq, self.top_blocks = {}, []
+        self.seq, self.top_blocks, self.whole = {}, [], False
 
     def new_bm_id(self) -> int:
         self.bm_id += 1

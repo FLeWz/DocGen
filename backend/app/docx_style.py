@@ -13,7 +13,7 @@ import zipfile
 import defusedxml.ElementTree as DET
 from lxml import etree
 
-from . import fmt
+from . import docx_vars, fmt
 from .base_docs import parse_styles
 
 W = fmt.W
@@ -206,8 +206,9 @@ class Look:
             if path not in seen:
                 seen[path] = len(parts)
                 parts.append(dict(path=path, kind="header" if posixpath.basename(path).startswith("header") else "footer",
-                                  xml=self.zf.read(path).decode("utf-8", "replace"), media=self.media(path, budget)))
+                                  xml=self._clip(self.zf.read(path)), media=self.media(path, budget)))
             return seen[path]
+        self.tw = docx_vars.text_width(self._sect_pr(root))
         for sp in self._sect_pr(root):
             refs = {}
             for kind in ("header", "footer"):
@@ -228,6 +229,11 @@ class Look:
         st = self.parse("word/settings.xml") if "word/settings.xml" in self.names else None
         return dict(sections=secs, parts=parts, even_odd=st is not None and fmt._on(st.find(W + "evenAndOddHeaders")),
                     media=self.media("word/document.xml", budget))
+
+    def _clip(self, raw: bytes) -> str:
+        root = docx_vars.parse(raw)
+        docx_vars.clip_tables(root, self.tw)
+        return etree.tostring(root, encoding="unicode")
 
     def _rels(self, part: str) -> dict:
         rp = posixpath.join(posixpath.dirname(part), "_rels", posixpath.basename(part) + ".rels")

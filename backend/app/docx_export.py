@@ -23,7 +23,7 @@ from PIL import Image as PILImage
 
 from . import fmt
 from .base_docs import CONTENT_RE, SLOT_RE
-from .docx_vars import fix_fields
+from .docx_vars import clip_tables, fix_fields, text_width
 from .docx_rich import Rich, bm_name, seq_numbers
 from .ooxml import add_field, opaque_element, stable_zip
 
@@ -280,7 +280,7 @@ class Builder(Rich):
 
     def nodes(self, nodes, cont, ctx) -> None:
         top = cont is self.doc
-        if top:
+        if top and not self.whole:  # `whole` = the builder pre-computed lists/SEQ numbers over the whole document
             self.top_blocks = list(nodes or [])
             self.seq = seq_numbers(self.top_blocks)
         for n in nodes or []:
@@ -557,10 +557,6 @@ class Builder(Rich):
         elif sid:
             _numpr(p, 0, 0)  # numId 0 switches off numbering the style may carry
 
-    def toc_block(self) -> None:
-        p = self.doc.add_paragraph()
-        add_field(p, 'TOC \\o "1-4" \\h \\z \\u', "Right-click and choose Update Field to build the table of contents.")
-
     def page_break(self) -> None:
         from docx.enum.text import WD_BREAK
         self.doc.add_paragraph().add_run().add_break(WD_BREAK.PAGE)
@@ -588,6 +584,23 @@ def _fix_settings(doc) -> None:
     nxt.addprevious(e) if nxt is not None else st.append(e)
 
 
+def _whole_blocks(spec: dict, load_content) -> list:
+    """Top-level nodes of the whole built document in order (headings and paragraph blocks included): the source of
+    list-of-contents/figures/tables entries and of SEQ numbers, which count over the document, not per snippet."""
+    out: list = []
+    per: dict = {}  # id(block) -> its own copy of the nodes (a snippet may be used twice: each use numbers its own fields)
+    for blk in spec["blocks"]:
+        if blk["type"] == "snippet_ref":
+            got = load_content(blk["pin"])
+            per[id(blk)] = copy.deepcopy(((got and got[0]) or {}).get("content") or [])
+        elif blk["type"] == "paragraph":
+            per[id(blk)] = copy.deepcopy((blk["content"] or {}).get("content") or [])
+        elif blk["type"] == "heading":
+            per[id(blk)] = [{"type": "heading", "attrs": {"level": blk["level"]}, "content": [{"type": "text", "text": blk["text"]}]}]
+        out += per.get(id(blk), [])
+    return out, per
+
+
 def build(spec: dict, base: bytes, load_content, load_asset) -> tuple[bytes, list]:
     """load_content(pin) -> (pm_doc, slug)|None; load_asset(pin, slug, image_id) -> bytes|None."""
     warnings: list = []
@@ -596,6 +609,9 @@ def build(spec: dict, base: bytes, load_content, load_asset) -> tuple[bytes, lis
     cur: dict = {}
     b = Builder(doc, lambda c, iid: load_asset(c["pin"], c["slug"], iid), warnings)
 
+    b.whole = True
+    b.top_blocks, per = _whole_blocks(spec, load_content)
+    b.seq = seq_numbers(b.top_blocks)
     holders = {}
     for p in body.iter(qn("w:p")):
         t = "".join(x.text or "" for x in p.iter(qn("w:t"))).strip()
@@ -620,11 +636,13 @@ def build(spec: dict, base: bytes, load_content, load_asset) -> tuple[bytes, lis
                     raise ValueError(f"snippet {blk['pin']['snippet_id']} @ {blk['pin']['sha'][:7]} not found")
                 content, slug = got
                 cur.update(pin=blk["pin"], slug=slug)
-                b.nodes((content or {}).get("content"), doc, dict(cur))
+                b.nodes(per[id(blk)], doc, dict(cur))
+            elif blk["type"] == "paragraph":
+                b.nodes(per[id(blk)], doc, {})
             elif blk["type"] == "heading":
                 b.heading_block(blk)
             elif blk["type"] == "toc":
-                b.toc_block()
+                b.nodes([{"type": "toc", "attrs": {k: blk.get(k) for k in ("kind", "title", "levels", "label")}}], doc, {})
             elif blk["type"] == "page_break":
                 b.page_break()
         b.sec_close()
@@ -639,6 +657,9 @@ def build(spec: dict, base: bytes, load_content, load_asset) -> tuple[bytes, lis
     roots = [body] + [r.target_part.element for r in doc.part.rels.values() if r.reltype in (RT.HEADER, RT.FOOTER)]
     missing: set = set()
     fix_fields(roots, spec["built_ins"], warnings)
+    tw = text_width(body.iter(qn("w:sectPr")))
+    for r in roots[1:]:
+        clip_tables(r, tw, warnings)
     ctx, done = context(spec), set()
     for r in roots:
         expand_rows(r, ctx, missing, warnings, done)
