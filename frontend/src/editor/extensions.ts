@@ -282,7 +282,7 @@ export const extensions = [
       return [`h${node.attrs.level}`, mergeAttributes(HTMLAttributes, cls(node.attrs, `Heading${node.attrs.level}`)), 0];
     },
   }),
-  Table.extend({ addAttributes() { return { ...this.parent?.(), dynamicList: attr("dynamicList", "data-dynamic-list") }; } })
+  Table.extend({ addAttributes() { return { ...this.parent?.(), dynamicList: attr("dynamicList", "data-dynamic-list"), dynamicRows: hidden(), dynamicCols: hidden() }; } })
     .configure({ resizable: false }),
   TableRow, TableHeader, TableCell, Variable, ImageNode, Fmt, HardBreak, Opaque, ImportAttrs, HeadingNumbers,
   Field, Footnote, Toc, SectBreak, Derived, Shortcuts, TableKeys,

@@ -14,7 +14,8 @@ import { captionLabel, entryText } from "./outline";
 import { blockRange } from "./blockrange";
 import { insertList, markList, markSection, type ListKind } from "./sections";
 import { tableActions, TableTab } from "./TableTools";
-import { textToTable } from "./tables";
+import { ctxOf, run as runOp, textToTable } from "./tables";
+import { analyzeTable, columnNames, LIST_RE, makeDynamicFromRows, undoDynamic } from "./dynamic";
 
 /** Fields (`row.x` chips) used in the table around the cursor; the last row's chips are the template. */
 function rowFields(editor: Editor): string[] {
@@ -94,7 +95,7 @@ export function Ribbon({ editor, ro, styles, mode = "body", onErr, structure, on
 
   // shortcuts that open dialogs (Ctrl+K, Ctrl+F, Ctrl+/) come from the editor as `docgen:cmd`
   useEffect(() => {
-    const h = (e: Event) => { const c = (e as CustomEvent).detail; if (!editor.isFocused) return; if (c === "link") setDlg("link"); else if (c === "find") setDlg("find"); else if (c === "shortcuts") setDlg("shortcuts"); };
+    const h = (e: Event) => { const c = (e as CustomEvent).detail; if (!editor.isFocused) return; if (c === "link") setDlg("link"); else if (c === "find") setDlg("find"); else if (c === "shortcuts") setDlg("shortcuts"); else if (c === "dynamic") openDynamic(); };
     window.addEventListener("docgen:cmd", h);
     return () => window.removeEventListener("docgen:cmd", h);
   }, [editor]);
@@ -103,6 +104,7 @@ export function Ribbon({ editor, ro, styles, mode = "body", onErr, structure, on
   // ---- dialog state ----
   const [vf, setVf] = useState({ name: "", default: "", kind: "" as "" | "upper" | "date", format: "YYYY-MM-DD", existing: false });
   const [dynName, setDynName] = useState(""), [dynFields, setDynFields] = useState(""), [href, setHref] = useState("");
+  const [dynCols, setDynCols] = useState<{ names: string[]; rows: string[][]; convert: boolean; refused: string } | null>(null);
   const [q, setQ] = useState<Query & { repl: string; idx: number }>({ find: "", regex: false, matchCase: false, repl: "", idx: 0 });
   const [sec, setSec] = useState({ brk: "nextPage", orient: "portrait", top: "", bottom: "", left: "", right: "" });
   const [lst, setLst] = useState({ kind: "toc" as ListKind, title: "", levels: "1-3", label: "Figure" });
@@ -122,11 +124,24 @@ export function Ribbon({ editor, ro, styles, mode = "body", onErr, structure, on
     }
     setDlg("var");
   };
+  /** Opens the Make dynamic dialog; a table that already has content proposes header cells -> variables, body rows -> default values. */
+  const openDynamic = () => {
+    const c = ctxOf(editor.state), plan = c && !c.table.attrs.dynamicList ? analyzeTable(c.table) : null;
+    setDynName(st.dynamic ?? ""); setDynFields("");
+    setDynCols(plan?.ok ? { names: columnNames(plan.headers), rows: plan.rows, convert: true, refused: "" } : plan ? { names: [], rows: [], convert: false, refused: plan.reason } : null);
+    setDlg("dyn");
+  };
   const makeDynamic = () => {
     const v = dynName.trim(), fields = dynFields.split(",").map((x) => x.trim()).filter(Boolean);
     if (v && !/^[A-Za-z_][A-Za-z0-9_]*$/.test(v)) { onErr("List variable name: letters, digits, _"); return; }
     if (fields.some((f) => !/^[A-Za-z_]\w*$/.test(f))) { onErr("Row fields: letters, digits, _"); return; }
     onErr("");
+    if (dynCols?.convert && v) {  // header cells -> columns, body rows -> default values, first body row -> template
+      if (dynCols.names.some((n) => !/^[A-Za-z_]\w{0,39}$/.test(n)) || new Set(dynCols.names).size !== dynCols.names.length) { onErr("Column names: unique, letters, digits, _ (max 40)"); return; }
+      if (!runOp(editor, makeDynamicFromRows(v, dynCols.names))) { onErr("This table cannot be converted"); return; }
+      setDlg(null); return;
+    }
+    if (!v && st.dynamic && ctxOf(editor.state)?.table.attrs.dynamicRows) { runOp(editor, undoDynamic); setDlg(null); return; } // static again: rows from the defaults
     run().updateAttributes("table", { dynamicList: v || null }).run();
     if (v && fields.length) {  // chips into the last row, replacing what the cells held (the template row)
       const { state } = editor, $f = state.selection.$from;
@@ -292,7 +307,7 @@ export function Ribbon({ editor, ro, styles, mode = "body", onErr, structure, on
 
   // "Make dynamic table": whenever the cursor is in a table (Insert and Layout tabs)
   const dynBtn = <I i="refresh" t="Make dynamic table: the rows come from a list variable (the last row is the template)" label={st.dynamic ? `Dynamic: ${st.dynamic}` : "Dynamic table"} on={!!st.dynamic} off={off || !st.table || hf}
-    fn={() => { setDynName(st.dynamic ?? ""); setDynFields(""); setDlg("dyn"); }} />;
+    fn={openDynamic} />;
 
   const insert = <>
     <G label="Tables">
@@ -413,11 +428,20 @@ export function Ribbon({ editor, ro, styles, mode = "body", onErr, structure, on
       {dlg === "link" && <Modal title="Link" onClose={() => setDlg(null)} actions={<><button className="btn" type="button" onClick={() => setDlg(null)}>Cancel</button><button className="btn primary" form="link-form">{href.trim() ? "Apply link" : "Remove link"}</button></>}>
         <form id="link-form" onSubmit={(e) => { e.preventDefault(); const h = href.trim(); if (!h) run().extendMarkRange("link").unsetLink().run(); else run().extendMarkRange("link").setLink({ href: h }).run(); setDlg(null); }}>
           <Field label="Link URL" hint="http, https or mailto. Empty removes the link.">{(id) => <input id={id} value={href} onChange={(e) => setHref(e.target.value)} autoFocus />}</Field></form></Modal>}
-      {dlg === "dyn" && <Modal title="Dynamic table" onClose={() => setDlg(null)} actions={<><button className="btn" type="button" onClick={() => setDlg(null)}>Cancel</button><button className="btn primary" form="dyn-form">{dynName.trim() ? "Make dynamic" : "Make static"}</button></>}>
+      {dlg === "dyn" && <Modal title="Dynamic table" size="wide" onClose={() => setDlg(null)} actions={<>
+        {st.dynamic && <button className="btn" type="button" data-testid="undo-dynamic" title="Rebuild the static rows from the default values" onClick={() => { runOp(editor, undoDynamic); setDlg(null); }}>Undo dynamic</button>}
+        <button className="btn" type="button" onClick={() => setDlg(null)}>Cancel</button><button className="btn primary" form="dyn-form">{dynName.trim() ? "Make dynamic" : "Make static"}</button></>}>
         <form id="dyn-form" className="stack" onSubmit={(e) => { e.preventDefault(); makeDynamic(); }}>
           <p className="muted">The rows of a dynamic table come from a list variable. The <b>last row is the row template</b>: its cells use <code>{"{{ row.field }}"}</code> variable chips (or that text). Leave the list name empty to make the table static again.</p>
           <Field label="List variable" hint="Letters, digits, _ (e.g. team)">{(id) => <input id={id} value={dynName} onChange={(e) => setDynName(e.target.value)} autoFocus />}</Field>
-          <Field label="Row fields (optional)" hint="Comma separated, e.g. name, email: fills the cells of the last row, left to right, with row.name, row.email chips">{(id) => <input id={id} value={dynFields} onChange={(e) => setDynFields(e.target.value)} placeholder="name, email" />}</Field></form></Modal>}
+          {dynCols?.refused && <p className="notice warn" role="alert" data-testid="dyn-refused">{dynCols.refused}</p>}
+          {dynCols && !dynCols.refused && <div data-testid="dyn-convert">
+            <label className="check"><input type="checkbox" checked={dynCols.convert} onChange={(e) => setDynCols({ ...dynCols, convert: e.target.checked })} /> Use the table's content: header row → variables, {dynCols.rows.length} body row{dynCols.rows.length === 1 ? "" : "s"} → default values</label>
+            {dynCols.convert && <table className="tbl" aria-label="Column variables"><thead><tr><th>Column</th><th>Variable (editable)</th><th>First default value</th></tr></thead><tbody>
+              {dynCols.names.map((n, i) => <tr key={i}><td>{i + 1}</td><td><input aria-label={`Variable of column ${i + 1}`} value={n} onChange={(e) => setDynCols({ ...dynCols, names: dynCols.names.map((x, j) => (j === i ? e.target.value : x)) })} /></td><td className="muted">{dynCols.rows[0]?.[i] ?? "—"}</td></tr>)}</tbody></table>}
+            {dynCols.convert && <p className="muted small">The header row stays static. The first body row stays as the formatted template; the other rows are removed from the table and kept as default values of <code>{dynName.trim() || "the list"}</code> (shown under Base document &gt; variables after “Use as base document”; used when a document gives no rows).</p>}
+          </div>}
+          {!(dynCols?.convert) && <Field label="Row fields (optional)" hint="Comma separated, e.g. name, email: fills the cells of the last row, left to right, with row.name, row.email chips">{(id) => <input id={id} value={dynFields} onChange={(e) => setDynFields(e.target.value)} placeholder="name, email" />}</Field>}</form></Modal>}
       {dlg === "symbols" && <Modal title="Symbols and special characters" onClose={() => setDlg(null)}><div className="symgrid">{SYMBOLS.map((c) => <button key={c} type="button" title={`U+${c.codePointAt(0)!.toString(16).toUpperCase().padStart(4, "0")}`} onClick={() => { run().insertContent(c).run(); }}>{c}</button>)}</div></Modal>}
       {dlg === "shortcuts" && <Modal title="Keyboard shortcuts" onClose={() => setDlg(null)}><table className="tbl"><tbody>{SHORTCUTS.map(([a, k]) => <tr key={a}><td>{a}</td><td><span className="kbd">{k}</span></td></tr>)}</tbody></table></Modal>}
       {dlg === "find" && <Modal title="Find and replace" onClose={() => setDlg(null)} actions={<button className="btn" type="button" onClick={() => setDlg(null)}>Close</button>}>

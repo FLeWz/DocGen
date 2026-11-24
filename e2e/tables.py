@@ -234,6 +234,57 @@ def grid_of_model(page, iid, nth):
     return [c["attrs"]["colwidth"][0] * 15 for c in t["content"][0]["content"] if c["attrs"].get("colwidth")] or [3000] * len(t["content"][0]["content"])
 
 
+def mergeless(t):
+    return all(c["attrs"]["colspan"] == 1 and c["attrs"]["rowspan"] == 1 for r in t["content"] for c in r["content"]) and len(t["content"]) >= 2
+
+
+def dynamic_steps(page, ed, iid, label, nth, base_name=None):
+    """Make dynamic on a table with content: header -> variables (editable), body -> defaults, refusal for merged cells, base variables, undo."""
+    T = ed.locator("table.dtbl:not(.ox)")
+    t0 = tables(page, iid)[nth]
+    texts = [[" ".join(p.get("content", [{}])[0].get("text", "") for p in c["content"] if p.get("content")) for c in r["content"]] for r in t0["content"]]
+    T.nth(nth).locator("td, th").first.click()
+    page.get_by_role("tab", name="Insert").click()
+    page.get_by_role("button", name=re.compile("Make dynamic table")).click()
+    dlg = page.get_by_role("dialog")
+    expect(dlg.get_by_test_id("dyn-convert")).to_be_visible()
+    inputs = dlg.get_by_role("table", name="Column variables").locator("input")
+    names = [inputs.nth(i).input_value() for i in range(inputs.count())]
+    assert len(names) == len(texts[0]) and len(set(names)) == len(names) and all(re.fullmatch(r"[a-z_][a-z0-9_]*", n) for n in names), names
+    inputs.nth(0).fill("first_col")                                         # editable
+    dlg.get_by_label("List variable").fill("rows_" + label)
+    dlg.get_by_role("button", name="Make dynamic").click()
+    wait_saved(page)
+    t = tables(page, iid)[nth]
+    assert t["attrs"]["dynamicList"] == "rows_" + label and t["attrs"]["dynamicCols"][0] == "first_col"
+    assert len(t["content"]) == 2 and len(t["attrs"]["dynamicRows"]) == len(texts) - 1, (len(t["content"]), len(texts))
+    assert [r["first_col"] for r in t["attrs"]["dynamicRows"]] == [r[0] for r in texts[1:]], (t["attrs"]["dynamicRows"], texts)
+    chip = t["content"][1]["content"][0]["content"][0]["content"][0]
+    assert chip["type"] == "variable" and chip["attrs"]["name"] == "row.first_col", chip
+    assert T.nth(nth).get_by_text(texts[0][0]).count() >= 1                  # header text stays
+    page.screenshot(path=os.path.join(ART, f"tables-dynamic-{label}.png"))
+    if base_name:                                                            # base document variables carry the defaults
+        page.get_by_role("button", name="Use as base document").click()
+        page.get_by_label("Base document name").fill(base_name)
+        page.get_by_role("button", name="Save as base document").click()
+        expect(page.get_by_text(f'Saved as base document "{base_name}"')).to_be_visible()
+        bases = page.evaluate("() => fetch('/api/base-documents').then(r => r.json())")
+        bid = next(b["id"] for b in bases if b["name"] == base_name)
+        vs = page.evaluate("(id) => fetch('/api/base-documents/' + id + '/versions').then(r => r.json())", bid)[0]["variables"]
+        v = next(x for x in vs if x["name"] == "rows_" + label)
+        assert v["type"] == "list" and v["columns"][0] == "first_col" and v["default"] == t["attrs"]["dynamicRows"], v
+    # undo dynamic: static rows again, equal to the original text
+    T.nth(nth).locator("td, th").first.click()
+    page.get_by_role("tab", name="Insert").click()
+    page.get_by_role("button", name=re.compile("Make dynamic table")).click()
+    page.get_by_role("dialog").get_by_test_id("undo-dynamic").click()
+    wait_saved(page)
+    t = tables(page, iid)[nth]
+    back = [[" ".join(p.get("content", [{}])[0].get("text", "") for p in c["content"] if p.get("content")) for c in r["content"]] for r in t["content"]]
+    assert not t["attrs"]["dynamicList"] and back == texts, (back, texts)
+    print(label, "make dynamic from rows ok:", len(texts) - 1, "default rows,", len(names), "columns")
+
+
 with sync_playwright() as pw:
     browser = pw.chromium.launch(headless=True)
     page = browser.new_page(viewport={"width": 1500, "height": 1100}, accept_downloads=True)
@@ -276,6 +327,13 @@ with sync_playwright() as pw:
                 wait_saved(page)
                 assert len(tables(page, iid)[0]["content"]) == 4
                 run_suite(page, ed, iid, 0, label)
+                # make dynamic: the first table has merged cells (refused with an explanation), the second converts
+                ed.locator("table.dtbl:not(.ox)").first.locator("td, th").first.click()
+                page.get_by_role("tab", name="Insert").click()
+                page.get_by_role("button", name=re.compile("Make dynamic table")).click()
+                expect(page.get_by_role("dialog").get_by_test_id("dyn-refused")).to_contain_text("merged cells")
+                page.get_by_role("dialog").get_by_role("button", name="Cancel").click()
+                dynamic_steps(page, ed, iid, "syn", 1, base_name=f"E2E dyn base {os.getpid()}")
                 # delete table: confirm modal, cancel keeps it, undo brings it back
                 ed.locator("table.dtbl:not(.ox)").nth(1).locator("td").first.click()
                 page.get_by_test_id("table-toolbar").get_by_role("button", name="Delete table").click()
@@ -293,6 +351,9 @@ with sync_playwright() as pw:
                 # real manual: first table with >= 3 columns that is not a cover table
                 idx = next(i for i in range(ed.locator("table.dtbl:not(.ox)").count()) if ed.locator("table.dtbl:not(.ox)").nth(i).locator("tr").first.locator("td, th").count() >= 3)
                 run_suite(page, ed, iid, idx, label, zoom_checks=True)
+                ts = tables(page, iid)
+                k = next(i for i, t in enumerate(ts) if mergeless(t) and len(t["content"][0]["content"]) >= 3 and not t["attrs"].get("dynamicList"))
+                dynamic_steps(page, ed, iid, "man", k)
         page.screenshot(path=os.path.join(ART, "tables-final.png"))
         assert not errors, errors
         print("tables e2e ok")

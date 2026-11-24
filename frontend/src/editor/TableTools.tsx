@@ -52,6 +52,7 @@ export function tableActions(editor: Editor, ui: Ui) {
     align: (jc: string) => r(T.cellAlign(jc)), fmt: (p: Record<string, unknown>) => r(T.cellFmt(p)), borders: (m: T.BorderMode, s: T.Border | null) => r(T.setBorders(m, s)),
     toText: () => r(T.tableToText), toTable: () => need(r(T.textToTable), "Select some paragraphs outside a table first"),
     selectTable: () => r(T.selectTable), r,
+    dynamic: () => window.dispatchEvent(new CustomEvent("docgen:cmd", { detail: "dynamic" })),
   };
 }
 type Actions = ReturnType<typeof tableActions>;
@@ -255,7 +256,7 @@ export function TableTools({ editor, ro }: { editor: Editor; ro: boolean }) {
             {sel && sel.pos === geo.pos ? <>
               <Btn i="rowAdd" t="Insert row above" fn={a.rowAbove} /><Btn i="rowAdd" t="Insert row below" fn={a.rowBelow} /><Btn i="colAdd" t="Insert column left" fn={a.colLeft} /><Btn i="colAdd" t="Insert column right" fn={a.colRight} />
               <Btn i="rowDel" t="Delete row" fn={a.delRows} /><Btn i="colDel" t="Delete column" fn={a.delCols} /><Btn i="merge" t="Merge cells" fn={a.merge} /><Btn i="split" t="Split cell" fn={a.split} />
-              <Btn i="trash" t="Delete table" fn={a.delTable} />
+              <Btn i="trash" t="Delete table" fn={a.delTable} /><Btn i="refresh" t="Dynamic rows…: header row → variables, body rows → default values" fn={a.dynamic} />
             </> : <span className="muted small">Click in the table to edit it</span>}
           </div>
           <div className="tt-corner" data-testid="table-select" role="button" tabIndex={0} aria-label="Select the whole table" title="Select the whole table" style={{ left: X0 - 17, top: Y0 - 17 }}
@@ -293,6 +294,7 @@ function TableMenu({ editor, a, at, onClose }: { editor: Editor; a: Actions; at:
     ["Insert row above", a.rowAbove], ["Insert row below", a.rowBelow], ["Insert column left", a.colLeft], ["Insert column right", a.colRight], "-",
     ["Delete row", a.delRows], ["Delete column", a.delCols], ["Delete table…", a.delTable], "-",
     ["Merge cells", a.merge, !info.multi], ["Split cell", a.split, !info.merged], ["Clear contents", a.clear], "-",
+    [info.dynamic ? "Dynamic table…" : "Make dynamic table…", a.dynamic], "-",
     ["Align left", () => a.align("left")], ["Align centre", () => a.align("center")], ["Align right", () => a.align("right")],
     [info.header ? "Header row off" : "Header row on", a.header], ["Duplicate row", a.dupRow], ["Distribute columns evenly", () => a.r(T.distributeColumns)],
   ];
