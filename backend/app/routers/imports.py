@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Respon
 
 from datetime import datetime, timezone
 
-from .. import base_docs, docx_export, docx_import as D, docx_vars, vcs
+from .. import base_docs, docx_export, docx_hf, docx_import as D, docx_vars, vcs
 from ..deps import Ctx, require
 from ..files import image_path, import_path
 from ..models import BaseDocument, Image, Import, Organization, Role
@@ -85,6 +85,29 @@ def delete_import(import_id: UUID, ctx: Ctx = E):
     import_path(ctx.org_id, i.id).unlink(missing_ok=True)
 
 
+@router.get("/imports/{import_id}/headers-footers")
+def headers_footers(import_id: UUID, ctx: Ctx = E):
+    """Every header/footer part of the package as editable content (the edited version where the import has one)."""
+    i = _get(ctx, import_id)
+    data, edited, out = _orig(ctx, i), (i.content or {}).get("hf") or {}, []
+    for path in docx_hf.part_paths(data):
+        warn: list = []
+        if path in edited:
+            doc = edited[path]
+        else:
+            doc, warn = docx_hf.part_doc(data, path, lambda b: _store_image(ctx, b))
+        out.append(dict(path=path, kind="header" if "header" in path else "footer", doc=doc, edited=path in edited, warnings=warn))
+    ctx.db.commit()  # images of the parts were stored in the org image store
+    return dict(parts=out)
+
+
+def _store_image(ctx: Ctx, b: bytes):
+    try:
+        return str(images.save(ctx, b).id)
+    except HTTPException:
+        return None
+
+
 @router.put("/imports/{import_id}")
 def put_import(import_id: UUID, body: ImportPut, ctx: Ctx = E):
     i = _get(ctx, import_id)
@@ -92,6 +115,7 @@ def put_import(import_id: UUID, body: ImportPut, ctx: Ctx = E):
         raise HTTPException(413, "document too large")
     try:
         D.check_content(body.content, rel_ids(_orig(ctx, i)))
+        docx_hf.check(body.content.get("hf"), _orig(ctx, i))
     except ValueError as e:
         raise HTTPException(422, f"invalid opaque block: {e}")
     i.content = body.content
@@ -273,6 +297,11 @@ def apply_import_variables(import_id: UUID, body: VarPicks, ctx: Ctx = E):
             marks = next((c.get("marks") for c in node.get("content") or [] if c.get("type") == "text"), None)
             node["content"] = [{"type": "text", "text": t, **({"marks": marks} if marks else {})}]
             (node.get("attrs") or {}).pop("orig", None)
+    for doc in ((i.content or {}).get("hf") or {}).values():  # edited header/footer parts are written over the package parts: replace there too
+        for n in D.walk(doc):
+            if n.get("type") == "text":
+                for p in body.items:
+                    n["text"] = n["text"].replace(p.value, "{{ %s }}" % p.name)
     D.check_content(i.content, rel_ids(_orig(ctx, i)))
     flag_modified(i, "content")
     import_path(ctx.org_id, i.id).write_bytes(docx_vars.write_parts(_orig(ctx, i), hf))

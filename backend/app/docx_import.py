@@ -543,6 +543,8 @@ def export(orig: bytes, content: dict, load_asset, render: dict | None = None) -
                 sect.addprevious(el) if sect is not None else doc.element.body.append(el)
     b.sec_close()
     b.write_notes()
+    from . import docx_hf  # (imports this module)
+    edited = docx_hf.write(doc, (content or {}).get("hf"), load_asset, warnings)
     if not doc.paragraphs and not doc.tables:
         doc.add_paragraph()
     if render is not None:
@@ -554,7 +556,7 @@ def export(orig: bytes, content: dict, load_asset, render: dict | None = None) -
             warnings.append("undefined variables: " + ", ".join(sorted(missing)))
     out = io.BytesIO()
     doc.save(out)
-    return stable_zip(out.getvalue()), warnings
+    return stable_zip(docx_hf.restore(orig, out.getvalue(), edited)), warnings
 
 
 def is_slot(b: dict) -> bool:
@@ -578,7 +580,7 @@ def as_base_doc(orig: bytes, content: dict, load_asset) -> bytes:
     blocks = list((content or {}).get("content") or [])
     if not any(is_slot(b) for b in blocks):
         blocks = blocks[:front_end(blocks)] + [slot_paragraph()]
-    return export(orig, {"type": "doc", "content": blocks}, load_asset)[0]
+    return export(orig, {"type": "doc", "content": blocks, **({"hf": content["hf"]} if (content or {}).get("hf") else {})}, load_asset)[0]
 
 
 # ---- content helpers (server side twins of frontend/src/editor/doc.ts) ----

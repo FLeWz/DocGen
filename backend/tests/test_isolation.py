@@ -152,6 +152,8 @@ COVERED = {  # every API route must be listed: a new endpoint forces a new isola
     "POST /api/import/docx", "GET /api/imports", "GET /api/imports/{import_id}", "PUT /api/imports/{import_id}",
     "GET /api/imports/{import_id}/export", "GET /api/imports/{import_id}/split", "POST /api/imports/{import_id}/split",
     "POST /api/imports/{import_id}/selection-snippet", "POST /api/imports/{import_id}/base-document",
+    # round 5B: test_b_cannot_touch_a_imports, test_header_footer.test_roles_and_validation
+    "GET /api/imports/{import_id}/headers-footers",
     # round 5A: test_vars.test_roles_and_isolation_of_variable_routes
     "GET /api/imports/{import_id}/variables", "POST /api/imports/{import_id}/variables",
     "PUT /api/base-documents/{id}/variables", "GET /api/base-documents/{id}/find-variables",
@@ -347,6 +349,7 @@ def test_b_cannot_touch_a_imports(world):
     calls = [
         ("get", f"/api/imports/{iid}", None), ("put", f"/api/imports/{iid}", {"content": {"type": "doc", "content": []}}),
         ("get", f"/api/imports/{iid}/export", None), ("get", f"/api/imports/{iid}/split?level=1", None),
+        ("get", f"/api/imports/{iid}/headers-footers", None),
         ("post", f"/api/imports/{iid}/split", {"folder_id": bfo, "level": 1}),  # A's import into B's folder
         ("post", f"/api/imports/{iid}/selection-snippet", {**sel, "folder_id": bfo}),
         ("post", f"/api/imports/{iid}/base-document", {"name": "stolen"}),

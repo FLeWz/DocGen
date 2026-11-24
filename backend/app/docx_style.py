@@ -205,7 +205,8 @@ class Look:
                 return None
             if path not in seen:
                 seen[path] = len(parts)
-                parts.append(dict(xml=self.zf.read(path).decode("utf-8", "replace"), media=self.media(path, budget)))
+                parts.append(dict(path=path, kind="header" if posixpath.basename(path).startswith("header") else "footer",
+                                  xml=self.zf.read(path).decode("utf-8", "replace"), media=self.media(path, budget)))
             return seen[path]
         for sp in self._sect_pr(root):
             refs = {}
