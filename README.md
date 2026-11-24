@@ -213,4 +213,4 @@ The e2e scripts log in as throwaway users created through the CLI (`scripts/e2e-
   export. No nested tables in snippets.
 * Org deletion removes its repos/files; folder deletion removes its history. Uploaded images are only removed by the
   admin cleanup endpoint (24 h grace; images that ever entered a commit are kept).
-* Base documents cannot be deleted; no password reset or email verification; Mailpit is dev only.
+* Base documents can be deleted (admin) only while no document or draft uses them; the file stays in `_base.git` history. No password reset or email verification; Mailpit is dev only.

@@ -21,9 +21,11 @@
 | `/imports`, `/imports/:id` | Imports: dropzone + list; DOCX editor with actions bar and warnings |
 | `/commit/:folderId` | Changed files, side-by-side diff, message, 3-pane conflict resolver |
 | `/history/folder/:id`, `/history/snippet/:id`, `/history/document/:id` | History, diff between two commits, restore, tags |
-| `/settings/{general,members,invites,base-documents,styles}` | Org settings; `general` holds the danger zone |
+| `/base-documents` | Base documents (round 6): table (name, current version, placeholders, variables, used by, created/updated), Details (versions, download, used-by, variables editor, Find variables), rename, new version, delete, create (upload / default template / from an import); read-only for non-admins |
+| `/styles` | Style set editor |
+| `/settings/{general,members,invites}` | Org settings; `general` holds the danger zone. `/settings/base-documents` and `/settings/styles` redirect to the two pages above |
 
-Shell: top bar (product, org switcher, search over `/api/overview`, user menu) · left sidebar (folder tree with counts, context menu, collapsible nodes; Imports and Settings links) · main (breadcrumbs, tabs, page) · right context panel (collapsible, per page). The last open folder is remembered in `localStorage`.
+Shell: top bar (product, org switcher, search over `/api/overview`, user menu) · left sidebar (folder tree with counts, context menu, collapsible nodes; side menu: Dashboard, Imports, Base documents, Styles, Settings) · main (breadcrumbs, tabs, page) · right context panel (collapsible, per page). The last open folder is remembered in `localStorage`.
 
 ## Test hooks
 Stable `data-testid`s are used by `e2e/*.py`: `preview`, `word-pdf`, `save-status`, `doc-save-status`, `change-row`, `block`, `drop-zone`, `lib-item`, `bump-diff`, `missing-vars`, `import-warnings`, `import-msg`, `split-preview`, `slot-badge`, `var-candidates`, `base-doc-vars`, `base-vars`. The editor area contains no checkbox.
@@ -45,3 +47,10 @@ Stable `data-testid`s are used by `e2e/*.py`: `preview`, `word-pdf`, `save-statu
 - Ribbon with tabs Home / Insert / Layout / References / Review (`data-testid="ribbon"`, collapsible). Tooltips carry the shortcut.
 - View bar: `Select blocks` (gutter handles), `N blocks selected` (`data-testid="sel-count"`), `Structure` toggle (sidebar `data-testid="structure"`: headings, marked sections with rename/jump/unmark, lists, captions).
 - Click a page header/footer in the editor pane to open `hf-editor` (section / part / variant selects, a RichEditor box `hf-box`, Done). Page headers update live.
+
+## Round 6: base document management, split picker
+- Side menu order: Dashboard · Imports · Base documents · Styles · Settings (NavLink active state; works with the sidebar toggle and at 1100 px: row actions are icon buttons with titles/aria-labels, dates are day-only with the full time as tooltip).
+- Name clash (create, upload, *Use as base document*): modal "A base document named X already exists. Create a new version of it instead?" with *Create new version* / *Choose another name* / *Cancel* (`data-testid="name-conflict"`). The default template has no file to version with, so only the other two buttons show. Rename clashes show an error toast.
+- Delete: modal fetches `GET /base-documents/{id}/usage`; while documents (committed or draft) use it the list is shown with links and the button stays disabled (`data-testid="in-use"`).
+- Split by headings (`SplitDialog.tsx`, `splitting.ts`): outline of every heading (indented by level, block count, characters) with a checkbox per heading, All / None / Level 1 / 1–2 / 1–3, editable snippet title, optional *Preface* snippet, live result list (`data-testid="split-preview"`), folder select. Checkboxes live in this modal only. Grouping is computed client-side by `groupSections` (Vitest) and again server-side on apply.
+- Insert tab table-size select: label "Rows × cols", fixed 112 px width (was clipped at 90 px).
