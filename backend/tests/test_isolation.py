@@ -165,6 +165,9 @@ COVERED = {  # every API route must be listed: a new endpoint forces a new isola
     # round 6: test_base_manage.py (roles), test_b_cannot_touch_a_documents/_imports (isolation)
     "PATCH /api/base-documents/{id}", "DELETE /api/base-documents/{id}", "GET /api/base-documents/{id}/usage",
     "GET /api/imports/{import_id}/headings",
+    # round 9: test_base_edit.py (roles, per-user drafts, conflicts), test_base_edit.test_b_cannot_touch_a_base_edit (isolation)
+    "POST /api/base-documents/{id}/edit", "GET /api/imports/{import_id}/base-edit", "POST /api/imports/{import_id}/base-commit",
+    "POST /api/imports/{import_id}/base-restore",
 }
 
 

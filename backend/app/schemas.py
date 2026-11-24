@@ -371,6 +371,15 @@ class Variables(BaseModel):
         return self
 
 
+class BaseCommitIn(BaseModel):
+    message: str = Field(min_length=1, max_length=500)
+    override: bool = False  # commit although a newer version appeared since the draft started
+
+
+class BaseRestoreIn(BaseModel):
+    sha: str = Field(pattern=r"^[0-9a-f]{40}$")
+
+
 class RevRow(BaseModel):
     version: str = Field(default="", max_length=64)
     date: str = Field(default="", max_length=32)

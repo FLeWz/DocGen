@@ -1,4 +1,5 @@
 import copy
+import difflib
 import io
 import re
 import zipfile
@@ -6,6 +7,7 @@ from uuid import UUID
 
 from lxml import etree
 from sqlalchemy.orm.attributes import flag_modified
+from sqlalchemy import text
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile
 
 from datetime import datetime, timezone
@@ -13,11 +15,12 @@ from datetime import datetime, timezone
 from .. import base_docs, docx_export, docx_hf, docx_import as D, docx_vars, vcs
 from ..deps import Ctx, require
 from ..files import image_path, import_path
-from ..models import BaseDocument, Image, Import, Organization, Role
+from ..git import repo as git
+from ..models import BaseDocument, BaseDocVersion, Image, Import, Organization, Role
 from ..ooxml import collect_parts, neutralize_ole, opaque_element, rel_ids, rel_map
-from ..schemas import VarPicks, ImportBaseIn, ImportPut, ImportSnippetOut, SelectionIn, SplitIn
+from ..schemas import BaseCommitIn, BaseRestoreIn, VarPicks, ImportBaseIn, ImportPut, ImportSnippetOut, SelectionIn, SplitIn
 from . import images
-from .base_documents import _get as get_base, _read, _store, add_base
+from .base_documents import _get as get_base, _head_docx, _read, _store, _versions, add_base
 
 router = APIRouter(tags=["imports"])
 V = Depends(require(Role.viewer))
@@ -29,7 +32,7 @@ MAX_SECTIONS = 1000
 
 def _get(ctx: Ctx, id: UUID) -> Import:
     imp = ctx.repo(Import).get(id)
-    if not imp:
+    if not imp or (imp.base_document_id and imp.created_by != ctx.user.id):  # base-edit drafts are per user, like snippet drafts
         raise HTTPException(404, "import not found")
     return imp
 
@@ -39,7 +42,8 @@ def _orig(ctx: Ctx, imp: Import) -> bytes:
 
 
 def _meta(i: Import) -> dict:
-    return dict(id=i.id, title=i.title, filename=i.filename, created_at=i.created_at, updated_at=i.updated_at)
+    return dict(id=i.id, title=i.title, filename=i.filename, created_at=i.created_at, updated_at=i.updated_at,
+                base_document_id=i.base_document_id)
 
 
 @router.post("/import/docx", status_code=201)
@@ -72,7 +76,7 @@ def import_docx(file: UploadFile = File(), title: str | None = Form(default=None
 
 @router.get("/imports")
 def list_imports(ctx: Ctx = V):
-    return [_meta(i) for i in sorted(ctx.repo(Import).list(), key=lambda i: i.created_at, reverse=True)]
+    return [_meta(i) for i in sorted(ctx.repo(Import).list(Import.base_document_id.is_(None)), key=lambda i: i.created_at, reverse=True)]
 
 
 @router.get("/imports/{import_id}")
@@ -370,3 +374,126 @@ def apply_import_variables(import_id: UUID, body: VarPicks, ctx: Ctx = E):
     i.variables = list(new.values())
     ctx.db.commit()
     return dict(replaced=n, declared=i.variables)
+
+
+# ---- editing a base document in the import editor (round 9) ----
+# A base-edit session is an Import row linked to the base document (per user): the head version's DOCX is parsed like an
+# upload (unedited blocks keep their original XML, every package part stays), autosave = PUT /imports/{id}, commit = a new
+# version through the same `_store` as uploads (author = the user, one git commit in _base.git).
+
+def _load_base(ctx: Ctx, data: bytes) -> tuple[dict, list]:
+    def store(b: bytes):
+        try:
+            return str(images.save(ctx, b).id)
+        except HTTPException:
+            return None
+    try:
+        content, warnings = D.parse(data, store)
+    except base_docs.BadDocx as e:
+        raise HTTPException(422, str(e))
+    if len(str(content)) > vcs.MAX_DOC:
+        raise HTTPException(413, "document too large to edit")
+    return content, warnings
+
+
+def _fps(content: dict) -> list[str]:
+    return [D.fingerprint(b) for b in content.get("content") or []]
+
+
+def _session(ctx: Ctx, i: Import):
+    """(base document, head version) of a base-edit session; 404 for a plain import."""
+    if not i.base_document_id:
+        raise HTTPException(404, "not a base document editing session")
+    bd = get_base(ctx, i.base_document_id)
+    return bd, _versions(ctx, bd)[0]
+
+
+@router.post("/base-documents/{id}/edit")
+def base_edit(id: UUID, ctx: Ctx = A):
+    """Open (or resume) the caller's editing session on the current version. `stale`: a newer version appeared since it started."""
+    bd = get_base(ctx, id)
+    head, data = _head_docx(ctx, bd)
+    i = ctx.repo(Import).first(Import.base_document_id == bd.id, Import.created_by == ctx.user.id)
+    if not i:
+        content, warnings = _load_base(ctx, data)
+        i = ctx.repo(Import).add(title=f"Edit: {bd.name}"[:200], filename=head.filename, content=content, warnings=warnings, created_by=ctx.user.id,
+                                 base_document_id=bd.id, base_sha=head.sha, base_fp=_fps(content))
+        p = import_path(ctx.org_id, i.id)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(data)
+        ctx.db.commit()
+        return dict(import_id=i.id, created=True, stale=False)
+    return dict(import_id=i.id, created=False, stale=i.base_sha != head.sha)
+
+
+def _diff(i: Import) -> dict:
+    """Changed blocks against the version the session started from: by fingerprint (`orig.h` semantics), plus edited header/footer parts."""
+    a, b = i.base_fp or [], _fps(i.content)
+    n = dict(added=0, removed=0, changed=0)
+    items = []
+    for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(None, a, b, autojunk=False).get_opcodes():
+        if tag == "equal":
+            continue
+        k = min(i2 - i1, j2 - j1) if tag == "replace" else 0
+        n["changed"] += k
+        n["removed"] += (i2 - i1) - k
+        n["added"] += (j2 - j1) - k
+        for x, op in [*((j1 + y, "changed") for y in range(k)), *((j1 + k + y, "added") for y in range(j2 - j1 - k))]:
+            blk = i.content["content"][x]
+            items.append(dict(op=op, index=x, type=blk.get("type"), text=D.block_text(blk)[:80]))
+    return dict(**n, headers_footers=len((i.content or {}).get("hf") or {}), blocks=items[:50])
+
+
+@router.get("/imports/{import_id}/base-edit")
+def base_edit_info(import_id: UUID, ctx: Ctx = A):
+    i = _get(ctx, import_id)
+    bd, head = _session(ctx, i)
+    vs = _versions(ctx, bd)
+    started = next((v for v in vs if v.sha == i.base_sha), None)
+    return dict(base_document=dict(id=bd.id, name=bd.name), started_number=started and started.number, head_number=head.number,
+                stale=i.base_sha != head.sha, diff=_diff(i),
+                versions=[dict(number=v.number, sha=v.sha, message=v.message, created_at=v.created_at, filename=v.filename) for v in vs])
+
+
+@router.post("/imports/{import_id}/base-commit", status_code=201)
+def base_commit(import_id: UUID, body: BaseCommitIn, ctx: Ctx = A):
+    """A new version of the base document from the session; the draft is consumed. 409 `base_changed` when another version was
+    committed meanwhile (resend with override=true to commit on top of it anyway)."""
+    i = _get(ctx, import_id)
+    bd, _ = _session(ctx, i)
+    ctx.db.execute(text("select pg_advisory_xact_lock(hashtext(:k))"), {"k": f"base:{ctx.org_id}"})  # check + commit under one lock
+    head = _versions(ctx, bd)[0]
+    if head.sha != i.base_sha and not body.override:
+        raise HTTPException(409, detail=dict(error="base_changed", message=f"version {head.number} was committed since this draft started",
+                                             head_number=head.number, head_sha=head.sha))
+    try:
+        D.check_content(i.content, rel_ids(_orig(ctx, i)))
+        data, warnings = D.export(_orig(ctx, i), i.content, _asset(ctx))  # no render: {{ }} and {%tr %} stay in the file
+    except ValueError as e:
+        raise HTTPException(422, f"invalid block: {e}")
+    except Exception as e:
+        raise HTTPException(422, f"export failed: {type(e).__name__}: {e}")
+    v = _store(ctx, bd, data, head.filename, body.message, docx_vars.table_decls(i.content))
+    notes = [*warnings, *([] if v.placeholders.get("content") else ["no {{ CONTENT }} placeholder: documents cannot place their blocks in this base document"])]
+    ctx.repo(Import).delete(i)
+    ctx.db.commit()
+    import_path(ctx.org_id, i.id).unlink(missing_ok=True)
+    return dict(version=v.number, sha=v.sha, placeholders=v.placeholders, variables=[dict(name=d["name"], type=d["type"]) for d in v.variables],
+                warnings=notes)
+
+
+@router.post("/imports/{import_id}/base-restore")
+def base_restore(import_id: UUID, body: BaseRestoreIn, ctx: Ctx = A):
+    """Replace the draft by an older version of the base document (committing it makes that content the new version)."""
+    i = _get(ctx, import_id)
+    bd, head = _session(ctx, i)
+    v = ctx.repo(BaseDocVersion).first(BaseDocVersion.base_document_id == bd.id, BaseDocVersion.sha == body.sha)
+    data = v and git.show(git.base_repo_path(ctx.org_id), v.sha, f"base/{bd.id}.docx")
+    if not data:
+        raise HTTPException(404, "version not found")
+    i.content, i.warnings = _load_base(ctx, data)
+    i.base_fp, i.base_sha = _fps(i.content), head.sha  # the diff then shows what differs from the version the draft started from
+    flag_modified(i, "content")
+    import_path(ctx.org_id, i.id).write_bytes(data)
+    ctx.db.commit()
+    return dict(**_meta(i), content=i.content, warnings=i.warnings)

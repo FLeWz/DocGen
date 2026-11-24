@@ -1,7 +1,7 @@
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { api, ApiError, BaseDoc, BaseDocVersion, Block, Commit, DocBody, DocFull, ExportStatus, LibraryGroup, Me, RefStatus, RevRow, Style, VarDecl } from "../api";
+import { api, ApiError, isAdmin, BaseDoc, BaseDocVersion, Block, Commit, DocBody, DocFull, ExportStatus, LibraryGroup, Me, RefStatus, RevRow, Style, VarDecl } from "../api";
 import { insertAt, listBlock, moveTo, newId, paragraphBlock, snippetBlock, TOC_KINDS } from "../builder/blocks";
 import { ParagraphEditor } from "../builder/ParagraphEditor";
 import { PdfPreview } from "../builder/PdfPreview";
@@ -13,6 +13,7 @@ import { Preview, useStyles } from "../editor/SnippetEditor";
 import { ContextPanel, PageHead, useActiveFolder } from "../Shell";
 import { Badge, Banner, Empty, ErrorBanner, Icon, Modal, Skeleton, Spinner, useUI } from "../ui";
 import { DiffText } from "./DiffView";
+import { EditBaseButton } from "./BaseDocs";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const nul = (s: string | null) => (s ? s : null);
@@ -278,6 +279,10 @@ export function DocumentPage({ me }: { me: Me }) {
           <div className="stack">
             <select aria-label="Base document" disabled={ro} value={w.base_document?.id ?? ""} onChange={(e) => upd({ base_document: e.target.value ? { id: e.target.value, version: null } : null })}>
               <option value="">(bundled default)</option>{bases.data?.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select>
+            {w.base_document && isAdmin(me.org?.role) && <EditBaseButton id={w.base_document.id} />}
+            {w.base_document && bvers.data?.[0] && bvers.data[0].sha !== w.base_document.version && (
+              <div className="banner info" data-testid="base-newer"><Icon n="info" /><div>Newer base document version available: v{bvers.data[0].number}{bvers.data[0].message ? ` — ${bvers.data[0].message}` : ""}.{" "}
+                {!ro && <button className="btn sm" onClick={() => upd({ base_document: { ...w.base_document!, version: bvers.data![0].sha } })}>Use v{bvers.data[0].number}</button>}</div></div>)}
             {w.base_document && <select aria-label="Base document version" disabled={ro} value={w.base_document.version ?? ""} onChange={(e) => upd({ base_document: { ...w.base_document!, version: e.target.value } })}>
               {bvers.data?.map((v) => <option key={v.sha} value={v.sha}>v{v.number} {v.message}</option>)}</select>}
             {baseVars.length > 0 && <>

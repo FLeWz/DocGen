@@ -11,9 +11,10 @@ import { canEdit, folderLabel, ImportRow, useFolders, useImports } from "../data
 import { PageHead } from "../Shell";
 import { Conflict, conflictOf, NameConflictModal } from "./BaseDocs";
 import { SplitDialog } from "./SplitDialog";
+import { BaseEditBar, BaseHistoryModal, CommitBaseModal, useBaseEdit, useDiscard } from "./BaseEdit";
 import { Badge, Banner, Empty, ErrorBanner, Field, Icon, Modal, Skeleton, Spinner, ago, useUI } from "../ui";
 
-type ImportDoc = ImportRow & { content: Doc; warnings: string[] };
+type ImportDoc = ImportRow & { content: Doc; warnings: string[]; base_document_id?: string | null };
 type Created = { id: string; title: string; slug: string; warnings: string[] };
 
 export function ImportsPage({ me }: { me: Me }) {
@@ -45,7 +46,7 @@ export function ImportsPage({ me }: { me: Me }) {
 }
 
 export function ImportPage({ me }: { me: Me }) {
-  const { id = "" } = useParams(), qc = useQueryClient(), ui = useUI();
+  const { id = "" } = useParams(), qc = useQueryClient(), ui = useUI(), nav = useNavigate(), committed = useRef(false);
   const qkey = useMemo(() => ["import", id], [id]);
   const q = useQuery({ queryKey: qkey, queryFn: () => api<ImportDoc>(`/imports/${id}`) });
   // what "Use as base document" keeps (mirrors docx_import.as_base_doc): an inserted CONTENT paragraph wins, else the body from the first Heading 1 on goes
@@ -56,7 +57,8 @@ export function ImportPage({ me }: { me: Me }) {
     return { n: bs.length - cut, cut, slot: slot >= 0 };
   })();
   const folders = useFolders(me);
-  const [panel, setPanel] = useState<"sel" | "split" | "base" | "vars" | null>(null);
+  const isBase = !!q.data?.base_document_id, bedit = useBaseEdit(id, isBase), discard = useDiscard(id, bedit.data?.base_document.name ?? "");
+  const [panel, setPanel] = useState<"sel" | "split" | "base" | "vars" | "commit" | "history" | null>(null);
   const [rev, setRev] = useState(0), [sel2, setSel2] = useState<{ picks: Pick[]; error: string }>({ picks: [], error: "" }), edRef = useRef<Editor | null>(null);
   const [range, setRange] = useState<[number, number]>([0, 1]), picked = useRef<unknown[]>([]);
   const [folder, setFolder] = useState(""), [title, setTitle] = useState(""), [name, setName] = useState("");
@@ -93,6 +95,7 @@ export function ImportPage({ me }: { me: Me }) {
   return (
     <div className="page fill">
       <PageHead crumbs={[{ label: "Dashboard", to: "/" }, { label: "Imports", to: "/imports" }, { label: q.data?.title ?? "Import" }]} />
+      {bedit.data && <BaseEditBar info={bedit.data} />}
       <RichEditor qkey={qkey} me={me} notices={warnings.length ? [{ id: "warn", kind: "warn", text: `${warnings.length} element${warnings.length === 1 ? "" : "s"} not editable`, items: warnings }] : []} noticeBar={`import:${id}`} noticeTestId="import-warnings" keyOf={() => `${id}:${rev}`} lookSrc={{ import: id }}
         load={() => api<ImportDoc>(`/imports/${id}`)} save={(b) => api<ImportDoc>(`/imports/${id}`, "PUT", { title: b.title, content: b.content })}
         actions={({ editor: ed, flush }) => { edRef.current = ed; const slot = hasContentSlot(ed.state.doc.textContent); return <>
@@ -101,8 +104,10 @@ export function ImportPage({ me }: { me: Me }) {
           {edit && <button className="btn" onClick={() => insertSlot(true)}><Icon n="plus" />Insert slot…</button>}
           {edit && <button className="btn" onClick={async () => { await flush(); setPanel("vars"); }}><Icon n="layers" />Find variables</button>}
           {edit && <button className="btn" onClick={async () => { await flush(); setRange(blockRange(ed)); picked.current = selectedBlocks(ed); setTitle(""); setPanel("sel"); }}><Icon n="file" />Create snippet from selection</button>}
-          {edit && <button className="btn" onClick={async () => { await flush(); setPanel("split"); }}><Icon n="layers" />Split by headings</button>}
-          {admin && <button className="btn" onClick={async () => { await flush(); setPanel("base"); }}><Icon n="doc" />Use as base document</button>}
+          {edit && !isBase && <button className="btn" onClick={async () => { await flush(); setPanel("split"); }}><Icon n="layers" />Split by headings</button>}
+          {admin && !isBase && <button className="btn" onClick={async () => { await flush(); setPanel("base"); }}><Icon n="doc" />Use as base document</button>}
+          {isBase && <><button className="btn" onClick={() => setPanel("history")}><Icon n="clock" />Versions</button><button className="btn" onClick={discard}><Icon n="trash" />Discard draft</button>
+            <button className="btn primary" onClick={async () => { await flush(); await bedit.refetch(); setPanel("commit"); }}><Icon n="check" />Commit…</button></>}
           <button className="btn primary" onClick={async () => { await flush(); location.href = `/api/imports/${id}/export`; }}><Icon n="download" />Export DOCX</button>
         </>; }} />
       {panel === "sel" && (
@@ -112,6 +117,8 @@ export function ImportPage({ me }: { me: Me }) {
             {folderPick}<Field label="Snippet title">{(i) => <input id={i} value={title} onChange={(e) => setTitle(e.target.value)} required autoFocus />}</Field><ErrorBanner e={sel.error} />
           </form>
         </Modal>)}
+      {panel === "commit" && bedit.data && <CommitBaseModal id={id} info={bedit.data} onClose={() => { setPanel(null); qc.invalidateQueries({ queryKey: ["base-docs"] }); qc.invalidateQueries({ queryKey: ["bversions"] }); if (committed.current) nav("/base-documents"); }} onDone={() => { committed.current = true; }} />}
+      {panel === "history" && bedit.data && <BaseHistoryModal id={id} info={bedit.data} onClose={() => setPanel(null)} onRestored={() => { setRev((r) => r + 1); qc.invalidateQueries({ queryKey: qkey }); }} />}
       {panel === "split" && <SplitDialog me={me} id={id} total={q.data?.content.content?.length ?? 0} onClose={() => setPanel(null)} />}
       {panel === "vars" && (
         <Modal title="Find variables" wide onClose={() => setPanel(null)} actions={<>{cancel}<button className="btn primary" disabled={!sel2.picks.length || !!sel2.error || vars.isPending} onClick={() => vars.mutate()}>Replace with variables</button></>}>

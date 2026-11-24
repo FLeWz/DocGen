@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Fragment, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { api, ApiError, BaseDoc, BaseDocVersion, isAdmin, Me, VarDecl } from "../api";
 import { useImports } from "../data";
 import { PageHead } from "../Shell";
@@ -82,6 +82,12 @@ function DeleteDialog({ b, onClose }: { b: BaseDoc; onClose: () => void }) {
   );
 }
 
+export function EditBaseButton({ id }: { id: string }) {
+  const nav = useNavigate(), ui = useUI();
+  const open = useMutation({ mutationFn: () => api<{ import_id: string }>(`/base-documents/${id}/edit`, "POST"), onSuccess: (r) => nav(`/imports/${r.import_id}`), onError: (e: Error) => ui.toast(e.message, "err") });
+  return <button className="btn" data-testid="edit-base" disabled={open.isPending} title="Open the current version in the editor; Commit… saves a new version" onClick={() => open.mutate()}><Icon n="edit" />Edit</button>;
+}
+
 function Versions({ b, admin }: { b: BaseDoc; admin: boolean }) {
   const vs = useQuery({ queryKey: ["bversions", b.id], queryFn: () => api<BaseDocVersion[]>(`/base-documents/${b.id}/versions`) });
   const use = useQuery({ queryKey: ["base-usage", b.id], queryFn: () => api<Usage>(`/base-documents/${b.id}/usage`) });
@@ -90,7 +96,8 @@ function Versions({ b, admin }: { b: BaseDoc; admin: boolean }) {
       {vs.isLoading ? <Skeleton rows={2} /> : (
         <table className="tbl compact"><thead><tr><th>Version</th><th>Commit</th><th>File</th><th>Size</th><th>Placeholders</th><th>Message</th><th>Uploaded</th><th /></tr></thead>
           <tbody>{vs.data?.map((v) => <tr key={v.id}><td>v{v.number}</td><td><code>{v.sha.slice(0, 7)}</code></td><td>{v.filename}</td><td>{(v.size / 1024).toFixed(0)} KB</td><td>{ph(v)}</td><td>{v.message}</td><td className="nowrap">{fmtDate(v.created_at)}</td>
-            <td className="end"><a className="btn sm ghost" href={`/api/base-documents/${b.id}/download?version=${v.sha}`}><Icon n="download" />Download</a></td></tr>)}</tbody></table>)}
+            <td className="end nowrap"><a className="btn sm ghost" href={`/api/base-documents/${b.id}/download?version=${v.sha}`}><Icon n="download" />Download</a></td></tr>)}</tbody></table>)}
+      {admin && <p><EditBaseButton id={b.id} /></p>}
       {use.data?.documents.length ? <p className="small">Used by: {[...new Map(use.data.documents.map((d) => [d.document_id, d])).values()].map((d, i) => <Fragment key={d.document_id}>{i ? ", " : ""}<Link to={`/documents/${d.document_id}`}>{d.title}</Link></Fragment>)}</p> : <p className="muted small">No document uses this base document.</p>}
       {vs.data?.[0] && <BaseVars key={vs.data[0].sha} b={b} v={vs.data[0]} admin={admin} />}
       <ErrorBanner e={vs.error} />

@@ -246,6 +246,10 @@ class Import(OrgScoped, Base):
     content: Mapped[dict] = mapped_column(JSONB)
     warnings: Mapped[list] = mapped_column(JSONB, default=list)
     variables: Mapped[list] = mapped_column(JSONB, default=list)  # declared by the variables modal: [{name,type,default}]
+    # editing session of a base document (per user): the version it started from and its block fingerprints (diff summary)
+    base_document_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("base_documents.id", ondelete="CASCADE"), index=True)
+    base_sha: Mapped[str | None] = mapped_column(String(40))
+    base_fp: Mapped[list | None] = mapped_column(JSONB)
     created_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     created_at: Mapped[datetime] = _now()
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
