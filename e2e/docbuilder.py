@@ -103,6 +103,7 @@ with sync_playwright() as pw:
         # snippet gets v2 in folder A
         page.get_by_text("📁 Security").click()
         page.get_by_role("link", name="Intro").click()
+        expect(page.locator(".ProseMirror")).to_have_attribute("contenteditable", "true")  # read-only until the draft is loaded
         page.locator(".ProseMirror").click()
         page.keyboard.press("Control+End")
         page.keyboard.type(" and version two")

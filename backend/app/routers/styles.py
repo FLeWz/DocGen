@@ -51,7 +51,11 @@ def styles_css(base_doc: UUID | None = None, import_id: UUID | None = Query(defa
     else:
         return docx_style.org_look(ctx.repo(Style).list())
     try:
-        return docx_style.look(data)
+        out = docx_style.look(data)
+        if base_doc:  # org styles the base document lacks (Quote, Code...) still get a look
+            extra = docx_style.org_look(ctx.repo(Style).list(), skip={x["style_id"] for x in out["styles"]})
+            out["css"] = extra["css"] + "\n" + out["css"]
+        return out
     except Exception as e:  # a package that validated at upload but has odd styles/theme: fall back, never 500 the editor
         raise HTTPException(422, f"cannot read styles: {type(e).__name__}")
 

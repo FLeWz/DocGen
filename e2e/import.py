@@ -50,9 +50,17 @@ with sync_playwright() as pw:
         w = page.get_by_test_id("import-warnings")
         for kind in ("text box", "content control", "tracked changes"):
             expect(w).to_contain_text(kind)
-        expect(ed.locator(".opaque-chip")).to_have_count(3)
+        expect(ed.locator(".opaque-view")).to_have_count(3)  # drawn from their OOXML, not grey chips
+        expect(ed.get_by_text("TEXTBOX-MARKER")).to_be_visible()
+        expect(ed.get_by_text("SDT-CONTENT-MARKER")).to_be_visible()
+        expect(page.locator(".docx-hdr").first).to_contain_text("HEADER-MARKER")  # header/footer of the DOCX on the page
+        expect(page.locator(".docx-ftr").first).to_contain_text("FOOTER-MARKER")
+        page.get_by_label("Preview mode").select_option("word")  # real exporter + LibreOffice
+        expect(page.get_by_test_id("word-pdf")).to_be_visible(timeout=90_000)
+        page.get_by_label("Preview mode").select_option("live")
 
         # edit directly (autosaved), then create a snippet from the selection (cursor block = the Callout paragraph)
+        expect(ed).to_have_attribute("contenteditable", "true")
         ed.get_by_text("The end.").click()
         page.keyboard.press("End")
         page.keyboard.type(" EDITED")

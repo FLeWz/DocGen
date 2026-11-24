@@ -226,11 +226,11 @@ def look(data: bytes) -> dict:
                 styles=[dict(s, id=s["style_id"], builtin=False) for s in parse_styles(lk.root)] if hasattr(lk, "root") else [])
 
 
-def org_look(styles) -> dict:
+def org_look(styles, skip=()) -> dict:
     """The org style table (no base document) in the same shape; page = A4 with 2.5 cm margins like the bundled base."""
-    css = [":where(.docx){font-family:'Calibri', 'Carlito', sans-serif;font-size:11pt}"]
+    css = [":where(.docx){font-family:'Calibri', 'Carlito', sans-serif;font-size:11pt}"] if not skip else []
     for s in styles:
-        if s.kind not in ("paragraph", "heading") or not fmt.STYLE_ID.fullmatch(s.style_id):
+        if s.kind not in ("paragraph", "heading") or not fmt.STYLE_ID.fullmatch(s.style_id) or s.style_id in skip:
             continue
         r = {k: v for k, v in dict(
             font=s.font_family if s.font_family and fmt.FONT.fullmatch(s.font_family) else None,

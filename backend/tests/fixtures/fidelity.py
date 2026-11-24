@@ -3,6 +3,7 @@ landscape page + margins, docDefaults, basedOn style chain, theme colour, run co
 paragraph align/indent/spacing/shading/border, page break, lowerLetter list, table with shading/borders/vAlign/vMerge/
 widths, sized image, text box + field (opaque), header/footer."""
 import io
+import sys
 
 from docx import Document
 from docx.enum.style import WD_STYLE_TYPE
@@ -72,3 +73,7 @@ def build() -> bytes:
     out = io.BytesIO()
     d.save(out)
     return out.getvalue()
+
+
+if __name__ == "__main__":
+    open(sys.argv[1], "wb").write(build())
