@@ -16,6 +16,7 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Emu, RGBColor, Twips
 from jinja2 import Undefined
+from lxml import etree
 from jinja2.exceptions import SecurityError
 from jinja2.sandbox import SandboxedEnvironment
 from PIL import Image as PILImage
@@ -23,6 +24,7 @@ from PIL import Image as PILImage
 from . import fmt
 from .base_docs import CONTENT_RE, SLOT_RE
 from .docx_vars import fix_fields
+from .docx_rich import Rich, bm_name, seq_numbers
 from .ooxml import add_field, opaque_element, stable_zip
 
 MAX_W = 5_486_400  # 6 in; images wider than the text area are scaled down
@@ -192,12 +194,14 @@ class Numbering:
 
     def __init__(self, doc):
         self.root = doc.part.numbering_part.element
+        self.last = {}  # (format, "last") -> numId of the last ordered list written, for "continue numbering"
+        self.bul = {}
 
     def _ids(self, tag, attr):
         return [int(e.get(qn(attr))) for e in self.root.findall(qn(tag))]
 
-    def _abstract(self, fmt: str, multilevel: bool = False) -> int:
-        if not multilevel:
+    def _abstract(self, fmt: str, multilevel: bool = False, glyph: str = "•") -> int:
+        if not multilevel and glyph == "•":
             for a in self.root.findall(qn("w:abstractNum")):
                 l0 = a.find(qn("w:lvl"))
                 if l0 is not None and l0.find(qn("w:pStyle")) is None and \
@@ -206,7 +210,7 @@ class Numbering:
         aid = max(self._ids("w:abstractNum", "w:abstractNumId"), default=-1) + 1
         lv = []
         for i in range(9):
-            text = "•" if fmt == "bullet" else (".".join(f"%{k + 1}" for k in range(i + 1)) + ("." if i == 0 else "")
+            text = glyph if fmt == "bullet" else (".".join(f"%{k + 1}" for k in range(i + 1)) + ("." if i == 0 else "")
                                               if multilevel else f"%{i + 1}.")
             lv.append(f'<w:lvl w:ilvl="{i}"><w:start w:val="1"/><w:numFmt w:val="{fmt}"/><w:lvlText w:val="{text}"/>'
                       f'<w:lvlJc w:val="left"/><w:pPr><w:ind w:left="{720 * (i + 1)}" w:hanging="360"/></w:pPr></w:lvl>')
@@ -217,21 +221,22 @@ class Numbering:
         first_num.addprevious(a) if first_num is not None else self.root.append(a)  # abstractNums precede nums
         return aid
 
-    def _num(self, aid: int, restart: bool) -> int:
+    def _num(self, aid: int, restart: bool, start: int = 1) -> int:
         nid = max(self._ids("w:num", "w:numId"), default=0) + 1
         from docx.oxml import parse_xml
-        ov = "".join(f'<w:lvlOverride w:ilvl="{i}"><w:startOverride w:val="1"/></w:lvlOverride>'
+        ov = "".join(f'<w:lvlOverride w:ilvl="{i}"><w:startOverride w:val="{start if i == 0 else 1}"/></w:lvlOverride>'
                      for i in range(9)) if restart else ""
         self.root.append(parse_xml(f'<w:num xmlns:w="{W_NS}" w:numId="{nid}"><w:abstractNumId w:val="{aid}"/>{ov}</w:num>'))
         return nid
 
-    def bullets(self) -> int:
-        if getattr(self, "_b", None) is None:
-            self._b = self._num(self._abstract("bullet"), False)
-        return self._b
+    def bullets(self, style: str | None = None) -> int:
+        glyph = {"circle": "o", "square": "▪"}.get(style or "", "•")
+        if glyph not in self.bul:
+            self.bul[glyph] = self._num(self._abstract("bullet", glyph=glyph), False)
+        return self.bul[glyph]
 
-    def ordered(self, numfmt: str = "decimal") -> int:  # fresh num per list so every ordered list restarts at 1
-        return self._num(self._abstract(numfmt), True)
+    def ordered(self, numfmt: str = "decimal", start: int = 1) -> int:  # fresh num per list so every ordered list restarts (at `start`)
+        return self._num(self._abstract(numfmt), True, start)
 
     def headings(self) -> int:
         if getattr(self, "_h", None) is None:
@@ -254,13 +259,17 @@ def _numpr(p, num_id: int, level: int) -> None:
 
 # ---- ProseMirror -> OOXML ----------------------------------------------------------------------
 
-class Builder:
+class Builder(Rich):
     def __init__(self, doc, load_asset, warnings: list, rels: set | None = None):
         """`rels` (ids of the document's relationships) switches on import mode: the package IS the original, so
         opaque blocks keep their r:id references and lists keep their original numIds."""
         self.doc, self.load_asset, self.warn, self.rels = doc, load_asset, warnings, rels
         self.styles = {s.style_id for s in doc.styles}
         self.num = Numbering(doc)
+        self.top = [doc]  # containers whose tables may be built (the body, header/footer parts)
+        self._init_rich(max([int(x.get(qn("w:id"))) for x in doc.element.body.iter(qn("w:bookmarkStart")) if (x.get(qn("w:id")) or "").isdigit()] + [9000]))
+        self.note_base = {k: max([int(x.get(qn("w:id"))) for part in doc.part.package.iter_parts() if str(part.partname) == f"/word/{k}s.xml"
+                                  for x in etree.fromstring(part.blob).iter(qn(f"w:{k}"))] + [0]) for k in ("footnote", "endnote")}
 
     def style(self, *wanted) -> str | None:
         return next((w for w in wanted if w and w in self.styles), None)
@@ -270,8 +279,16 @@ class Builder:
             p._p.get_or_add_pPr().style = s  # id, not name: base-doc styles are matched by id
 
     def nodes(self, nodes, cont, ctx) -> None:
+        top = cont is self.doc
+        if top:
+            self.top_blocks = list(nodes or [])
+            self.seq = seq_numbers(self.top_blocks)
         for n in nodes or []:
+            if top:
+                self.sec_track(n)
             self.node(n, cont, ctx)
+        if top:
+            self.sec_close()
 
     def node(self, n, cont, ctx) -> None:
         t, a = n.get("type"), n.get("attrs") or {}
@@ -280,27 +297,37 @@ class Builder:
             self.apply_style(p, a.get("styleId"))
             self.pfmt(p, a)
             self.inline(n.get("content"), p)
+            self.bookmark(p, a)
         elif t == "heading":
             lvl = min(max(int(a.get("level") or 1), 1), 4)
             p = cont.add_paragraph()
             self.apply_style(p, a.get("styleId"), f"Heading{lvl}")
             self.pfmt(p, a)
             self.inline(n.get("content"), p)
+            self.bookmark(p, a)
         elif t in ("bulletList", "orderedList"):
             self.list(n, cont, ctx, 0)
         elif t == "table":
-            if cont is self.doc:
-                self.table(n, ctx)
+            if any(cont is c for c in self.top):
+                self.table(n, ctx, cont)
             else:
                 self.warn.append("nested table skipped")
         elif t == "image":
             self.image(a, cont, ctx)
         elif t == "opaque":
             self.opaque(a, cont)
+        elif t == "toc" and cont is self.doc:
+            self.toc(a)
+        elif t == "sectBreak" and cont is self.doc:
+            self.sect_break(a)
         elif t == "hardBreak":
             pass
         else:
             self.warn.append(f"unsupported node '{t}' skipped")
+
+    def bookmark(self, p, a: dict) -> None:
+        if a.get("bm") and (name := bm_name(a["bm"])):
+            self.wrap_bookmark(p, name)
 
     def pfmt(self, p, a: dict) -> None:
         if a.get("pfmt"):
@@ -319,19 +346,33 @@ class Builder:
         else:
             cont._tc.append(el)
 
-    def list(self, n, cont, ctx, level) -> None:
-        nid = (n.get("attrs") or {}).get("numId")
+    def list(self, n, cont, ctx, level, parent=None) -> None:
+        a = n.get("attrs") or {}
+        nid = a.get("numId")
+        key = (n["type"], a.get("listStyle"))
         if self.rels is not None and nid in set(self.num._ids("w:num", "w:numId")):
             num = nid  # imported list keeps its Word numbering (continues across lists)
+        elif parent is not None and parent[0] == key:
+            num = parent[1]  # a nested list of the same kind is the next level of the parent's numbering (real multilevel list)
         else:
-            nf = {"lower-alpha": "lowerLetter", "upper-alpha": "upperLetter", "lower-roman": "lowerRoman",
-                  "upper-roman": "upperRoman"}.get((n.get("attrs") or {}).get("listStyle"), "decimal")
-            num = self.num.ordered(nf) if n["type"] == "orderedList" else self.num.bullets()
+            nf = {"lower-alpha": "lowerLetter", "upper-alpha": "upperLetter", "lower-roman": "lowerRoman", "upper-roman": "upperRoman",
+                  "decimal-leading-zero": "decimalZero"}.get(a.get("listStyle"), "decimal")
+            if n["type"] != "orderedList":
+                num = self.num.bullets(a.get("listStyle"))
+            elif a.get("listStyle") == "multilevel":
+                num = self.num._num(self.num._abstract("decimal", multilevel=True), True)
+            elif a.get("continue") and (nf, "last") in self.num.last:
+                num = self.num.last[(nf, "last")]  # continue the previous list of this format
+            else:
+                start = a.get("start")
+                num = self.num.ordered(nf, start if isinstance(start, int) and not isinstance(start, bool) and 1 <= start <= 9999 else 1)
+                self.num.last[(nf, "last")] = num
+        cur = (key, num)
         for li in n.get("content") or []:
             first = True
             for child in li.get("content") or []:
                 if child.get("type") in ("bulletList", "orderedList"):
-                    self.list(child, cont, ctx, min(level + 1, 8))
+                    self.list(child, cont, ctx, min(level + 1, 8), cur)
                 else:
                     p = cont.add_paragraph()
                     # imported paragraphs keep their own style (none = Normal): ListParagraph's contextual spacing would squeeze them
@@ -352,9 +393,13 @@ class Builder:
             elif t == "hardBreak":
                 from docx.enum.text import WD_BREAK
                 p.add_run().add_break(WD_BREAK.PAGE if (c.get("attrs") or {}).get("page") else WD_BREAK.LINE)
+            elif t == "field":
+                self.field(p, c.get("attrs") or {}, c.get("marks") or [])
+            elif t == "footnote":
+                self.note(p, c.get("attrs") or {}, c.get("marks") or [])
 
-    def run(self, p, text: str, marks: list) -> None:
-        r = p.add_run(text)
+    def apply_marks(self, r, marks: list) -> str | None:
+        """bold/italic/underline/fmt marks onto run `r`; returns the link target when there is one."""
         link = None
         for m in marks:
             k = m.get("type")
@@ -368,6 +413,11 @@ class Builder:
                 fmt.write_run(r._r.get_or_add_rPr(), m.get("attrs") or {}, lambda s: s in self.styles)
             elif k == "link" and SAFE_HREF.match((m.get("attrs") or {}).get("href") or ""):
                 link = m["attrs"]["href"]
+        return link
+
+    def run(self, p, text: str, marks: list) -> None:
+        r = p.add_run(text)
+        link = self.apply_marks(r, marks)
         if link:
             h = OxmlElement("w:hyperlink")
             h.set(qn("r:id"), p.part.relate_to(link, RT.HYPERLINK, is_external=True))
@@ -384,7 +434,8 @@ class Builder:
             h.append(r._r)
             p._p.append(h)
 
-    def table(self, n, ctx) -> None:
+    def table(self, n, ctx, cont=None) -> None:
+        cont = cont if cont is not None else self.doc
         rows = [r for r in n.get("content") or [] if r.get("type") == "tableRow"]
         if not rows:
             return
@@ -400,7 +451,7 @@ class Builder:
                 placed.append((ri, ci, cs, rs, cell))
                 ci += cs
                 ncols = max(ncols, ci)
-        t = self.doc.add_table(len(rows), ncols)
+        t = self.doc.add_table(len(rows), ncols) if cont is self.doc else cont.add_table(len(rows), ncols, Twips(9000))  # header/footer part
         ta = n.get("attrs") or {}
         try:  # tables from an import keep their own properties (style, borders, width) and column grid, in snippets too
             pr = opaque_element(ta["tblPr"], self.rels, {"tblPr"}) if ta.get("tblPr") else None
@@ -564,6 +615,7 @@ def build(spec: dict, base: bytes, load_content, load_asset) -> tuple[bytes, lis
                 b.toc_block()
             elif blk["type"] == "page_break":
                 b.page_break()
+        b.sec_close()
         kids = list(body)
         new = kids[n0:len(kids) - (body.find(qn("w:sectPr")) is not None)]
         for el in new:
@@ -571,6 +623,7 @@ def build(spec: dict, base: bytes, load_content, load_asset) -> tuple[bytes, lis
         for p in ps:
             p.getparent().remove(p)
 
+    b.write_notes()
     roots = [body] + [r.target_part.element for r in doc.part.rels.values() if r.reltype in (RT.HEADER, RT.FOOTER)]
     missing: set = set()
     fix_fields(roots, spec["built_ins"], warnings)

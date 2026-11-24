@@ -25,7 +25,8 @@ from . import fmt
 from .docx_style import Look
 from .tblstyle import TableEff
 from .base_docs import CONTENT_RE, BadDocx, W, parse_styles
-from .docx_export import Builder
+from .docx_export import Builder, seq_numbers
+from .docx_rich import FIELD_CODES, bm_name, sec_from_bookmark
 from .ooxml import opaque_element, rel_ids, stable_zip
 
 NS = {"r": "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
@@ -56,7 +57,7 @@ def fingerprint(node: dict) -> str:
     """Hash of a block's TipTap JSON modulo what the editor may add or reorder (defaults, derived `eff`, mark order)."""
     def norm(v):
         if isinstance(v, dict):
-            d = {k: norm(x) for k, x in v.items() if k not in ("eff", "orig")}
+            d = {k: norm(x) for k, x in v.items() if k not in ("eff", "orig", "sec")}
             if v.get("type") == "link" and isinstance(d.get("attrs"), dict):  # TipTap adds target/rel
                 d["attrs"] = {"href": d["attrs"].get("href")}
             if v.get("type") == "orderedList" and isinstance(d.get("attrs"), dict) and d["attrs"].get("start") == 1:
@@ -81,6 +82,69 @@ def _kind(el) -> str:
     return k
 
 
+FOLD_CODES = FIELD_CODES - {"REF", "PAGEREF"}  # fields the editor can hold as `field` nodes
+HF_VARS = {"TITLE": "doc.title", "AUTHOR": "author", "DATE": "doc.date", "SAVEDATE": "doc.date", "CREATEDATE": "doc.date"}  # header/footer only
+FLD_RE = re.compile(r"\s*([A-Z]+)\s*(.*)")
+
+
+def _instr(s: str):
+    m = FLD_RE.match(s or "")
+    return (m[1], m[2].strip()) if m else (None, "")
+
+
+def fold_fields(p, hf: bool = False):
+    """Copy of paragraph `p` with each supported field (fldSimple or begin/separate/end runs) replaced by one run holding a
+    <docgenField code arg text/> marker; None when the paragraph has nothing to fold or holds a field the editor can't hold."""
+    ok = FOLD_CODES | (set(HF_VARS) if hf else set())
+    res = etree.Element(p.tag, nsmap=p.nsmap)
+    res.attrib.update(p.attrib)
+    depth, cur, found = 0, None, False
+    for el in p:
+        t = loc(el)
+        fc = el.find(W + "fldChar") if t == "r" else None
+        kind = fc.get(W + "fldCharType") if fc is not None else None
+        if depth:
+            if t != "r" or kind == "begin":
+                return None  # nested field or foreign element inside one
+            if kind == "separate":
+                cur["sep"] = True
+            elif kind == "end":
+                code, arg = _instr(cur["instr"])
+                if code not in ok:
+                    return None
+                res.append(_marker(code, arg, cur["text"], cur["rpr"]))
+                depth, found = 0, True
+            elif cur["sep"]:
+                cur["text"] += "".join(x.text or "" for x in el.iter(W + "t"))
+                cur["rpr"] = cur["rpr"] if cur["rpr"] is not None else el.find(W + "rPr")
+            elif (it := el.find(W + "instrText")) is not None:
+                cur["instr"] += it.text or ""
+            continue
+        if t == "fldSimple":
+            code, arg = _instr(el.get(W + "instr"))
+            if code not in ok:
+                return None
+            r = el.find(W + "r")
+            res.append(_marker(code, arg, "".join(x.text or "" for x in el.iter(W + "t")), r.find(W + "rPr") if r is not None else None))
+            found = True
+        elif kind == "begin":
+            depth, cur = 1, {"instr": "", "text": "", "rpr": None, "sep": False}
+        else:
+            res.append(copy.deepcopy(el))
+    return res if found and not depth else None
+
+
+def _marker(code, arg, text, rpr):
+    r = etree.Element(W + "r")
+    if rpr is not None:
+        r.append(copy.deepcopy(rpr))
+    m = etree.SubElement(r, "docgenField")
+    m.set("code", code)
+    m.set("arg", arg)
+    m.set("text", text)
+    return r
+
+
 def _flag(e) -> bool:
     return e is not None and val(e) not in ("0", "false", "off")
 
@@ -103,6 +167,7 @@ class _Parser:
         self.look = Look(data) if data else None  # table styles (conditional formats) are resolved per cell, see tblstyle.py
         self.rel_ids = set(self.rels)
         self.opaque, self.dropped, self.blocked, self.images = Counter(), Counter(), [], {}
+        self.hf = False  # header/footer parts: TITLE/AUTHOR/DATE fields become variable chips
         self.root = parse("word/document.xml")
 
     # ---- opaque ----
@@ -165,6 +230,12 @@ class _Parser:
                     out[-1]["text"] += txt
                 elif txt:
                     out.append({"type": "text", "text": txt, **({"marks": mk} if mk else {})})
+            elif t == "docgenField":
+                code, arg = c.get("code"), c.get("arg") or ""
+                if code in HF_VARS:
+                    out.append({"type": "variable", "attrs": {"name": HF_VARS[code], "default": "", "filter": "date:YYYY-MM-DD" if "date" in HF_VARS[code] else None}, **({"marks": mk} if mk else {})})
+                else:
+                    out.append({"type": "field", "attrs": {"code": code, "arg": arg, "text": c.get("text") or ""}, **({"marks": mk} if mk else {})})
             elif t == "br":
                 if c.get(W + "type") == "page":
                     out.append({"type": "hardBreak", "attrs": {"page": True}})
@@ -188,6 +259,9 @@ class _Parser:
         if ppr is not None and ppr.find(W + "sectPr") is not None:
             return [self.keep(p, "section break")], None
         out, images = [], []
+        orig_p = p
+        folded = fold_fields(p, self.hf)
+        p = p if folded is None else folded  # PAGE/SEQ/... become `field` nodes; `keep` below still stores the original XML
         for c in p:
             t = loc(c)
             if t == "pPr" or t == "proofErr" or t == "bookmarkEnd":
@@ -197,12 +271,12 @@ class _Parser:
             elif t == "r":
                 bad = self.run(c, [], out, images)
                 if bad is not None:
-                    return [self.keep(p, _kind(bad))], None
+                    return [self.keep(orig_p, _kind(bad))], None
             elif t == "hyperlink":
                 rel = self.rels.get(c.get(R + "id"))
                 href = rel.get("Target") if rel is not None and rel.get("TargetMode") == "External" else None
                 if href is None:
-                    return [self.keep(p, "internal link")], None
+                    return [self.keep(orig_p, "internal link")], None
                 if not re.match(r"(https?://|mailto:)", href, re.I):
                     self.dropped["links to non-web targets"] += 1
                     href = None
@@ -211,7 +285,7 @@ class _Parser:
                     if bad is not None:
                         return [self.keep(p, _kind(bad))], None
             else:
-                return [self.keep(p, _kind(c))], None
+                return [self.keep(orig_p, _kind(c))], None
         pf, left = fmt.para_fmt(ppr, self.theme)
         if left:
             self.dropped["paragraph properties (" + ", ".join(sorted(left)) + ")"] += 1
@@ -230,15 +304,77 @@ class _Parser:
         return [node, *images], li
 
     # ---- blocks ----
+    def toc_node(self, els) -> dict | None:
+        """A table of contents / figures / tables: an SDT docPartObj "Table of Contents" or a TOC field spanning paragraphs
+        (`els`, body children) -> `toc` node holding the original XML (written back as is)."""
+        if len(els) == 1 and loc(els[0]) == "sdt":
+            instr = "".join(x.text or "" for x in els[0].iter(W + "instrText"))
+            xml = etree.tostring(els[0], encoding="unicode", with_tail=False)
+        else:
+            instr = "".join(x.text or "" for e in els for x in e.iter(W + "instrText"))
+            wrap = etree.Element(W + "sdtContent", nsmap=els[0].getroottree().getroot().nsmap)
+            for e in els:
+                wrap.append(copy.deepcopy(e))
+            xml = etree.tostring(wrap, encoding="unicode")
+        try:
+            opaque_element(xml, self.rel_ids)
+        except ValueError:
+            return None
+        m = re.search(r'\\c\s+"([^"]{1,60})"', instr)
+        kind = "toc" if not m else "tot" if m[1].lower() == "table" else "tof"
+        lv = re.search(r'\\o\s+"(\d)-(\d)"', instr)
+        return {"type": "toc", "attrs": {"kind": kind, "title": "", "levels": f"{lv[1]}-{lv[2]}" if lv else "1-3", "label": m[1] if m else None, "xml": xml, "refresh": False}}
+
+    def toc_end(self, children, i) -> int | None:
+        """Index of the last body child of the TOC field that begins in paragraph i (None: not a TOC field start)."""
+        depth, started = 0, False
+        for j in range(i, min(len(children), i + 2000)):
+            ch = children[j]
+            if loc(ch) != "p":
+                return None if not started else None
+            for r in ch.iter(W + "fldChar"):
+                k = r.get(W + "fldCharType")
+                depth += 1 if k == "begin" else -1 if k == "end" else 0
+            if j == i:
+                first = "".join(x.text or "" for x in ch.iter(W + "instrText")).strip()
+                if not first.startswith("TOC") or ch.find(f".//{W}fldChar") is None:
+                    return None
+                started = True
+            if depth <= 0:
+                return j
+        return None
+
+    # ---- blocks ----
     def blocks(self, parent, depth=0) -> list:
         out, stack = [], []  # stack: (ilvl, list node, numId) of the open lists
         spans: dict[int, list] = {}  # top level only: id(node) -> [node, first, last body child] it was parsed from
+        children, skip, sec = list(parent), -1, None
 
         def span(node, i):
-            if depth == 0 and node["type"] != "opaque":
+            if depth == 0 and node["type"] not in ("opaque", "toc"):
                 spans.setdefault(id(node), [node, i, i])[2] = i
-        for i, ch in enumerate(parent):
+        for i, ch in enumerate(children):
+            if i <= skip:
+                continue
             t = loc(ch)
+            n0 = len(out)
+            if depth == 0 and t in ("bookmarkStart", "bookmarkEnd"):
+                if t == "bookmarkStart" and (m := sec_from_bookmark(ch.get(W + "name"))):
+                    sec = {**m, "bid": ch.get(W + "id")}
+                    continue
+                if t == "bookmarkEnd" and sec and ch.get(W + "id") == sec["bid"]:
+                    sec = None
+                    continue
+            if depth == 0 and (t == "sdt" and ch.find(f"{W}sdtPr/{W}docPartObj/{W}docPartGallery") is not None
+                               and val(ch.find(f"{W}sdtPr/{W}docPartObj/{W}docPartGallery")) == "Table of Contents" or t == "p" and self.toc_end(children, i) is not None):
+                j = i if t == "sdt" else self.toc_end(children, i)
+                node = self.toc_node(children[i:j + 1])
+                if node is not None:
+                    stack.clear()
+                    out.append(node)
+                    skip = j
+                    self.tag_sec(out, n0, sec)
+                    continue
             if t == "p":
                 nodes, li = self.para(ch)
                 if li and nodes[0]["type"] == "paragraph":
@@ -261,9 +397,17 @@ class _Parser:
             else:
                 stack.clear()
                 out.append(self.keep(ch))
+            self.tag_sec(out, n0, sec if depth == 0 else None)
         for node, a, b in spans.values():  # unchanged blocks are written back as the original XML (see export)
             node.setdefault("attrs", {})["orig"] = {"s": a, "e": b, "h": fingerprint(node)}
         return out
+
+    @staticmethod
+    def tag_sec(out, n0, sec):
+        """Blocks produced since index n0 (or the list that grew) belong to the marked section `sec` (bookmark range)."""
+        if sec:
+            for n in out[n0:] or out[-1:]:
+                n.setdefault("attrs", {})["sec"] = {k: v for k, v in sec.items() if k != "bid"}
 
     def item(self, out, stack, li, para):
         num, lvl = li
@@ -387,12 +531,18 @@ def export(orig: bytes, content: dict, load_asset, render: dict | None = None) -
     kept: list = []
     doc, warnings = _strip_body(orig, kept), []
     b, sect = Builder(doc, load_asset, warnings, rels=rel_ids(orig)), doc.element.body.find(qn("w:sectPr"))
-    for n in (content or {}).get("content") or []:
+    b.bm_id = max([b.bm_id] + [int(x.get(qn("w:id"))) for k in kept for x in k.iter(qn("w:bookmarkStart")) if (x.get(qn("w:id")) or "").isdigit()])
+    blocks = (content or {}).get("content") or []
+    b.top_blocks, b.seq = blocks, seq_numbers(blocks)
+    for n in blocks:
+        b.sec_track(n)
         if (same := _original(n, kept)) is None:
             b.node(n, doc, {})
         else:  # unedited: the original paragraphs/table byte for byte, so nothing the editor model can't hold is lost
             for el in same:
                 sect.addprevious(el) if sect is not None else doc.element.body.append(el)
+    b.sec_close()
+    b.write_notes()
     if not doc.paragraphs and not doc.tables:
         doc.add_paragraph()
     if render is not None:
