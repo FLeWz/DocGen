@@ -501,26 +501,26 @@ def write_row(trpr, d: dict) -> None:
 
 
 def write_tbl(tblpr, d: dict, grid: list | None = None) -> None:
-    """Table-level edits (tfmt) onto tblPr, which keeps whatever the import had: only keys that differ from the direct
-    values already in the XML are written. `grid` (twips) keeps a dxa tblW equal to the column sum."""
+    """Table-level edits made in the editor (`tedit`: only what the user changed, jc/width/ind/layout/mar/bdr) onto tblPr, which
+    keeps everything the import had. `grid` (twips) keeps a dxa tblW equal to the column sum unless the user set a width."""
     if not isinstance(d, dict):
         d = {}
-    cur = tbl_fmt(tblpr)
-    if d.get("jc") in ("left", "center", "right") and d["jc"] != cur.get("jc"):
+    if d.get("jc") in ("left", "center", "right"):
         _set(tblpr, TBLPR_ORDER, "jc", val=d["jc"])
     w = d.get("width")
-    if isinstance(w, dict) and w != cur.get("width"):
+    if isinstance(w, dict):
         if w.get("type") == "auto":
             _set(tblpr, TBLPR_ORDER, "tblW", w=0, type="auto")
         elif w.get("type") in ("dxa", "pct") and (n := _int(w.get("w"), 1, 200000)):
             _set(tblpr, TBLPR_ORDER, "tblW", w=n, type=w["type"])
-    elif grid and (e := tblpr.find(W + "tblW")) is not None and e.get(W + "type") == "dxa" and not isinstance(w, dict):
+    elif grid and (e := tblpr.find(W + "tblW")) is not None and e.get(W + "type") == "dxa":
         e.set(W + "w", str(sum(grid)))
-    if (n := _int(d.get("ind"), -31680, 31680)) is not None and n != cur.get("ind"):
+    if (n := _int(d.get("ind"), -31680, 31680)) is not None:
         _set(tblpr, TBLPR_ORDER, "tblInd", w=n, type="dxa")
-    if d.get("layout") in ("fixed", "autofit") and d["layout"] != cur.get("layout", "autofit"):
-        _set(tblpr, TBLPR_ORDER, "tblLayout", type=d["layout"])
-    if isinstance(d.get("mar"), dict) and d["mar"] != cur.get("mar"):
+    if d.get("layout") in ("fixed", "autofit"):
+        if d["layout"] == "fixed" or tblpr.find(W + "tblLayout") is not None:
+            _set(tblpr, TBLPR_ORDER, "tblLayout", type=d["layout"])
+    if isinstance(d.get("mar"), dict):
         box = _el("tblCellMar")
         for k in ("top", "left", "bottom", "right"):
             if (n := _int(d["mar"].get(k), 0, 31680)) is not None:
@@ -530,5 +530,5 @@ def write_tbl(tblpr, d: dict, grid: list | None = None) -> None:
             if old is not None:
                 tblpr.remove(old)
             insert_ordered(tblpr, box, TBLPR_ORDER)
-    if isinstance(d.get("bdr"), dict) and d["bdr"] != cur.get("bdr"):
+    if isinstance(d.get("bdr"), dict):
         _write_borders(tblpr, TBLPR_ORDER, "tblBorders", d["bdr"], SIDES + ("insideH", "insideV"))

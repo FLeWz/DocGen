@@ -43,7 +43,7 @@ def test_grid_sums_tcw_and_spans_after_edit():
     t = table([([cell("A", hdr=True), cell("B", hdr=True), cell("C", hdr=True)], None),
                ([cell("m", rows=2), cell("x", span=2)], {"h": {"val": 600, "rule": "exact"}, "cant": True}),
                ([cell("y"), cell("z")], None)], grid=[2000, 3000, 4000],
-              tfmt={"width": {"type": "dxa", "w": 9000}, "layout": "fixed", "jc": "center", "ind": 120})
+              tedit={"width": {"type": "dxa", "w": 9000}, "layout": "fixed", "jc": "center", "ind": 120})
     data = export_bytes([t])
     tb = tbl_of(data)
     assert grid_of(tb) == [2000, 3000, 4000]
@@ -82,17 +82,17 @@ def test_tblw_dxa_follows_the_grid_but_a_user_width_wins():
     pr = '<w:tblPr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:tblW w:w="5000" w:type="dxa"/></w:tblPr>'
     t = table([([cell("a"), cell("b")], None)], grid=[3000, 3000], tblPr=pr)
     assert tbl_of(export_bytes([t])).find(qn("w:tblPr")).find(qn("w:tblW")).get(qn("w:w")) == "6000"
-    t["attrs"]["tfmt"] = {"width": {"type": "pct", "w": 2500}}
+    t["attrs"]["tedit"] = {"width": {"type": "pct", "w": 2500}}
     w = tbl_of(export_bytes([t])).find(qn("w:tblPr")).find(qn("w:tblW"))
     assert (w.get(qn("w:w")), w.get(qn("w:type"))) == ("2500", "pct")
-    t["attrs"]["tfmt"] = {"width": {"type": "auto", "w": 0}, "layout": "autofit"}
+    t["attrs"]["tedit"] = {"width": {"type": "auto", "w": 0}, "layout": "autofit"}
     pr2 = tbl_of(export_bytes([t])).find(qn("w:tblPr"))
     assert pr2.find(qn("w:tblW")).get(qn("w:type")) == "auto" and pr2.find(qn("w:tblLayout")) is None
 
 
 def test_cell_margins_and_borders_written():
     t = table([([cell("a"), cell("b")], None)], grid=[3000, 3000],
-              tfmt={"mar": {"top": 50, "left": 100, "bottom": 50, "right": 100}, "bdr": {"top": {"val": "single", "sz": 8, "color": "FF0000"}, "insideV": {"val": "none"}}})
+              tedit={"mar": {"top": 50, "left": 100, "bottom": 50, "right": 100}, "bdr": {"top": {"val": "single", "sz": 8, "color": "FF0000"}, "insideV": {"val": "none"}}})
     pr = tbl_of(export_bytes([t])).find(qn("w:tblPr"))
     assert pr.find(qn("w:tblCellMar")).find(qn("w:left")).get(qn("w:w")) == "100"
     assert pr.find(qn("w:tblBorders")).find(qn("w:top")).get(qn("w:color")) == "FF0000"
@@ -110,7 +110,7 @@ def _gotenberg():
 @pytest.mark.skipif(not _gotenberg(), reason="Gotenberg not reachable")
 def test_libreoffice_places_cells_where_the_grid_says():
     t = table([([cell("AAA", cw=None), cell("BBB"), cell("CCC")], None), ([cell("merged", span=2), cell("ddd")], None)], grid=[2000, 4000, 3000],
-              tfmt={"layout": "fixed", "width": {"type": "dxa", "w": 9000}})
+              tedit={"layout": "fixed", "width": {"type": "dxa", "w": 9000}})
     data = export_bytes([P(T("before")), t])
     r = httpx.post(f"{config.PDF_URL}/forms/libreoffice/convert", files={"files": ("t.docx", data)}, timeout=60)
     assert r.status_code == 200
@@ -119,3 +119,11 @@ def test_libreoffice_places_cells_where_the_grid_says():
     # column 2 starts 2000 twips (100pt) right of column 1, column 3 another 4000 twips (200pt)
     assert xs["BBB"] - xs["AAA"] == pytest.approx(100, abs=2) and xs["CCC"] - xs["BBB"] == pytest.approx(200, abs=2)
     assert xs["ddd"] == pytest.approx(xs["CCC"], abs=2) and xs["merged"] == pytest.approx(xs["AAA"], abs=2)
+
+
+def test_table_style_picked_in_the_editor_replaces_the_imported_one():
+    pr = '<w:tblPr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:tblStyle w:val="TableGrid"/><w:tblW w:w="0" w:type="auto"/></w:tblPr>'
+    t = table([([cell("a")], None)], grid=[3000], tblPr=pr, styleId="TableGrid")
+    assert tbl_of(export_bytes([t])).find(qn("w:tblPr")).find(qn("w:tblStyle")).get(qn("w:val")) == "TableGrid"
+    t["attrs"]["styleId"] = "NoSuchStyleHere"  # unknown ids are ignored
+    assert tbl_of(export_bytes([t])).find(qn("w:tblPr")).find(qn("w:tblStyle")).get(qn("w:val")) == "TableGrid"

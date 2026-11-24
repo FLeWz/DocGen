@@ -105,9 +105,10 @@ export function tableCss(tfmt?: Attrs | null, grid?: unknown): string {
     if (b && typeof b === "object") o.push(`--b-${k}:${borderCss({ top: b })[0].split(":").slice(1).join(":")}`);
   }
   const w = tfmt?.width, g = Array.isArray(grid) && grid.every((x) => num(x, 1, 200000)) ? (grid as number[]).reduce((a, b) => a + b, 0) : 0;
-  if (w && num(w.w, 1, 200000)) o.push(w.type === "pct" ? `width:${+(w.w / 50)}%` : `width:${pt(w.w)}`);
-  else if (g) o.push(`width:${pt(g)}`);
-  if (g || w) o.push("table-layout:fixed");
+  const auto = w?.type === "auto" || tfmt?.layout === "autofit"; // chosen in the table tools: columns follow their content
+  if (w && num(w.w, 1, 200000) && w.type !== "auto") o.push(w.type === "pct" ? `width:${+(w.w / 50)}%` : `width:${pt(w.w)}`);
+  else if (g && !auto) o.push(`width:${pt(g)}`);
+  if ((g || w) && !auto) o.push("table-layout:fixed");
   const ind = num(tfmt?.ind, -31680, 31680);
   if (ind !== null && !tfmt?.jc) o.push(`margin-left:${pt(ind)}`);
   if (tfmt?.jc === "right") o.push("margin-left:auto");

@@ -464,13 +464,18 @@ class Builder(Rich):
             t._tbl.insert(0, pr)
         elif s := self.style(ta.get("styleId"), "TableGrid"):
             t._tbl.tblPr.style = s
+        want = self.style(ta.get("styleId"))
+        if pr is not None and want and (cur := t._tbl.tblPr.find(qn("w:tblStyle"))) is not None and cur.get(qn("w:val")) != want:
+            cur.set(qn("w:val"), want)  # style picked in the table tools
+        elif pr is not None and want and t._tbl.tblPr.find(qn("w:tblStyle")) is None:
+            t._tbl.tblPr.style = want
         grid = ta.get("grid")
         if not (isinstance(grid, list) and len(grid) == ncols and all(isinstance(g, int) and not isinstance(g, bool) and 0 < g < 200000 for g in grid)):
             grid = self.grid_from_cells(placed, ncols)  # edited tables: cell widths (px) when the grid is stale
         if grid:
             for gc, g in zip(t._tbl.tblGrid.findall(qn("w:gridCol")), grid):
                 gc.set(qn("w:w"), str(g))
-        fmt.write_tbl(t._tbl.tblPr, ta.get("tfmt") or {}, grid)
+        fmt.write_tbl(t._tbl.tblPr, {"jc": (ta.get("tfmt") or {}).get("jc"), **(ta.get("tedit") or {})}, grid)  # tfmt.jc: the old ribbon's alignment
         for ri, row in enumerate(rows):  # leading all-header rows repeat on each page (Word needs them contiguous from the top)
             if not (row.get("content") and all(c.get("type") == "tableHeader" for c in row["content"])):
                 break

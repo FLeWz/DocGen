@@ -8,7 +8,9 @@ import { Decoration, DecorationSet } from "@tiptap/pm/view";
 import Heading from "@tiptap/extension-heading";
 import Paragraph from "@tiptap/extension-paragraph";
 import { Table, TableCell, TableHeader, TableRow } from "@tiptap/extension-table";
+import { isInTable } from "@tiptap/pm/tables";
 import StarterKit from "@tiptap/starter-kit";
+import { gridGuard, moveColumn, moveRow, run as runOp, type Op } from "./tables";
 import { esc, cellCss, imgCss, listCss, pflags, pfmtCss, rowCss, runCss, safeId, tableCss } from "./fmt";
 import { ooxmlToHtml, getMedia } from "./ooxml";
 import { BlockSelect } from "./blockrange";
@@ -117,7 +119,7 @@ export const ImportAttrs = Extension.create({
         renderHTML: (a: Record<string, any>) => (/^[A-Za-z_]\w{0,39}$/.test(a.slot ?? "") ? { "data-slot": a.slot } : {}) } } },
       { types: ["bulletList", "orderedList"], attributes: { numId: hidden(), listStyle: { default: null, parseHTML: (el: HTMLElement) => el.style.listStyleType || null,
         renderHTML: (a: Record<string, any>) => st(listCss(a.listStyle)) } } },
-      { types: ["table"], attributes: { tblPr: hidden(), grid: hidden(),
+      { types: ["table"], attributes: { tblPr: hidden(), grid: hidden(), tedit: hidden(),
         styleId: { default: null, renderHTML: (a: Record<string, any>) => ({ class: `dtbl${safeId(a.styleId) ? ` ts-${safeId(a.styleId)}` : ""}` }) },
         tfmt: json("tfmt", (a) => st(tableCss(a.tfmt, a.grid))) } },
       // eff = derived from the table style (never written back), cfmt = direct formatting (exported); eff first so cfmt wins
@@ -236,6 +238,17 @@ export const Shortcuts = Extension.create({
   },
 });
 
+/** Table keys: Alt+Shift+arrows move the row/column, Shift+F10 / the context-menu key open the table menu (see TableTools); gridGuard keeps attrs.grid honest. */
+export const TableKeys = Extension.create({
+  name: "tableKeys",
+  addProseMirrorPlugins() { return [gridGuard()]; },
+  addKeyboardShortcuts() {
+    const e = () => this.editor, mv = (op: Op) => () => isInTable(e().state) && (runOp(e(), op) || true);
+    return { "Alt-Shift-ArrowUp": mv(moveRow(-1)), "Alt-Shift-ArrowDown": mv(moveRow(1)), "Alt-Shift-ArrowLeft": mv(moveColumn(-1)), "Alt-Shift-ArrowRight": mv(moveColumn(1)),
+      "Shift-F10": () => isInTable(e().state) && window.dispatchEvent(new CustomEvent("docgen:tablemenu")), ContextMenu: () => isInTable(e().state) && window.dispatchEvent(new CustomEvent("docgen:tablemenu")) };
+  },
+});
+
 /** Heading numbers of styles that carry list numbering (Word "1.2 Title"), drawn as widgets so the editor matches the preview. */
 export const headingNumbering = { styles: new Map<string, { level: number | null }>() };
 export const HeadingNumbers = Extension.create({
@@ -272,7 +285,7 @@ export const extensions = [
   Table.extend({ addAttributes() { return { ...this.parent?.(), dynamicList: attr("dynamicList", "data-dynamic-list") }; } })
     .configure({ resizable: false }),
   TableRow, TableHeader, TableCell, Variable, ImageNode, Fmt, HardBreak, Opaque, ImportAttrs, HeadingNumbers,
-  Field, Footnote, Toc, SectBreak, Derived, Shortcuts,
+  Field, Footnote, Toc, SectBreak, Derived, Shortcuts, TableKeys,
 ];
 
 /** The editor of the page view: the schema above plus page-gap decorations (the conflict resolver edits without them). */
