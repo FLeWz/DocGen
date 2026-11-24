@@ -3,8 +3,10 @@ the style CSS resolver. Values stay close to OOXML units (twips, half-points, ei
 lossless; everything read back from client JSON is validated here (hex colours, enums, int ranges), junk is dropped.
 
 run   {b,i,u,strike,color,font,size,hl,va,caps,smallCaps,rStyle}      (b/i/u are marks, not part of the `fmt` mark)
-para  {jc,left,right,first,before,after,line,lineRule,shd,bdr,keepNext,pageBreakBefore}
-cell  {shd,vAlign,bdr}      tbl {jc,bdr,width}      bdr = {top|left|bottom|right|insideH|insideV: {val,sz,color}}
+para  {jc,left,right,first,before,after,line,lineRule,shd,bdr,keepNext,keepLines,pageBreakBefore,tabs}
+      tabs = [{pos (twips), val: left|center|right|decimal|bar, leader: dot|hyphen|underscore|...}]
+cell  {shd,vAlign,bdr,mar,dir}   tbl {jc,bdr,width,ind,mar,layout}   row {h: {val,rule}, cant}
+bdr = {top|left|bottom|right|insideH|insideV: {val,sz,color}}   mar = {top|left|bottom|right: twips}
 """
 import re
 import zipfile
@@ -34,6 +36,7 @@ PPR_ORDER = ("pStyle keepNext keepLines pageBreakBefore framePr widowControl num
              "suppressAutoHyphens kinsoku wordWrap overflowPunct topLinePunct autoSpaceDE autoSpaceDN bidi adjustRightInd "
              "snapToGrid spacing ind contextualSpacing mirrorIndents suppressOverlap jc textDirection textAlignment "
              "textboxTightWrap outlineLvl divId cnfStyle rPr sectPr pPrChange").split()
+TRPR_ORDER = "cnfStyle divId gridBefore gridAfter wBefore wAfter cantSplit trHeight tblHeader tblCellSpacing jc hidden".split()
 TCPR_ORDER = ("cnfStyle tcW gridSpan hMerge vMerge tcBorders shd noWrap tcMar textDirection tcFitText vAlign hideMark").split()
 
 loc = lambda e: e.tag.rpartition("}")[2] if isinstance(e.tag, str) else ""
@@ -82,8 +85,8 @@ class Theme:
         if not c:
             return None
         rgb = [int(c[i:i + 2], 16) for i in (0, 2, 4)]
-        if tint and _int(tint, 0, 255) is not None:
-            t = int(tint, 16) / 255 if re.fullmatch(r"[0-9A-Fa-f]{2}", tint) else 1
+        if tint and re.fullmatch(r"[0-9A-Fa-f]{2}", tint):
+            t = int(tint, 16) / 255
             rgb = [round(x * t + 255 * (1 - t)) for x in rgb]
         if shade and re.fullmatch(r"[0-9A-Fa-f]{2}", shade):
             rgb = [round(x * int(shade, 16) / 255) for x in rgb]
@@ -102,9 +105,10 @@ def _color(e, theme):
     """w:color / w:shd attribute set -> 'RRGGBB' | None (auto)."""
     if e is None:
         return None
-    tc = e.get(W + "themeColor")
+    shd = loc(e) == "shd"  # shading uses themeFill/themeFillTint/themeFillShade for its fill
+    tc = e.get(W + ("themeFill" if shd else "themeColor"))
     if tc and theme:
-        c = theme.color(tc, e.get(W + "themeTint"), e.get(W + "themeShade"))
+        c = theme.color(tc, e.get(W + ("themeFillTint" if shd else "themeTint")), e.get(W + ("themeFillShade" if shd else "themeShade")))
         if c:
             return c
     v = e.get(W + "val") if loc(e) == "color" else e.get(W + "fill")
@@ -219,12 +223,45 @@ def para_fmt(ppr, theme=None) -> tuple[dict, set]:
     bd = _borders(ppr.find(W + "pBdr"), SIDES, theme)
     if bd:
         d["bdr"] = bd
-    for k in ("keepNext", "pageBreakBefore"):
+    for k in ("keepNext", "keepLines", "pageBreakBefore"):
         if _on(ppr.find(W + k)) and ppr.find(W + k) is not None:
             d[k] = True
-    handled = {"pStyle", "numPr", "rPr", "keepNext", "keepLines", "widowControl", "contextualSpacing", "pageBreakBefore",
+    tabs = tab_stops(ppr.find(W + "tabs"))
+    if tabs:
+        d["tabs"] = tabs
+    handled = {"pStyle", "numPr", "rPr", "tabs", "keepNext", "keepLines", "widowControl", "contextualSpacing", "pageBreakBefore",
                "jc", "ind", "spacing", "shd", "pBdr", "outlineLvl", "suppressAutoHyphens"}
     return d, {loc(c) for c in ppr if loc(c) not in handled}
+
+
+TAB_VAL = {"left": "left", "start": "left", "center": "center", "right": "right", "end": "right", "decimal": "decimal", "bar": "bar"}
+LEADER = {"dot", "hyphen", "underscore", "heavy", "middleDot"}
+
+
+def tab_stops(tabs) -> list:
+    out = []
+    for t in (tabs if tabs is not None else []):
+        pos, v = _int(t.get(W + "pos"), 0, 31680), t.get(W + "val")
+        if pos is None or v == "clear" or v not in TAB_VAL:
+            continue
+        d = {"pos": pos, "val": TAB_VAL[v]}
+        if t.get(W + "leader") in LEADER:
+            d["leader"] = t.get(W + "leader")
+        out.append(d)
+    return sorted(out, key=lambda x: x["pos"])[:20]
+
+
+def margins(e) -> dict:
+    """tblCellMar / tcMar -> {top,left,bottom,right} twips (start/end are the bidi spellings of left/right)."""
+    out = {}
+    for k, alt in (("top", None), ("left", "start"), ("bottom", None), ("right", "end")):
+        m = e.find(W + k) if e is not None else None
+        if m is None and alt and e is not None:
+            m = e.find(W + alt)
+        n = _int(m.get(W + "w"), 0, 31680) if m is not None and m.get(W + "type", "dxa") == "dxa" else None
+        if n is not None:
+            out[k] = n
+    return out
 
 
 def cell_fmt(tcpr, theme=None) -> dict:
@@ -240,7 +277,16 @@ def cell_fmt(tcpr, theme=None) -> dict:
     bd = _borders(tcpr.find(W + "tcBorders"), SIDES, theme)
     if bd:
         d["bdr"] = bd
+    mar = margins(tcpr.find(W + "tcMar"))
+    if mar:
+        d["mar"] = mar
+    td = val(tcpr.find(W + "textDirection"))
+    if td in TEXT_DIR:
+        d["dir"] = TEXT_DIR[td]
     return d
+
+
+TEXT_DIR = {"btLr": "btLr", "tbRl": "tbRl", "lrTb": None, "tbRlV": "tbRl", "lrTbV": None, "tbLrV": "btLr"}
 
 
 def tbl_fmt(tblpr, theme=None) -> dict:
@@ -256,6 +302,35 @@ def tbl_fmt(tblpr, theme=None) -> dict:
     w = tblpr.find(W + "tblW")
     if w is not None and _int(w.get(W + "w"), 0, 200000) and w.get(W + "type") in ("dxa", "pct"):
         d["width"] = {"w": int(w.get(W + "w")), "type": w.get(W + "type")}
+    ind = tblpr.find(W + "tblInd")
+    if ind is not None and _int(ind.get(W + "w"), -31680, 31680) is not None and ind.get(W + "type", "dxa") == "dxa":
+        d["ind"] = int(ind.get(W + "w"))
+    mar = margins(tblpr.find(W + "tblCellMar"))
+    if mar:
+        d["mar"] = mar
+    if val(tblpr.find(W + "tblLayout"), "type") == "fixed":
+        d["layout"] = "fixed"
+    return d
+
+
+def tbl_look(tblpr) -> dict:
+    """tblLook -> which conditional formats apply (explicit attributes win over the hex bitmask `val`)."""
+    e = tblpr.find(W + "tblLook") if tblpr is not None else None
+    if e is None:
+        return dict(firstRow=False, lastRow=False, firstCol=False, lastCol=False, hBand=True, vBand=True)
+    bits = int(e.get(W + "val"), 16) if re.fullmatch(r"[0-9A-Fa-f]{1,4}", e.get(W + "val") or "") else None
+    flag = lambda attr, bit, default: (e.get(W + attr) in ("1", "true", "on")) if e.get(W + attr) is not None else (bool(bits & bit) if bits is not None else default)
+    return dict(firstRow=flag("firstRow", 0x20, False), lastRow=flag("lastRow", 0x40, False), firstCol=flag("firstColumn", 0x80, False),
+                lastCol=flag("lastColumn", 0x100, False), hBand=not flag("noHBand", 0x200, False), vBand=not flag("noVBand", 0x400, False))
+
+
+def row_fmt(trpr) -> dict:
+    d: dict = {}
+    h = trpr.find(W + "trHeight") if trpr is not None else None
+    if h is not None and _int(h.get(W + "val"), 0, 31680):
+        d["h"] = {"val": int(h.get(W + "val")), "rule": "exact" if h.get(W + "hRule") == "exact" else "atLeast"}
+    if trpr is not None and trpr.find(W + "cantSplit") is not None and _on(trpr.find(W + "cantSplit")):
+        d["cant"] = True
     return d
 
 
@@ -335,9 +410,22 @@ def write_run(rpr, d: dict, has_style) -> None:
 def write_para(ppr, d: dict) -> None:
     if not isinstance(d, dict):
         return
-    for k in ("keepNext", "pageBreakBefore"):
+    for k in ("keepNext", "keepLines", "pageBreakBefore"):
         if d.get(k) is True:
             _set(ppr, PPR_ORDER, k)
+    if isinstance(d.get("tabs"), list):
+        box = _el("tabs")
+        for t in d["tabs"][:20]:
+            if isinstance(t, dict) and _int(t.get("pos"), 0, 31680) is not None and t.get("val") in TAB_VAL.values():
+                at = {"val": t["val"], "pos": int(t["pos"])}
+                if t.get("leader") in LEADER:
+                    at["leader"] = t["leader"]
+                box.append(_el("tab", **at))
+        if len(box):
+            old = ppr.find(W + "tabs")
+            if old is not None:
+                ppr.remove(old)
+            insert_ordered(ppr, box, PPR_ORDER)
     _write_borders(ppr, PPR_ORDER, "pBdr", d.get("bdr"), SIDES)
     if _hex(d.get("shd")):
         _set(ppr, PPR_ORDER, "shd", val="clear", color="auto", fill=_hex(d["shd"]))
@@ -366,3 +454,25 @@ def write_cell(tcpr, d: dict) -> None:
         _set(tcpr, TCPR_ORDER, "shd", val="clear", color="auto", fill=_hex(d["shd"]))
     if d.get("vAlign") in VALIGN:
         _set(tcpr, TCPR_ORDER, "vAlign", val=d["vAlign"])
+    if d.get("dir") in ("btLr", "tbRl"):
+        _set(tcpr, TCPR_ORDER, "textDirection", val=d["dir"])
+    if isinstance(d.get("mar"), dict):
+        box = _el("tcMar")
+        for k in ("top", "left", "bottom", "right"):
+            if (n := _int(d["mar"].get(k), 0, 31680)) is not None:
+                box.append(_el(k, w=n, type="dxa"))
+        if len(box):
+            old = tcpr.find(W + "tcMar")
+            if old is not None:
+                tcpr.remove(old)
+            insert_ordered(tcpr, box, TCPR_ORDER)
+
+
+def write_row(trpr, d: dict) -> None:
+    if isinstance(d, dict) and isinstance(d.get("h"), dict) and (n := _int(d["h"].get("val"), 1, 31680)):
+        old = trpr.find(W + "trHeight")
+        if old is not None:
+            trpr.remove(old)
+        insert_ordered(trpr, _el("trHeight", val=n, hRule="exact" if d["h"].get("rule") == "exact" else "atLeast"), TRPR_ORDER)
+    if isinstance(d, dict) and d.get("cant") is True and trpr.find(W + "cantSplit") is None:
+        insert_ordered(trpr, _el("cantSplit"), TRPR_ORDER)

@@ -86,8 +86,9 @@ def border_css(bd: dict, prop: str) -> list:
 
 def _merge(base: dict, over: dict) -> dict:
     out = {**base, **over}
-    if "bdr" in base and "bdr" in over:
-        out["bdr"] = {**base["bdr"], **over["bdr"]}
+    for k in ("bdr", "mar"):  # per side: a derived style that sets only `bottom` keeps the base's other sides
+        if k in base and k in over:
+            out[k] = {**base[k], **over[k]}
     return out
 
 
@@ -113,8 +114,13 @@ class Look:
                 self.styles[sid] = dict(
                     type=s.get(W + "type"), based=fmt.val(s.find(W + "basedOn")), default=s.get(W + "default") in ("1", "true"),
                     r=fmt.run_fmt(s.find(W + "rPr"), self.theme)[0], p=fmt.para_fmt(s.find(W + "pPr"), self.theme)[0],
-                    tbl=fmt.tbl_fmt(tp, self.theme), tcp=fmt.cell_fmt(s.find(W + "tcPr"), self.theme))
+                    tbl=fmt.tbl_fmt(tp, self.theme), tcp=fmt.cell_fmt(s.find(W + "tcPr"), self.theme),
+                    # conditional formats (firstRow, band1Horz...): the same property groups as the style itself
+                    cond={c.get(W + "type"): dict(r=fmt.run_fmt(c.find(W + "rPr"), self.theme)[0], p=fmt.para_fmt(c.find(W + "pPr"), self.theme)[0],
+                                                  tbl=fmt.tbl_fmt(c.find(W + "tblPr"), self.theme), tcp=fmt.cell_fmt(c.find(W + "tcPr"), self.theme))
+                          for c in s.findall(W + "tblStylePr")})
                 # a table style's paragraph/run props are on the style itself (pPr/rPr), cells on tcPr
+        self.default_t = next((k for k, v in self.styles.items() if v["type"] == "table" and v["default"]), None)
         self.default_p = next((k for k, v in self.styles.items() if v["type"] == "paragraph" and v["default"]), "Normal")
 
     def parse(self, name):
@@ -159,19 +165,68 @@ class Look:
                     out.append(f".docx .ts-{sid} p.st-{self.default_p}{{{rule(rr, pp)}}}")
         return "\n".join(o for o in out if not o.endswith("{}"))
 
-    def page(self) -> dict:
-        root = self.parse("word/document.xml")
-        sp = None
+    def _sect_pr(self, root) -> list:
+        """Every section's sectPr in document order: those in a top-level paragraph's pPr (section breaks) + the body's own (last)."""
+        out = []
         for sp in root.iter(W + "sectPr"):
-            pass  # the last one is the final section = body-level
-        if sp is None:
-            return dict(w=595.3, h=841.9, top=72, right=72, bottom=72, left=72, header=36, footer=36)
-        sz, mar = sp.find(W + "pgSz"), sp.find(W + "pgMar")
+            par = sp.getparent()
+            if par.tag == W + "body" or (par.tag == W + "pPr" and par.getparent().getparent().tag == W + "body"):
+                out.append(sp)
+        return out
+
+    @staticmethod
+    def _page(sp) -> dict:
+        sz, mar = (sp.find(W + "pgSz"), sp.find(W + "pgMar")) if sp is not None else (None, None)
         g = lambda e, k, d: (fmt._int(e.get(W + k), 0, 200000) if e is not None else None) or d
         tw = lambda v: round(v / 20, 1)
         return dict(w=tw(g(sz, "w", 11906)), h=tw(g(sz, "h", 16838)), top=tw(g(mar, "top", 1440)), right=tw(g(mar, "right", 1440)),
                     bottom=tw(g(mar, "bottom", 1440)), left=tw(g(mar, "left", 1440)), header=tw(g(mar, "header", 720)),
-                    footer=tw(g(mar, "footer", 720)), first_page_differs=sp.find(W + "titlePg") is not None)
+                    footer=tw(g(mar, "footer", 720)), first_page_differs=sp is not None and sp.find(W + "titlePg") is not None)
+
+    def page(self) -> dict:
+        """pgSz/pgMar of the final (body-level) section."""
+        sps = self._sect_pr(self.parse("word/document.xml"))
+        return self._page(sps[-1] if sps else None)
+
+    def sections(self) -> dict:
+        """Per section: page setup, break type, titlePg, header/footer part indexes per type (inherited from the previous
+        section when absent, as in Word), page number format/start; `parts` = the distinct header/footer parts (xml + media);
+        `even_odd` = settings evenAndOddHeaders; `media` = images of the body."""
+        root, budget = self.parse("word/document.xml"), [0]
+        rels, parts, seen, secs = self._rels("word/document.xml"), [], {}, []
+        prev = {"header": {}, "footer": {}}
+
+        def part(rid):
+            rel = rels.get(rid)
+            if rel is None:
+                return None
+            path = posixpath.normpath(posixpath.join("word", rel.get("Target")))
+            if path not in self.names or path.startswith(".."):
+                return None
+            if path not in seen:
+                seen[path] = len(parts)
+                parts.append(dict(xml=self.zf.read(path).decode("utf-8", "replace"), media=self.media(path, budget)))
+            return seen[path]
+        for sp in self._sect_pr(root):
+            refs = {}
+            for kind in ("header", "footer"):
+                refs[kind] = dict(prev[kind])
+                for e in sp.findall(W + kind + "Reference"):
+                    t = e.get(W + "type")
+                    if t in ("default", "first", "even"):
+                        i = part(e.get("{%s}id" % fmt_r()))
+                        if i is not None:
+                            refs[kind][t] = i
+            prev = refs
+            n = sp.find(W + "pgNumType")
+            fm = fmt.val(n, "fmt") if n is not None else None
+            secs.append(dict(page=self._page(sp), brk=fmt.val(sp.find(W + "type")) or "nextPage", title_pg=sp.find(W + "titlePg") is not None,
+                             header=refs["header"], footer=refs["footer"],
+                             num=dict(fmt=fm if fm in ("decimal", "upperRoman", "lowerRoman", "upperLetter", "lowerLetter") else "decimal",
+                                      start=fmt._int(n.get(W + "start"), 0, 100000) if n is not None else None)))
+        st = self.parse("word/settings.xml") if "word/settings.xml" in self.names else None
+        return dict(sections=secs, parts=parts, even_odd=st is not None and fmt._on(st.find(W + "evenAndOddHeaders")),
+                    media=self.media("word/document.xml", budget))
 
     def _rels(self, part: str) -> dict:
         rp = posixpath.join(posixpath.dirname(part), "_rels", posixpath.basename(part) + ".rels")
@@ -197,23 +252,11 @@ class Look:
         return out
 
     def parts(self) -> dict:
-        """Header/footer (default type of the final section): raw XML + its image media; plus the body's media."""
-        budget, out = [0], dict(header=None, footer=None)
-        root = self.parse("word/document.xml")
-        sp = None
-        for sp in root.iter(W + "sectPr"):
-            pass
-        rels = self._rels("word/document.xml")
-        for kind in ("header", "footer"):
-            ref = next((e for e in (sp if sp is not None else []) if e.tag == W + kind + "Reference" and e.get(W + "type") == "default"), None)
-            rel = rels.get(ref.get("{%s}id" % fmt_r()) if ref is not None else None)
-            if rel is None:
-                continue
-            path = posixpath.normpath(posixpath.join("word", rel.get("Target")))
-            if path in self.names and not path.startswith(".."):
-                out[kind] = dict(xml=self.zf.read(path).decode("utf-8", "replace"), media=self.media(path, budget))
-        out["media"] = self.media("word/document.xml", budget)
-        return out
+        """Compat: header/footer (default type of the final section) + body media, plus the per-section data of sections()."""
+        sec = self.sections()
+        last = sec["sections"][-1] if sec["sections"] else dict(header={}, footer={})
+        get = lambda kind: sec["parts"][last[kind]["default"]] if "default" in last[kind] else None
+        return dict(header=get("header"), footer=get("footer"), **sec)
 
 
 def fmt_r() -> str:
@@ -222,7 +265,8 @@ def fmt_r() -> str:
 
 def look(data: bytes) -> dict:
     lk = Look(data)
-    return dict(css=lk.css(), page=lk.page(), **lk.parts(),
+    tabs = {sid: t for sid in lk.styles if lk.styles[sid]["type"] == "paragraph" and (t := lk.effective(sid)[1].get("tabs"))}
+    return dict(css=lk.css(), page=lk.page(), tabs=tabs, **lk.parts(),
                 styles=[dict(s, id=s["style_id"], builtin=False) for s in parse_styles(lk.root)] if hasattr(lk, "root") else [])
 
 
@@ -238,4 +282,4 @@ def org_look(styles, skip=()) -> dict:
             b=True if s.bold else None, i=True if s.italic else None).items() if v is not None}
         css.append(f".docx .st-{s.style_id}{{{rule(r, dict(before=round(s.space_before * 20), after=round(s.space_after * 20)))}}}")
     return dict(css="\n".join(css), page=dict(w=595.3, h=841.9, top=70.9, right=70.9, bottom=70.9, left=70.9, header=35, footer=35),
-                header=None, footer=None, media={}, styles=None)
+                header=None, footer=None, media={}, styles=None, sections=[], parts=[], even_odd=False, tabs={})

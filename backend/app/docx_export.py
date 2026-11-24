@@ -419,6 +419,9 @@ class Builder:
         if all(c.get("type") == "tableHeader" for c in rows[0].get("content") or [{}]):
             rpr = t.rows[0]._tr.get_or_add_trPr()
             rpr.append(OxmlElement("w:tblHeader"))
+        for ri, row in enumerate(rows):
+            if (row.get("attrs") or {}).get("rfmt"):
+                fmt.write_row(t.rows[ri]._tr.get_or_add_trPr(), row["attrs"]["rfmt"])
         for ri, ci, cs, rs, cell in placed:
             a = t.cell(ri, ci)
             m = a.merge(t.cell(ri + rs - 1, ci + cs - 1)) if cs > 1 or rs > 1 else a

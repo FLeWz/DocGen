@@ -19,6 +19,8 @@ from docx.oxml.ns import qn
 from lxml import etree
 
 from . import fmt
+from .docx_style import Look
+from .tblstyle import TableEff
 from .base_docs import BadDocx, W, parse_styles
 from .docx_export import Builder
 from .ooxml import opaque_element, rel_ids, stable_zip
@@ -61,7 +63,7 @@ def _flag(e) -> bool:
 
 
 class _Parser:
-    def __init__(self, zf, store_image):
+    def __init__(self, zf, store_image, data=None):
         self.zf, self.store_image = zf, store_image
         parse = lambda n: etree.fromstring(zf.read(n), etree.XMLParser(resolve_entities=False, no_network=True, load_dtd=False))
         names = set(zf.namelist())
@@ -75,6 +77,7 @@ class _Parser:
                                                       for l in a.findall(W + "lvl")} for a in n.findall(W + "abstractNum")}
             self.numfmt = {x.get(W + "numId"): abstract.get(val(x.find(W + "abstractNumId")), {}) for x in n.findall(W + "num")}
         self.theme = fmt.load_theme(zf, parse)
+        self.look = Look(data) if data else None  # table styles (conditional formats) are resolved per cell, see tblstyle.py
         self.rel_ids = set(self.rels)
         self.opaque, self.dropped, self.blocked, self.images = Counter(), Counter(), [], {}
         self.root = parse("word/document.xml")
@@ -252,8 +255,8 @@ class _Parser:
                                             or tr.find(f"{W}trPr/{W}gridAfter") is not None for tr in trs):
             return self.keep(tbl, "table (tracked or irregular)")
         grid = [int(g.get(W + "w")) for g in tbl.findall(f"{W}tblGrid/{W}gridCol") if (g.get(W + "w") or "").isdigit()]
-        rows, origin = [], {}
-        for tr in trs:
+        rows, origin, placed = [], {}, []
+        for ri, tr in enumerate(trs):
             hdr = tr.find(f"{W}trPr/{W}tblHeader") is not None
             cells, col, new_origin = [], 0, {}
             for tc in tr.findall(W + "tc"):
@@ -261,7 +264,7 @@ class _Parser:
                 span = max(int(val(pr.find(W + "gridSpan")) or 1), 1) if pr is not None and pr.find(W + "gridSpan") is not None else 1
                 vm = pr.find(W + "vMerge") if pr is not None else None
                 if vm is not None and val(vm) != "restart" and col in origin:
-                    origin[col]["attrs"]["rowspan"] += 1
+                    origin[col][0]["attrs"]["rowspan"] += 1
                     new_origin[col] = origin[col]
                     col += span
                     continue
@@ -272,19 +275,33 @@ class _Parser:
                                   "colwidth": [round(w / 15) for w in widths] if len(widths) == span else None,
                                   **({"cfmt": cf} if cf else {})},
                         "content": self.blocks(tc, 1) or [{"type": "paragraph", "attrs": {"styleId": None}}]}
+                placed.append((cell, ri, col, span, pr))
                 if vm is not None:
-                    new_origin[col] = cell
+                    new_origin[col] = (cell,)
                 cells.append(cell)
                 col += span
             origin = new_origin
-            rows.append({"type": "tableRow", "content": cells})
+            rf = fmt.row_fmt(tr.find(W + "trPr"))
+            rows.append({"type": "tableRow", **({"attrs": {"rfmt": rf}} if rf else {}), "content": cells})
         sid = val(tbl.find(f"{W}tblPr/{W}tblStyle"))
+        sid = sid if sid and STYLE_ID.fullmatch(sid) else None
         pr = tbl.find(W + "tblPr")
+        tf = {}
+        if self.look is not None:  # resolve the table style + conditional formats into explicit per-cell attrs
+            te = TableEff(self.look, pr, sid)
+            te.nrows, te.ncols = len(trs), max(len(grid), max((c + s for _, _, c, s, _ in placed), default=0))
+            for cell, ri, col, span, cpr in placed:
+                eff = te.cell(ri, col, cell["attrs"]["rowspan"], span, cpr)
+                if eff:
+                    cell["attrs"]["eff"] = eff
+            tf = te.table_fmt()
+        else:
+            tf = fmt.tbl_fmt(pr, self.theme)
         if pr is not None:
             pr = copy.deepcopy(pr)
             etree.cleanup_namespaces(pr)  # tblPr has no prefixed attribute values, so unused declarations can go
-        tf = fmt.tbl_fmt(tbl.find(W + "tblPr"), self.theme)
-        return {"type": "table", "attrs": {"dynamicList": None, "styleId": sid if sid and STYLE_ID.fullmatch(sid) else None,
+        tf = {k: v for k, v in tf.items() if k != "mar"}
+        return {"type": "table", "attrs": {"dynamicList": None, "styleId": sid,
                                            **({"tfmt": tf} if tf else {}),
                                            "grid": grid or None,
                                            "tblPr": etree.tostring(pr, encoding="unicode", with_tail=False) if pr is not None else None},
@@ -297,7 +314,7 @@ def parse(data: bytes, store_image) -> tuple[dict, list[str]]:
         if zf.getinfo("word/document.xml").file_size > MAX_DOC_XML:
             raise BadDocx("word/document.xml too large")
         try:
-            ps = _Parser(zf, store_image)
+            ps = _Parser(zf, store_image, data)
             content = ps.blocks(ps.root.find(W + "body"))
         except (etree.XMLSyntaxError, KeyError, ValueError, RecursionError) as e:
             raise BadDocx(f"cannot parse document: {type(e).__name__}")
