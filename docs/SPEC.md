@@ -91,7 +91,7 @@ Containers in `docker-compose.yml`: `web` (frontend served by nginx), `api`, `db
 
 ### Documents (the builder)
 - A **Document** lives in a folder and has: base document (pinned version), ordered list of blocks, variable values, linked-documents list, and its own version history (stored as `documents/<slug>.yaml` in the folder's git repo, committed like snippets).
-- Block types: `snippet ref`, `heading` (custom styled, numbered or not), `page break`, `table of contents`, `slot` content.
+- Block types: `snippet ref`, `heading` (custom styled, numbered or not), `paragraph` (rich text written in the document), `page break`, `toc` (contents / list of tables / list of figures), `slot` content.
 
 ---
 

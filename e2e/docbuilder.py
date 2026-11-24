@@ -59,7 +59,11 @@ with sync_playwright() as pw:
         page.get_by_label("Remove block").last.click()
         expect(page.get_by_test_id("block")).to_have_count(2)
         saved(page, "doc-save-status")
-        page.get_by_role("button", name="Preview").click()
+        page.get_by_role("button", name="Preview").click()  # default: the real PDF render, inline from a blob URL
+        pdfv = page.get_by_role("dialog").get_by_test_id("word-pdf")
+        expect(pdfv).to_be_visible(timeout=120_000)
+        assert pdfv.get_attribute("src").startswith("blob:")
+        page.get_by_role("tab", name=re.compile("Draft view")).click()
         expect(page.get_by_role("dialog").get_by_test_id("preview")).to_contain_text("Version one text")
         page.keyboard.press("Escape")
         page.get_by_role("button", name="Commit…").click()

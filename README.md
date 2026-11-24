@@ -83,7 +83,7 @@ For production remove the `mail` service and point `SMTP_*` at a real server.
 
 The editor and every preview sit on a "page" with the page size, margins, header/footer, fonts, colours and paragraph
 styles of the DOCX they belong to: an imported document uses its own package, a snippet uses the base document chosen
-under **Look** (else the organization styles). Preview modes: **Live (HTML)**, **Render as Word does (PDF)** (same
+under **Look** (else the organization styles). The document builder's **Preview** shows the real PDF export (cached while the document is unchanged; *Draft view* = HTML). Preview modes: **Live (HTML)**, **Render as Word does (PDF)** (same
 exporter, converted by Gotenberg/LibreOffice; slower, but real pagination) or off; zoom and optional page-break guides.
 API: `GET /api/styles/css?import=<id>|base_doc=<id>`, `POST /api/render/pdf`. Scripted check on any DOCX:
 `E2E_FIDELITY_DOCX=file.docx E2E_FIDELITY_PAGES=<n> python e2e/fidelity.py` (needs a user from `scripts/e2e-users.sh`).

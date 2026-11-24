@@ -54,3 +54,9 @@ Stable `data-testid`s are used by `e2e/*.py`: `preview`, `word-pdf`, `save-statu
 - Delete: modal fetches `GET /base-documents/{id}/usage`; while documents (committed or draft) use it the list is shown with links and the button stays disabled (`data-testid="in-use"`).
 - Split by headings (`SplitDialog.tsx`, `splitting.ts`): outline of every heading (indented by level, block count, characters) with a checkbox per heading, All / None / Level 1 / 1–2 / 1–3, editable snippet title, optional *Preface* snippet, live result list (`data-testid="split-preview"`), folder select. Checkboxes live in this modal only. Grouping is computed client-side by `groupSections` (Vitest) and again server-side on apply.
 - Insert tab table-size select: label "Rows × cols", fixed 112 px width (was clipped at 90 px).
+
+## Round 7
+- Modal sizes: `Modal size="sm|md|wide"` (default md = min(720px, 92vw)); `.scrollbox` for long tables inside dialogs.
+- Ribbon: *Dynamic table* (`Make dynamic table`) in Insert > Tables and Layout > Table; dialog with list variable and optional row fields; table badge `dynamic: <list>`; the variable dialog lists `row.*` fields (`data-testid="row-chips"`).
+- Document builder: toolbar *Heading, Paragraph, TOC, List of tables, List of figures, Page break*. A paragraph block holds an inline editor (`data-testid="para-editor"`: style dropdown, bold/italic, lists, variable). *Preview* opens the PDF render first (`data-testid="word-pdf"`, `pdf-preview`, `pdf-cached`, `preview-missing`), tab *Draft view* = the HTML preview (`preview`).
+- Header/footer editor box has the page's text width and no horizontal padding; tables wider than the page are clipped by the backend.
