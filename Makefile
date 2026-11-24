@@ -35,3 +35,4 @@ test-e2e:  # needs E2E_TAG and E2E_PASSWORD, users via: E2E_TAG=.. E2E_PASSWORD=
 	PLAYWRIGHT_BROWSERS_PATH=$(CURDIR)/.playwright .venv/bin/python e2e/editor.py
 	PLAYWRIGHT_BROWSERS_PATH=$(CURDIR)/.playwright .venv/bin/python e2e/round7.py
 	PLAYWRIGHT_BROWSERS_PATH=$(CURDIR)/.playwright .venv/bin/python e2e/tables.py
+	PLAYWRIGHT_BROWSERS_PATH=$(CURDIR)/.playwright .venv/bin/python e2e/round9.py

@@ -1,7 +1,7 @@
 
 /* ---- Word page ("paper"): <PageFrame>, shared by editor and previews. Page size/margins come from the DOCX (custom props set inline) ---- */
 .docx { --zoom: 1; }
-.docx .docx-stage, .docx-stage { background: #e8e8e8; padding: 12px; overflow: auto; max-height: 80vh; }
+.docx .docx-stage, .docx-stage { background: #e8e8e8; padding: 12px; overflow: auto; max-height: 80vh; color-scheme: light; scrollbar-color: #b4b4b4 #e8e8e8; } /* the paper stays neutral in dark theme */
 .docx-page { display: flex; flex-direction: column; box-sizing: border-box; width: var(--pw); min-height: var(--ph); background: #fff;
   box-shadow: 0 1px 6px #0004; margin: 0 auto; zoom: var(--zoom); overflow-x: clip; font-family: Calibri, Carlito, sans-serif; font-size: 11pt; color: #000; }
 .docx-hdr, .docx-ftr { clip-path: inset(0 calc(var(--pr) - 10pt) 0 calc(var(--pl) - 10pt)); box-sizing: border-box; padding-left: var(--pl); padding-right: var(--pr); color: #000; opacity: .85; pointer-events: none; }
