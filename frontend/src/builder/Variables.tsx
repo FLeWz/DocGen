@@ -26,26 +26,28 @@ function Value({ d, v, ro, set }: { d: VarDecl; v: unknown; ro: boolean; set: (x
     onChange={(e) => set(e.target.value === "" ? null : d.type === "number" ? Number(e.target.value) : e.target.value)} />;
 }
 
-export function VariablesForm({ vars, ro, onChange }: { vars: Variables; ro: boolean; onChange: (v: Variables) => void }) {
+/** `fixed`: the declarations come from a base document (no add/remove/columns/default field; the value field is what is edited:
+ *  "defaults" = the base document's defaults, "values" = a document's values, type locked). */
+export function VariablesForm({ vars, ro, onChange, fixed = false }: { vars: Variables; ro: boolean; onChange: (v: Variables) => void; fixed?: false | "values" | "defaults" }) {
   const setDecl = (d: VarDecl, p: Partial<VarDecl>) => onChange({ ...vars, declarations: vars.declarations.map((x) => (x === d ? { ...x, ...p } : x)) });
   return (
     <div className="vars">
-      {vars.declarations.length === 0 && <p className="muted small">No variables yet. Variables used in snippets are filled in here.</p>}
+      {vars.declarations.length === 0 && <p className="muted small">{fixed ? "The base document uses no variables of its own." : "No variables yet. Variables used in snippets are filled in here."}</p>}
       {vars.declarations.map((d) => (
         <fieldset key={d.name} className="varcard">
           <legend><code>{d.name}</code></legend>
           <div className="vhead">
-            <select aria-label={`Type of ${d.name}`} value={d.type} disabled={ro} onChange={(e) => setDecl(d, { type: e.target.value as VarDecl["type"], default: null })}>{["text", "date", "number", "list"].map((t) => <option key={t}>{t}</option>)}</select>
-            {!ro && <button className="btn ghost icon" aria-label={`Remove variable ${d.name}`} title="Remove variable" onClick={() => onChange({ declarations: vars.declarations.filter((x) => x !== d), values: Object.fromEntries(Object.entries(vars.values).filter(([k]) => k !== d.name)) })}><Icon n="trash" size={14} /></button>}
+            <select aria-label={`Type of ${d.name}`} value={d.type} disabled={ro || fixed === "values"} onChange={(e) => setDecl(d, { type: e.target.value as VarDecl["type"], default: null })}>{["text", "date", "number", "list"].map((t) => <option key={t}>{t}</option>)}</select>
+            {!ro && !fixed && <button className="btn ghost icon" aria-label={`Remove variable ${d.name}`} title="Remove variable" onClick={() => onChange({ declarations: vars.declarations.filter((x) => x !== d), values: Object.fromEntries(Object.entries(vars.values).filter(([k]) => k !== d.name)) })}><Icon n="trash" size={14} /></button>}
           </div>
-          {d.type === "list"
+          {fixed ? null : d.type === "list"
             ? <input aria-label={`Columns of ${d.name}`} placeholder="columns, comma separated" disabled={ro} defaultValue={(d.columns ?? []).join(", ")}
                 onBlur={(e) => { const cols = parseCols(e.target.value); onChange({ declarations: vars.declarations.map((x) => (x === d ? { ...x, columns: cols } : x)), values: { ...vars.values, [d.name]: reshape(rowsOf(vars.values[d.name]), cols) } }); }} />
             : <input aria-label={`Default of ${d.name}`} placeholder="default" disabled={ro} type={inputType(d.type)} value={String(d.default ?? "")}
                 onChange={(e) => setDecl(d, { default: e.target.value === "" ? null : d.type === "number" ? Number(e.target.value) : e.target.value })} />}
           <Value d={d} v={vars.values[d.name]} ro={ro} set={(x) => onChange({ ...vars, values: { ...vars.values, [d.name]: x } })} />
         </fieldset>))}
-      {!ro && <form className="addvar" onSubmit={(e) => {
+      {!ro && !fixed && <form className="addvar" onSubmit={(e) => {
         e.preventDefault();
         const f = new FormData(e.currentTarget), n = String(f.get("name")).trim(), type = String(f.get("type")) as VarDecl["type"];
         if (NAME_RE.test(n) && !vars.declarations.some((d) => d.name === n)) onChange({ ...vars, declarations: [...vars.declarations, { name: n, type, default: null, columns: [] }] });

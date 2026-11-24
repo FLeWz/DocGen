@@ -156,6 +156,7 @@ export function DocumentPage({ me }: { me: Me }) {
   const baseId = w?.base_document?.id;
   const bvers = useQuery({ queryKey: ["bversions", baseId], enabled: !!baseId, queryFn: () => api<BaseDocVersion[]>(`/base-documents/${baseId}/versions`) });
   const styles = useStyles(me, baseId ?? null);
+  const baseVars = bvers.data?.find((v) => v.sha === w?.base_document?.version)?.variables ?? [];
   const slots = ["CONTENT", ...(bvers.data?.find((v) => v.sha === w?.base_document?.version)?.placeholders.slots ?? [])];
 
   const doBump = useMutation({
@@ -266,7 +267,11 @@ export function DocumentPage({ me }: { me: Me }) {
             <select aria-label="Base document" disabled={ro} value={w.base_document?.id ?? ""} onChange={(e) => upd({ base_document: e.target.value ? { id: e.target.value, version: null } : null })}>
               <option value="">(bundled default)</option>{bases.data?.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select>
             {w.base_document && <select aria-label="Base document version" disabled={ro} value={w.base_document.version ?? ""} onChange={(e) => upd({ base_document: { ...w.base_document!, version: e.target.value } })}>
-              {bvers.data?.map((v) => <option key={v.sha} value={v.sha}>v{v.number} {v.message}</option>)}</select>}</div></details>
+              {bvers.data?.map((v) => <option key={v.sha} value={v.sha}>v{v.number} {v.message}</option>)}</select>}
+            {baseVars.length > 0 && <>
+              <p className="muted small">Variables of this base document (dynamic tables, cover and header/footer values). Empty fields use the base document's default.</p>
+              <div data-testid="base-vars"><VariablesForm fixed="values" ro={ro} vars={{ declarations: baseVars, values: { ...Object.fromEntries(baseVars.filter((d) => d.type === "list").map((d) => [d.name, d.default])), ...w.variables.values } }}
+                onChange={(v) => upd({ variables: { ...w.variables, values: v.values } })} /></div></>}</div></details>
         <details open className="acc"><summary>Variables <span className="cnt">{vars.declarations.length}</span></summary>
           <VariablesForm vars={vars} ro={ro} onChange={(v) => upd({ variables: v })} />
           <p className="muted small">Built-ins: doc.title, doc.version, doc.date, org.name, author</p></details>

@@ -104,6 +104,9 @@ export const ImportAttrs = Extension.create({
     return [
       // orig = {s,e,h}: the body children this block was parsed from + a hash; unchanged blocks are exported as that original XML
       { types: ["paragraph", "heading", "table", "bulletList", "orderedList"], attributes: { orig: hidden() } },
+      // slot = "CONTENT" | name: the paragraph is a {{ CONTENT }} / {{ SLOT:name }} placeholder of a base document (drawn as a dashed box)
+      { types: ["paragraph"], attributes: { slot: { default: null, parseHTML: (el: HTMLElement) => el.getAttribute("data-slot"),
+        renderHTML: (a: Record<string, any>) => (/^[A-Za-z_]\w{0,39}$/.test(a.slot ?? "") ? { "data-slot": a.slot } : {}) } } },
       { types: ["bulletList", "orderedList"], attributes: { numId: hidden(), listStyle: { default: null, parseHTML: (el: HTMLElement) => el.style.listStyleType || null,
         renderHTML: (a: Record<string, any>) => st(listCss(a.listStyle)) } } },
       { types: ["table"], attributes: { tblPr: hidden(), grid: hidden(),

@@ -1,12 +1,15 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import type { Editor } from "@tiptap/react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, Doc, isAdmin, Me } from "../api";
+import { Candidates } from "../builder/FindVariables";
+import { hasContentSlot, Pick } from "../builder/picks";
 import { blockRange } from "../editor/blockrange";
 import { RichEditor } from "../editor/SnippetEditor";
 import { canEdit, folderLabel, ImportRow, useFolders, useImports } from "../data";
 import { PageHead } from "../Shell";
-import { Banner, Empty, ErrorBanner, Field, Icon, Modal, Skeleton, Spinner, ago, useUI } from "../ui";
+import { Badge, Banner, Empty, ErrorBanner, Field, Icon, Modal, Skeleton, Spinner, ago, useUI } from "../ui";
 
 type ImportDoc = ImportRow & { content: Doc; warnings: string[] };
 type Section = { title: string; start: number; end: number; blocks: number; level: number | null };
@@ -45,7 +48,8 @@ export function ImportPage({ me }: { me: Me }) {
   const qkey = useMemo(() => ["import", id], [id]);
   const q = useQuery({ queryKey: qkey, queryFn: () => api<ImportDoc>(`/imports/${id}`) });
   const folders = useFolders(me);
-  const [panel, setPanel] = useState<"sel" | "split" | "base" | null>(null);
+  const [panel, setPanel] = useState<"sel" | "split" | "base" | "vars" | null>(null);
+  const [sel2, setSel2] = useState<{ picks: Pick[]; error: string }>({ picks: [], error: "" }), edRef = useRef<Editor | null>(null);
   const [range, setRange] = useState<[number, number]>([0, 1]);
   const [folder, setFolder] = useState(""), [title, setTitle] = useState(""), [level, setLevel] = useState(1), [name, setName] = useState("");
   const f = folder || folders.data?.[0]?.id || "";
@@ -54,7 +58,25 @@ export function ImportPage({ me }: { me: Me }) {
   const done = (t: string) => { ui.toast(t); setPanel(null); qc.invalidateQueries(); };
   const sel = useMutation({ mutationFn: () => api<Created>(`/imports/${id}/selection-snippet`, "POST", { folder_id: f, title, start: range[0], end: range[1] }), onSuccess: (r) => done(`Created snippet draft "${r.title}"${r.warnings.length ? ` (${r.warnings[0]})` : ""}`) });
   const split = useMutation({ mutationFn: () => api<Created[]>(`/imports/${id}/split`, "POST", { folder_id: f, level }), onSuccess: (r) => done(`Created ${r.length} snippet drafts`) });
-  const base = useMutation({ mutationFn: () => api<{ name: string }>(`/imports/${id}/base-document`, "POST", { name }), onSuccess: (r) => done(`Saved as base document "${r.name}"`) });
+  // the editor holds the old text after the server replaced values: reload it
+  const applyVars = () => api(`/imports/${id}/variables`, "POST", { items: sel2.picks }).then(() => { if (!sel2.picks.length) return; setTimeout(() => location.reload(), 900); });
+  const base = useMutation({ mutationFn: async () => { if (sel2.picks.length) await applyVars(); return api<{ name: string }>(`/imports/${id}/base-document`, "POST", { name }); }, onSuccess: (r) => done(`Saved as base document "${r.name}"`) });
+  const vars = useMutation({ mutationFn: applyVars, onSuccess: () => done(`Replaced ${sel2.picks.length} value${sel2.picks.length === 1 ? "" : "s"} by variables`) });
+  const insertSlot = async (named: boolean) => {
+    const ed = edRef.current;
+    if (!ed) return;
+    const slot = named ? (await ui.prompt({ title: "Insert slot", label: "Slot name", hint: "Letters, digits and _; blocks of a document can be placed in it by name.", ok: "Insert" }))?.trim() : "CONTENT";
+    if (!slot) return;
+    if (!/^[A-Za-z_]\w{0,39}$/.test(slot) || (slot === "CONTENT" && hasContentSlot(ed.state.doc.textContent))) { ui.toast(slot === "CONTENT" ? "This document already has a {{ CONTENT }} paragraph" : "Slot names: letters, digits, _", "err"); return; }
+    ed.chain().focus().insertContent({ type: "paragraph", attrs: { slot }, content: [{ type: "text", text: slot === "CONTENT" ? "{{ CONTENT }}" : `{{ SLOT:${slot} }}` }] }).run();
+  };
+  const insertRef = useRef(insertSlot);
+  insertRef.current = insertSlot;
+  useEffect(() => { // Ctrl+Alt+C: insert {{ CONTENT }} at the cursor
+    const h = (e: KeyboardEvent) => { if (e.ctrlKey && e.altKey && e.code === "KeyC" && edit && edRef.current?.isFocused) { e.preventDefault(); insertRef.current(false); } };
+    window.addEventListener("keydown", h);
+    return () => window.removeEventListener("keydown", h);
+  }, [edit]);
   const warnings = q.data?.warnings ?? [];
   const folderPick = <Field label="Target folder">{(i) => <select id={i} value={f} onChange={(e) => setFolder(e.target.value)}>{folders.data?.map((x) => <option key={x.id} value={x.id}>{folderLabel(folders.data, x.id)}</option>)}</select>}</Field>;
   const cancel = <button type="button" className="btn" onClick={() => setPanel(null)}>Cancel</button>;
@@ -64,12 +86,16 @@ export function ImportPage({ me }: { me: Me }) {
       <PageHead crumbs={[{ label: "Dashboard", to: "/" }, { label: "Imports", to: "/imports" }, { label: q.data?.title ?? "Import" }]} />
       <RichEditor qkey={qkey} me={me} notices={warnings.length ? [{ id: "warn", kind: "warn", text: `${warnings.length} element${warnings.length === 1 ? "" : "s"} not editable`, items: warnings }] : []} noticeBar={`import:${id}`} noticeTestId="import-warnings" keyOf={() => id} lookSrc={{ import: id }}
         load={() => api<ImportDoc>(`/imports/${id}`)} save={(b) => api<ImportDoc>(`/imports/${id}`, "PUT", { title: b.title, content: b.content })}
-        actions={({ editor: ed, flush }) => <>
+        actions={({ editor: ed, flush }) => { edRef.current = ed; const slot = hasContentSlot(ed.state.doc.textContent); return <>
+          <span data-testid="slot-badge" title={slot ? "The main body is replaced where this paragraph is" : "Without a {{ CONTENT }} paragraph, the body from the first Heading 1 on is replaced"}>{slot ? <Badge kind="green">{"{{ CONTENT }}"} set</Badge> : <Badge kind="amber">no {"{{ CONTENT }}"}</Badge>}</span>
+          {edit && <button className="btn" title="Insert a {{ CONTENT }} paragraph at the cursor (Ctrl+Alt+C)" onClick={() => insertSlot(false)}><Icon n="plus" />{"{{ CONTENT }}"}</button>}
+          {edit && <button className="btn" onClick={() => insertSlot(true)}><Icon n="plus" />Insert slot…</button>}
+          {edit && <button className="btn" onClick={async () => { await flush(); setPanel("vars"); }}><Icon n="layers" />Find variables</button>}
           {edit && <button className="btn" onClick={async () => { await flush(); setRange(blockRange(ed)); setTitle(""); setPanel("sel"); }}><Icon n="file" />Create snippet from selection</button>}
           {edit && <button className="btn" onClick={async () => { await flush(); setPanel("split"); }}><Icon n="layers" />Split by headings</button>}
           {admin && <button className="btn" onClick={async () => { await flush(); setPanel("base"); }}><Icon n="doc" />Use as base document</button>}
           <button className="btn primary" onClick={async () => { await flush(); location.href = `/api/imports/${id}/export`; }}><Icon n="download" />Export DOCX</button>
-        </>} />
+        </>; }} />
       {panel === "sel" && (
         <Modal title="Create snippet from selection" onClose={() => setPanel(null)} actions={<>{cancel}<button className="btn primary" form="sel-form" disabled={!f || sel.isPending}>Create snippet</button></>}>
           <form id="sel-form" className="stack" onSubmit={(e) => { e.preventDefault(); sel.mutate(); }}>
@@ -86,10 +112,17 @@ export function ImportPage({ me }: { me: Me }) {
             {folderPick}<ErrorBanner e={split.error} />
           </div>
         </Modal>)}
+      {panel === "vars" && (
+        <Modal title="Find variables" wide onClose={() => setPanel(null)} actions={<>{cancel}<button className="btn primary" disabled={!sel2.picks.length || !!sel2.error || vars.isPending} onClick={() => vars.mutate()}>Replace with variables</button></>}>
+          <div className="stack"><p className="muted">Values that look like per-document data: cover text, header/footer text and fields, dates, version numbers. Tables of contents/figures, tables and the body are left alone. Chosen values become <code>{"{{ name }}"}</code> (formatting kept); the detected value is the default. Built-in names (<code>doc.title</code>, <code>doc.version</code>, <code>doc.date</code>, <code>author</code>, <code>org.name</code>) are filled by the exporter.</p>
+            <Candidates url={`/imports/${id}/variables`} onPicks={setSel2} />{sel2.error && <ErrorBanner e={new Error(sel2.error)} />}<ErrorBanner e={vars.error} /></div>
+        </Modal>)}
       {panel === "base" && (
-        <Modal title="Use as base document" onClose={() => setPanel(null)} actions={<>{cancel}<button className="btn primary" form="base-form" disabled={base.isPending}>Save as base document</button></>}>
+        <Modal title="Use as base document" onClose={() => setPanel(null)} actions={<>{cancel}<button className="btn primary" form="base-form" disabled={base.isPending || !!sel2.error}>Save as base document</button></>}>
           <form id="base-form" className="stack" onSubmit={(e) => { e.preventDefault(); base.mutate(); }}>
-            <p className="muted">Keeps this file's styles, numbering, header/footer and page setup; the body becomes a <code>{"{{ CONTENT }}"}</code> placeholder.</p>
+            <p className="muted">Keeps this file as it is — cover, table of contents, section breaks, header/footer, styles, numbering and page setup — and replaces the main body (from the first Heading 1, or at the <code>{"{{ CONTENT }}"}</code> paragraph you inserted) by the <code>{"{{ CONTENT }}"}</code> placeholder.</p>
+            <h3>Per-document values</h3>
+            <Candidates url={`/imports/${id}/variables`} onPicks={setSel2} />{sel2.error && <ErrorBanner e={new Error(sel2.error)} />}
             <Field label="Base document name">{(i) => <input id={i} value={name} onChange={(e) => setName(e.target.value)} required autoFocus />}</Field><ErrorBanner e={base.error} />
           </form>
         </Modal>)}

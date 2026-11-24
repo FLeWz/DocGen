@@ -1,9 +1,34 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Fragment, useState } from "react";
-import { api, BaseDoc, BaseDocVersion, isAdmin, Me } from "../api";
+import { api, BaseDoc, BaseDocVersion, isAdmin, Me, VarDecl } from "../api";
+import { Candidates } from "../builder/FindVariables";
+import { Pick } from "../builder/picks";
+import { VariablesForm } from "../builder/Variables";
 import { Badge, Empty, ErrorBanner, Field, fmtDate, Icon, Modal, Skeleton, useUI } from "../ui";
 
 const ph = (v: BaseDocVersion) => v.placeholders.content ? <Badge kind="green">CONTENT{v.placeholders.slots.length ? ` + ${v.placeholders.slots.length} slot${v.placeholders.slots.length > 1 ? "s" : ""}` : ""}</Badge> : <Badge kind="amber">no {"{{ CONTENT }}"}</Badge>;
+
+/** Variables of the current version: dynamic tables (default rows) and text variables (defaults), editable; "Find variables" turns detected values into new ones. */
+function BaseVars({ b, v, admin }: { b: BaseDoc; v: BaseDocVersion; admin: boolean }) {
+  const qc = useQueryClient(), ui = useUI();
+  const [decls, setDecls] = useState<VarDecl[]>(v.variables), [find, setFind] = useState(false), [sel, setSel] = useState<{ picks: Pick[]; error: string }>({ picks: [], error: "" });
+  const done = () => qc.invalidateQueries({ queryKey: ["bversions"] }).then(() => qc.invalidateQueries({ queryKey: ["base-docs"] }));
+  const save = useMutation({ mutationFn: () => api(`/base-documents/${b.id}/variables`, "PUT", { declarations: decls, values: {} }), onSuccess: () => { ui.toast("Variables saved"); done(); } });
+  const apply = useMutation({ mutationFn: () => api(`/base-documents/${b.id}/find-variables`, "POST", { items: sel.picks }), onSuccess: () => { setFind(false); ui.toast("New version with variables"); done(); } });
+  return (
+    <details open className="acc" data-testid="base-doc-vars"><summary>Variables of v{v.number} <span className="cnt">{decls.length}</span></summary>
+      <p className="muted small">Found in the file as <code>{"{{ name }}"}</code> text and <code>{"{%tr for x in list %}"}</code> table rows. The defaults apply to every document built on this version; a document can override them.</p>
+      <VariablesForm fixed="defaults" ro={!admin} vars={{ declarations: decls, values: Object.fromEntries(decls.map((d) => [d.name, d.default])) }}
+        onChange={(n) => setDecls(n.declarations.map((d) => ({ ...d, default: n.values[d.name] ?? null })))} />
+      {admin && <div className="vact"><button className="btn sm primary" disabled={save.isPending} onClick={() => save.mutate()}>Save defaults</button>
+        <button className="btn sm" onClick={() => setFind(true)}>Find variables</button></div>}
+      <ErrorBanner e={save.error} />
+      {find && <Modal title="Find variables" wide onClose={() => setFind(false)} actions={<><button className="btn" onClick={() => setFind(false)}>Cancel</button><button className="btn primary" disabled={!sel.picks.length || !!sel.error || apply.isPending} onClick={() => apply.mutate()}>Replace with variables (new version)</button></>}>
+        <div className="stack"><p className="muted">Values that look like per-document data (cover text, header/footer fields, dates, version numbers). Chosen ones become <code>{"{{ name }}"}</code> in a new version; the detected value is the default.</p>
+          <Candidates url={`/base-documents/${b.id}/find-variables`} onPicks={setSel} />{sel.error && <ErrorBanner e={new Error(sel.error)} />}<ErrorBanner e={apply.error} /></div></Modal>}
+    </details>
+  );
+}
 
 function Versions({ b, admin }: { b: BaseDoc; admin: boolean }) {
   const qc = useQueryClient(), ui = useUI();
@@ -18,6 +43,7 @@ function Versions({ b, admin }: { b: BaseDoc; admin: boolean }) {
         <table className="tbl compact"><thead><tr><th>Version</th><th>Commit</th><th>File</th><th>Size</th><th>Placeholders</th><th>Message</th><th>Uploaded</th><th /></tr></thead>
           <tbody>{vs.data?.map((v) => <tr key={v.id}><td>v{v.number}</td><td><code>{v.sha.slice(0, 7)}</code></td><td>{v.filename}</td><td>{(v.size / 1024).toFixed(0)} KB</td><td>{ph(v)}</td><td>{v.message}</td><td className="nowrap">{fmtDate(v.created_at)}</td>
             <td className="end"><a className="btn sm ghost" href={`/api/base-documents/${b.id}/download?version=${v.sha}`}><Icon n="download" />Download</a></td></tr>)}</tbody></table>)}
+      {vs.data?.[0] && <BaseVars key={vs.data[0].sha} b={b} v={vs.data[0]} admin={admin} />}
       {admin && <form className="inline" onSubmit={(e) => { e.preventDefault(); const f = e.currentTarget; up.mutate(new FormData(f), { onSuccess: () => f.reset() }); }}>
         <div className="field"><label htmlFor={`nv-${b.id}`}>New version (.docx)</label><input id={`nv-${b.id}`} type="file" name="file" accept=".docx" required /></div>
         <div className="field"><label htmlFor={`nm-${b.id}`}>Message</label><input id={`nm-${b.id}`} name="message" placeholder="What changed" /></div>
