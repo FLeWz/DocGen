@@ -94,6 +94,8 @@ The editor has a ribbon (Home / Insert / Layout / References / Review). On an im
 
 Tables (round 8): while the cursor is in a table a contextual **Table** tab, a floating toolbar and a right-click / Shift+F10 menu offer rows/columns, merge/split, borders, shading, widths, autofit, header rows, sort and more; column/row borders and the table corner can be dragged (Shift: only this column, Alt: no snapping, units cm/in/pt). *Make dynamic table* on a table with content turns the header into variables and the body rows into default values. See docs/UI.md and docs/DECISIONS.md, round 8.
 
+Round 9: admins can **edit base documents** directly (Base documents > Details > Edit, or from the document builder): the same editor as imports, *Commit…* writes a new version (author = you; documents keep their pinned version, the builder offers the bump). *Insert > Revision table* drops in a dynamic table over the built-in `revision_history` (date, revision, author, changed sections, commit). Embedded Word objects (OLE) survive import/export; only linked/macro/executable ones are dropped, with a warning. See docs/DECISIONS.md, round 9.
+
 ## Architecture
 
 ```
