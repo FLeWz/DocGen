@@ -92,6 +92,8 @@ API: `GET /api/styles/css?import=<id>|base_doc=<id>`, `POST /api/render/pdf`. Sc
 
 The editor has a ribbon (Home / Insert / Layout / References / Review). On an imported DOCX, click a page header or footer to edit it; use References → Mark as… for sections and generated TOC/figure/table lists; use *Select blocks* or any selection (any size, across pages) for *Create snippet from selection*. Details: docs/DECISIONS.md, round 5B.
 
+Tables (round 8): while the cursor is in a table a contextual **Table** tab, a floating toolbar and a right-click / Shift+F10 menu offer rows/columns, merge/split, borders, shading, widths, autofit, header rows, sort and more; column/row borders and the table corner can be dragged (Shift: only this column, Alt: no snapping, units cm/in/pt). *Make dynamic table* on a table with content turns the header into variables and the body rows into default values. See docs/UI.md and docs/DECISIONS.md, round 8.
+
 ## Architecture
 
 ```
