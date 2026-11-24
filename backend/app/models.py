@@ -175,6 +175,7 @@ class BaseDocVersion(OrgScoped, Base):
     message: Mapped[str] = mapped_column(String(500), default="")
     styles: Mapped[list] = mapped_column(JSONB)  # parsed styles.xml, shaped like Style rows
     placeholders: Mapped[dict] = mapped_column(JSONB)  # {content: bool, slots: [name]}
+    variables: Mapped[list] = mapped_column(JSONB, default=list)  # parsed from the docx, type/default editable
     created_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     created_at: Mapped[datetime] = _now()
 
@@ -244,6 +245,7 @@ class Import(OrgScoped, Base):
     filename: Mapped[str] = mapped_column(String(200))
     content: Mapped[dict] = mapped_column(JSONB)
     warnings: Mapped[list] = mapped_column(JSONB, default=list)
+    variables: Mapped[list] = mapped_column(JSONB, default=list)  # declared by the variables modal: [{name,type,default}]
     created_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     created_at: Mapped[datetime] = _now()
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

@@ -219,6 +219,7 @@ class BaseDocVersionOut(BaseModel):
     size: int
     message: str
     placeholders: dict
+    variables: list = []
     created_at: datetime
 
 
@@ -400,6 +401,15 @@ class SplitIn(BaseModel):
 class ImportBaseIn(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=100)  # new base document
     base_document_id: UUID | None = None  # ... or a new version of this one
+
+
+class VarPick(BaseModel):
+    value: str = Field(min_length=1, max_length=200)
+    name: str = Field(pattern=r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)?$", max_length=60)
+
+
+class VarPicks(BaseModel):
+    items: list[VarPick] = Field(max_length=300)
 
 
 class ImportSnippetOut(SnippetOut):

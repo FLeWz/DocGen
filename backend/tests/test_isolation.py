@@ -152,6 +152,10 @@ COVERED = {  # every API route must be listed: a new endpoint forces a new isola
     "POST /api/import/docx", "GET /api/imports", "GET /api/imports/{import_id}", "PUT /api/imports/{import_id}",
     "GET /api/imports/{import_id}/export", "GET /api/imports/{import_id}/split", "POST /api/imports/{import_id}/split",
     "POST /api/imports/{import_id}/selection-snippet", "POST /api/imports/{import_id}/base-document",
+    # round 5A: test_vars.test_roles_and_isolation_of_variable_routes
+    "GET /api/imports/{import_id}/variables", "POST /api/imports/{import_id}/variables",
+    "PUT /api/base-documents/{id}/variables", "GET /api/base-documents/{id}/find-variables",
+    "POST /api/base-documents/{id}/find-variables",
     # milestone 8: test_b_cannot_delete_a_snippets_and_imports / test_cleanup_is_org_scoped
     "DELETE /api/imports/{import_id}", "DELETE /api/snippets/{snippet_id}", "POST /api/maintenance/cleanup",
     # UI round: test_overview.py::test_overview_counts_and_isolation

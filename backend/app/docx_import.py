@@ -17,13 +17,14 @@ import zipfile
 from collections import Counter
 
 from docx import Document
+from docx.opc.constants import RELATIONSHIP_TYPE as RT
 from docx.oxml.ns import qn
 from lxml import etree
 
 from . import fmt
 from .docx_style import Look
 from .tblstyle import TableEff
-from .base_docs import BadDocx, W, parse_styles
+from .base_docs import CONTENT_RE, BadDocx, W, parse_styles
 from .docx_export import Builder
 from .ooxml import opaque_element, rel_ids, stable_zip
 
@@ -380,8 +381,9 @@ def _original(n: dict, kept: list):
     return [copy.deepcopy(c) for c in kept[o["s"]:o["e"] + 1]]
 
 
-def export(orig: bytes, content: dict, load_asset) -> tuple[bytes, list]:
-    """Original package, body replaced by `content`. styles/numbering/headers/footers/theme/media stay as they were."""
+def export(orig: bytes, content: dict, load_asset, render: dict | None = None) -> tuple[bytes, list]:
+    """Original package, body replaced by `content`. styles/numbering/headers/footers/theme/media stay as they were.
+    `render` = jinja context: `{{ name }}` texts (made by the variables modal) are filled in, else they stay literal."""
     kept: list = []
     doc, warnings = _strip_body(orig, kept), []
     b, sect = Builder(doc, load_asset, warnings, rels=rel_ids(orig)), doc.element.body.find(qn("w:sectPr"))
@@ -393,18 +395,40 @@ def export(orig: bytes, content: dict, load_asset) -> tuple[bytes, list]:
                 sect.addprevious(el) if sect is not None else doc.element.body.append(el)
     if not doc.paragraphs and not doc.tables:
         doc.add_paragraph()
+    if render is not None:
+        from .docx_export import render_texts
+        roots = [doc.element.body] + [r.target_part.element for r in doc.part.rels.values() if r.reltype in (RT.HEADER, RT.FOOTER)]
+        missing: set = set()
+        render_texts(roots, render, missing, warnings, set())
+        if missing:
+            warnings.append("undefined variables: " + ", ".join(sorted(missing)))
     out = io.BytesIO()
     doc.save(out)
     return stable_zip(out.getvalue()), warnings
 
 
-def as_base_doc(orig: bytes) -> bytes:
-    """Styles, numbering, headers/footers, page setup of the file + a {{ CONTENT }} placeholder instead of the body."""
-    doc = _strip_body(orig)
-    doc.add_paragraph("{{ CONTENT }}")
-    out = io.BytesIO()
-    doc.save(out)
-    return stable_zip(out.getvalue())
+def is_slot(b: dict) -> bool:
+    return b.get("type") == "paragraph" and bool(CONTENT_RE.fullmatch(block_text(b).strip()))
+
+
+def front_end(blocks: list) -> int:
+    """Index of the first Heading 1 = where the main body starts (cover, approval, TOC come before it)."""
+    return next((k for k, b in enumerate(blocks) if b.get("type") == "heading" and (b.get("attrs") or {}).get("level", 1) <= 1),
+                len(blocks))
+
+
+def slot_paragraph() -> dict:
+    return {"type": "paragraph", "attrs": {"slot": "CONTENT"}, "content": [{"type": "text", "text": "{{ CONTENT }}"}]}
+
+
+def as_base_doc(orig: bytes, content: dict, load_asset) -> bytes:
+    """The import as it stands (cover, TOC, section breaks, header/footer, styles, numbering), with the main body
+    replaced by a {{ CONTENT }} paragraph. Where the author put one (the quick action) that is kept as is; else the body
+    from the first Heading 1 on is cut."""
+    blocks = list((content or {}).get("content") or [])
+    if not any(is_slot(b) for b in blocks):
+        blocks = blocks[:front_end(blocks)] + [slot_paragraph()]
+    return export(orig, {"type": "doc", "content": blocks}, load_asset)[0]
 
 
 # ---- content helpers (server side twins of frontend/src/editor/doc.ts) ----

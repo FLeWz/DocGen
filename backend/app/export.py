@@ -15,7 +15,7 @@ from .db import SessionLocal, set_ctx
 from .deps import Ctx
 from .git import repo as git
 from .git import content as C
-from .models import Document, Export, Folder, Organization, Role, Snippet, User
+from .models import BaseDocVersion, Document, Export, Folder, Organization, Role, Snippet, User
 from .scoping import OrgRepo
 
 _pool = ThreadPoolExecutor(2, thread_name_prefix="export")
@@ -91,7 +91,9 @@ def build_spec(ctx: Ctx, d: Document) -> dict:
         blocks.append(b)
     br = w["base_document"]
     org = ctx.db.get(Organization, ctx.org_id)
-    return dict(
+    bv = br and ctx.repo(BaseDocVersion).first(BaseDocVersion.base_document_id == UUID(br["id"]), BaseDocVersion.sha == br["version"])
+    return dict(base_variables=bv.variables if bv else [],  # frozen: defaults edited later must not change a stored spec
+
         document=dict(id=str(d.id), slug=w["slug"], head_sha=d.head_sha, draft=docs.draft_of(ctx, d) is not None),
         title=w["title"], base=br and dict(id=br["id"], sha=br["version"]), blocks=blocks,
         variables=w["variables"], links=w["links"],
@@ -112,7 +114,10 @@ def create(ctx: Ctx, d: Document, fmt: str) -> Export:
     for b in spec["blocks"]:
         v = "pin" in b and C.version_at(git.repo_path(ctx.org_id, b["pin"]["folder_id"]), b["pin"]["sha"], b["pin"]["snippet_id"])
         used_variables(v and v["content"], used)
-    if miss := missing_variables(spec["variables"], used):
+    v = spec["variables"]
+    own = {d["name"] for d in v["declarations"]}
+    merged = dict(v, declarations=[*(d for d in spec["base_variables"] if d["name"] not in own), *v["declarations"]])
+    if miss := missing_variables(merged, used):
         raise HTTPException(422, dict(error="missing_variables", variables=miss,
                                       message="Missing required variables: " + ", ".join(m["name"] for m in miss)))
     return ctx.repo(Export).add(document_id=d.id, user_id=ctx.user.id, format=fmt, status="queued",

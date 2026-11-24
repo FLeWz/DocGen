@@ -77,7 +77,7 @@ def ws(client, outbox):
     def mod(d):
         d.styles.add_style("Callout", WD_STYLE_TYPE.PARAGRAPH)
         d.add_paragraph("{{ SLOT:appendix }}")
-        d.add_paragraph("Footer line {{ doc.title }} / {{ missing_one }} / {{ doc.version }}")
+        d.add_paragraph("Footer line {{ doc.title }} / {{ doc.missing_one }} / {{ doc.version }}")
     base = upload(client, make_docx(mod), "Corp").json()["id"]
     d = client.post("/api/documents", json={"folder_id": fb, "title": "User <Manual> & more"}).json()["id"]
     put(client, d, [{"type": "heading", "text": "Intro chapter", "level": 1, "numbered": True},

@@ -13,6 +13,7 @@ from ..files import image_path, import_path
 from ..git import repo as git
 from ..models import BaseDocument, Image, Import, Organization, Role
 from ..ooxml import rel_ids
+from .imports import import_context
 
 router = APIRouter(tags=["render"])
 
@@ -39,19 +40,22 @@ def render_pdf(body: RenderIn, ctx: Ctx = Depends(require(Role.viewer))):
                 raise HTTPException(404, "import not found")
             orig = import_path(ctx.org_id, imp.id).read_bytes()
             D.check_content(body.content, rel_ids(orig))
-            docx, warnings = D.export(orig, body.content, asset)
+            docx, warnings = D.export(orig, body.content, asset, import_context(ctx, imp))
         else:
+            base_vars = []
             if body.base_doc:
                 bd = ctx.repo(BaseDocument).get(body.base_doc)
                 if not bd:
                     raise HTTPException(404, "base document not found")
-                base = git.show(git.base_repo_path(ctx.org_id), docs.base_head(ctx, bd).sha, f"base/{bd.id}.docx")
+                head = docs.base_head(ctx, bd)
+                base_vars = head.variables
+                base = git.show(git.base_repo_path(ctx.org_id), head.sha, f"base/{bd.id}.docx")
             else:
                 base = base_docs.default_docx()
             D.check_content(body.content, None)
             org = ctx.db.get(Organization, ctx.org_id)
             spec = dict(title="Preview", blocks=[dict(type="snippet_ref", slot="CONTENT", pin=dict(snippet_id="-"))],
-                        variables=dict(declarations=[], values={}), links=[], revision_history=[],
+                        variables=dict(declarations=[], values={}), base_variables=base_vars, links=[], revision_history=[],
                         built_ins={"doc.title": "Preview", "doc.version": "draft", "org.name": org.name, "author": ctx.user.name,
                                    "doc.date": datetime.now(timezone.utc).date().isoformat()})
             docx, warnings = docx_export.build(spec, base, lambda pin: (body.content, "preview"), lambda pin, slug, iid: asset(None, iid))

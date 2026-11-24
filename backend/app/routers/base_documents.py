@@ -1,14 +1,16 @@
+import io
 import re
+import zipfile
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile
 from sqlalchemy import text
 
-from .. import base_docs
+from .. import base_docs, docx_vars
 from ..deps import Ctx, require
 from ..git import repo as git
 from ..models import BaseDocument, BaseDocVersion, Role
-from ..schemas import BaseDocOut, BaseDocVersionOut
+from ..schemas import BaseDocOut, BaseDocVersionOut, VarPicks, Variables
 
 router = APIRouter(tags=["base-documents"])
 V = Depends(require(Role.viewer))
@@ -38,7 +40,7 @@ def _read(file: UploadFile) -> bytes:
     return data
 
 
-def _store(ctx: Ctx, bd: BaseDocument, data: bytes, filename: str, message: str) -> BaseDocVersion:
+def _store(ctx: Ctx, bd: BaseDocument, data: bytes, filename: str, message: str, variables: list | None = None) -> BaseDocVersion:
     try:
         info = base_docs.validate(data)
     except base_docs.BadDocx as e:
@@ -59,7 +61,7 @@ def _store(ctx: Ctx, bd: BaseDocument, data: bytes, filename: str, message: str)
     return ctx.repo(BaseDocVersion).add(
         base_document_id=bd.id, sha=sha, number=n, filename=re.sub(r"[^A-Za-z0-9._ -]", "_", filename or "base.docx")[:200],
         size=len(data), message=message.strip()[:500], styles=info["styles"], placeholders=info["placeholders"],
-        created_by=ctx.user.id)
+        variables=docx_vars.package_vars(data, [*(vs[0].variables if vs else []), *(variables or [])]), created_by=ctx.user.id)
 
 
 @router.get("/base-documents", response_model=list[BaseDocOut])
@@ -83,6 +85,52 @@ def get_base_document(id: UUID, ctx: Ctx = V):
     bd = _get(ctx, id)
     vs = _versions(ctx, bd)
     return dict(**_out(ctx, bd).model_dump(), styles=vs[0].styles, version_count=len(vs))
+
+
+def _head_docx(ctx: Ctx, bd: BaseDocument) -> tuple[BaseDocVersion, bytes]:
+    v = _versions(ctx, bd)[0]
+    data = git.show(git.base_repo_path(ctx.org_id), v.sha, f"base/{bd.id}.docx")
+    if data is None:
+        raise HTTPException(404, "version not found")
+    return v, data
+
+
+def _units(data: bytes) -> tuple[list, dict]:
+    with zipfile.ZipFile(io.BytesIO(data)) as z:
+        body = docx_vars.parse(z.read("word/document.xml"))
+    hf = docx_vars.hf_roots(data)
+    return [("cover", body, True), *((("header" if "header" in n else "footer"), r, True) for n, r in hf.items())], \
+        {"word/document.xml": body, **hf}
+
+
+@router.put("/base-documents/{id}/variables")
+def put_variables(id: UUID, body: Variables, ctx: Ctx = A):
+    """Edit type/default/columns of the variables of the current version (names come from the file itself)."""
+    v = _versions(ctx, _get(ctx, id))[0]
+    known = {d["name"] for d in v.variables}
+    v.variables = [d.model_dump() for d in body.declarations if d.name in known]
+    ctx.db.commit()
+    return v.variables
+
+
+@router.get("/base-documents/{id}/find-variables")
+def find_variables(id: UUID, ctx: Ctx = A):
+    """Candidate per-document values in the current version (cover text, header/footer, fields, content controls)."""
+    return docx_vars.scan(_units(_head_docx(ctx, _get(ctx, id))[1])[0])
+
+
+@router.post("/base-documents/{id}/find-variables", status_code=201, response_model=BaseDocVersionOut)
+def apply_variables(id: UUID, body: VarPicks, ctx: Ctx = A):
+    """New version with the chosen values replaced by `{{ name }}`; detected values become the defaults."""
+    bd = _get(ctx, id)
+    v, data = _head_docx(ctx, bd)
+    units, parts = _units(data)
+    if not docx_vars.apply(units, {i.value: i.name for i in body.items}):
+        raise HTTPException(422, "none of the values were found")
+    nv = _store(ctx, bd, docx_vars.write_parts(data, parts), v.filename, "Variables from detected values",
+                docx_vars.picks_decls(body.items))
+    ctx.db.commit()
+    return nv
 
 
 @router.post("/base-documents/{id}/versions", status_code=201, response_model=BaseDocVersionOut)

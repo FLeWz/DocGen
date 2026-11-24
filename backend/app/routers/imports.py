@@ -1,14 +1,18 @@
 import re
 from uuid import UUID
 
+from lxml import etree
+from sqlalchemy.orm.attributes import flag_modified
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile
 
-from .. import base_docs, docx_import as D, vcs
+from datetime import datetime, timezone
+
+from .. import base_docs, docx_export, docx_import as D, docx_vars, vcs
 from ..deps import Ctx, require
 from ..files import image_path, import_path
-from ..models import BaseDocument, Image, Import, Role
+from ..models import BaseDocument, Image, Import, Organization, Role
 from ..ooxml import rel_ids
-from ..schemas import ImportBaseIn, ImportPut, ImportSnippetOut, SelectionIn, SplitIn
+from ..schemas import VarPicks, ImportBaseIn, ImportPut, ImportSnippetOut, SelectionIn, SplitIn
 from . import images
 from .base_documents import _get as get_base, _read, _store
 
@@ -97,15 +101,26 @@ def put_import(import_id: UUID, body: ImportPut, ctx: Ctx = E):
     return dict(**_meta(i), content=i.content, warnings=i.warnings)
 
 
-@router.get("/imports/{import_id}/export")
-def export_import(import_id: UUID, ctx: Ctx = V):
-    i = _get(ctx, import_id)
-
+def _asset(ctx: Ctx):
     def asset(_c, iid):
         img = ctx.repo(Image).get(UUID(str(iid))) if re.fullmatch(r"[0-9a-f-]{36}", str(iid)) else None
         return img and image_path(ctx.org_id, img.id, img.ext).read_bytes()
+    return asset
+
+
+def import_context(ctx: Ctx, i: Import) -> dict:
+    """jinja context for `{{ }}` texts in an import's own export: built-ins and the declared defaults."""
+    spec = dict(variables=dict(declarations=i.variables or [], values={}), built_ins={
+        "doc.title": i.title, "doc.version": "draft", "org.name": ctx.db.get(Organization, ctx.org_id).name,
+        "author": ctx.user.name, "doc.date": datetime.now(timezone.utc).date().isoformat()})
+    return docx_export.context(spec)
+
+
+@router.get("/imports/{import_id}/export")
+def export_import(import_id: UUID, ctx: Ctx = V):
+    i = _get(ctx, import_id)
     try:
-        data, warnings = D.export(_orig(ctx, i), i.content, asset)
+        data, warnings = D.export(_orig(ctx, i), i.content, _asset(ctx), import_context(ctx, i))
     except Exception as e:  # python-docx on content that the editor produced but Word structure rejects
         raise HTTPException(422, f"export failed: {type(e).__name__}: {e}")
     name = re.sub(r"[^A-Za-z0-9._-]", "_", i.title) or "document"
@@ -175,6 +190,81 @@ def use_as_base(import_id: UUID, body: ImportBaseIn, ctx: Ctx = A):
     if bool(body.name) == bool(body.base_document_id):
         raise HTTPException(422, "give either name (new base document) or base_document_id (new version)")
     bd = get_base(ctx, body.base_document_id) if body.base_document_id else ctx.repo(BaseDocument).add(name=body.name)
-    v = _store(ctx, bd, D.as_base_doc(_orig(ctx, i)), i.filename, f"From import '{i.title}'")
+    try:
+        data = D.as_base_doc(_orig(ctx, i), i.content, _asset(ctx))
+    except Exception as e:
+        raise HTTPException(422, f"export failed: {type(e).__name__}: {e}")
+    v = _store(ctx, bd, data, i.filename, f"From import '{i.title}'", i.variables)
     ctx.db.commit()
     return dict(base_document_id=bd.id, name=bd.name, version=v.number, sha=v.sha, placeholders=v.placeholders)
+
+
+# ---- variables: per-document values (cover, header/footer, fields) -> {{ name }} ----
+
+def _units(ctx: Ctx, i: Import):
+    """(units for docx_vars, write-back list) of the import: header/footer parts of the package and the front matter
+    blocks (everything before the first Heading 1). Opaque XML and plain paragraphs are edited in place."""
+    hf = docx_vars.hf_roots(_orig(ctx, i))
+    units = [(("header" if "header" in n else "footer"), r, True) for n, r in hf.items()]
+    blocks = i.content.get("content") or []
+    back = []
+    for b in blocks[:D.front_end(blocks)]:
+        if b.get("type") in ("paragraph", "heading") and D.block_text(b).strip():
+            p = docx_vars.parse(('<w:p xmlns:w="%s"><w:pPr><w:pStyle w:val="%s"/></w:pPr><w:r><w:t/></w:r></w:p>'
+                                 % (docx_vars.W_NS, re.sub(r"[^A-Za-z0-9_-]", "", (b.get("attrs") or {}).get("styleId") or "Normal"))).encode())
+            p.find(".//" + docx_vars.W + "t").text = D.block_text(b)
+            units.append(("cover", p, True))
+            back.append((b, p, D.block_text(b)))
+        labels = {}  # opaque paragraphs in table cells: the label is the cell before (a form row: "Revision:" | field)
+        for t in (n for n in D.walk(b) if n.get("type") == "table"):
+            for row in t.get("content") or []:
+                prev = ""
+                for cell in row.get("content") or []:
+                    labels.update({id(n): prev for n in D.walk(cell)})
+                    prev = D.block_text(cell).strip()
+        for n in D.walk(b):
+            if n.get("type") == "opaque" and isinstance((n.get("attrs") or {}).get("xml"), str):
+                r = docx_vars.parse(n["attrs"]["xml"].encode())
+                if id(n) in labels:  # wrap like the table it came from, so label/`in a table` checks see it
+                    row = docx_vars.parse(('<w:tr xmlns:w="%s"><w:tc><w:p/></w:tc><w:tc/></w:tr>' % docx_vars.W_NS).encode())
+                    row[0][0].append(docx_vars.parse(('<w:r xmlns:w="%s"><w:t/></w:r>' % docx_vars.W_NS).encode()))
+                    row[0][0][0][0].text = labels[id(n)]
+                    row[1].append(r)
+                    units.append(("cover", row, True))
+                else:
+                    units.append(("cover", r, True))
+                back.append((n, r, n["attrs"]["xml"]))
+    return units, hf, back
+
+
+@router.get("/imports/{import_id}/variables")
+def import_variables(import_id: UUID, ctx: Ctx = V):
+    i = _get(ctx, import_id)
+    return dict(candidates=docx_vars.scan(_units(ctx, i)[0]), declared=i.variables or [],
+                has_slot=any(D.is_slot(b) for b in i.content.get("content") or []))
+
+
+@router.post("/imports/{import_id}/variables")
+def apply_import_variables(import_id: UUID, body: VarPicks, ctx: Ctx = E):
+    """Replace the chosen values by `{{ name }}` (runs keep their formatting) and declare them with the value as default."""
+    i = _get(ctx, import_id)
+    units, hf, back = _units(ctx, i)
+    n = docx_vars.apply(units, {p.value: p.name for p in body.items})
+    if not n:
+        raise HTTPException(422, "none of the values were found")
+    for node, root, old in back:
+        if node.get("type") == "opaque":
+            new = etree.tostring(root, encoding="unicode")
+            if new != old:
+                node["attrs"]["xml"] = new
+        elif (t := docx_vars.text(root)) != old:  # plain paragraph: one text run carrying the first run's marks
+            marks = next((c.get("marks") for c in node.get("content") or [] if c.get("type") == "text"), None)
+            node["content"] = [{"type": "text", "text": t, **({"marks": marks} if marks else {})}]
+            (node.get("attrs") or {}).pop("orig", None)
+    D.check_content(i.content, rel_ids(_orig(ctx, i)))
+    flag_modified(i, "content")
+    import_path(ctx.org_id, i.id).write_bytes(docx_vars.write_parts(_orig(ctx, i), hf))
+    new = {d["name"]: d for d in [*(i.variables or []), *docx_vars.picks_decls(body.items)]}
+    i.variables = list(new.values())
+    ctx.db.commit()
+    return dict(replaced=n, declared=i.variables)
