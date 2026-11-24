@@ -27,6 +27,14 @@ const P: Record<string, string> = {
   alert: "M12 4l9 16H3zM12 10v4M12 17h.01", info: "M12 4a8 8 0 1 0 0 16 8 8 0 0 0 0-16zM12 11v5M12 8h.01", logout: "M10 4H5v16h5M15 8l4 4-4 4M9 12h10",
   refresh: "M20 5v5h-5M4 19v-5h5M18 10a7 7 0 0 0-12-2M6 14a7 7 0 0 0 12 2", tag: "M4 4h8l8 8-8 8-8-8zM8 8h.01", pdf: "M6 3h8l4 4v14H6zM9 15h6M9 18h4",
   layers: "M12 4l9 5-9 5-9-5zM3 14l9 5 9-5", sidebar: "M4 5h16v14H4zM9 5v14",
+  undo: "M9 7H4v5M4 12a8 8 0 1 1 3 6", redo: "M15 7h5v5M20 12a8 8 0 1 0-3 6", strike: "M5 12h14M8 7c0-2 2-3 4-3s4 1 4 3M8 17c0 2 2 3 4 3s4-1 4-3", sup: "M4 19l7-9M11 19L4 10M16 8l3-4M19 8h-4",
+  sub: "M4 14l7-9M11 14L4 5M16 20l3-4M19 20h-4", clear: "M5 19l6-14h2M9 14h6M16 17l4 4M20 17l-4 4", restart: "M4 12a8 8 0 1 0 3-6M4 4v4h4M11 9v6", continue: "M4 12h12M12 7l5 5-5 5M19 6v12",
+  hash: "M8 4l-2 16M16 4l-2 16M4 9h16M3 15h16", outdent: "M4 6h16M10 10h10M10 14h10M4 18h16M7 9l-3 3 3 3", indent: "M4 6h16M10 10h10M10 14h10M4 18h16M4 9l3 3-3 3",
+  quote: "M6 17c-1-3-1-6 2-9M13 17c-1-3-1-6 2-9M5 17h4v-4H5zM12 17h4v-4h-4z", code: "M9 7l-5 5 5 5M15 7l5 5-5 5M13 5l-2 14", codeInline: "M8 8l-4 4 4 4M16 8l4 4-4 4",
+  hr: "M4 12h16M7 8h10M7 16h10", omega: "M5 19h4v-2a6 6 0 1 1 6 0v2h4", nbsp: "M5 15v4h14v-4", br: "M5 6h10a4 4 0 0 1 0 8H8M11 11l-3 3 3 3", pagebreak: "M4 12h4M10 12h4M16 12h4M6 4h12v5M6 20h12v-5",
+  sectbreak: "M4 12h16M6 5h12v4M6 19h12v-4M3 12l2-2M3 12l2 2", footnote: "M6 5h9a3 3 0 0 1 0 6H6M10 11v8M9 19h2M18 4v4", toc: "M4 6h16M4 10h16M8 14h12M8 18h12M4 14h.01M4 18h.01", lock: "M7 11h10v8H7zM9 11V8a3 3 0 0 1 6 0v3",
+  caption: "M4 5h16v10H4zM8 19h8M4 15l4-4 3 3 3-3 6 6", xref: "M5 5h6v6H5zM13 13h6v6h-6zM11 8h4v4M8 11v4h4", bookmark: "M7 4h10v16l-5-4-5 4z", mark: "M5 5h14v4H5zM5 11h14v8H5zM3 5v14", outline: "M4 6h16M8 10h12M12 14h8M16 18h4",
+  spell: "M4 17l4-10 4 10M5.5 13h5M14 14l3 3 5-6", keyboard: "M3 7h18v10H3zM7 11h.01M11 11h.01M15 11h.01M8 14h8", keep: "M7 4v16M17 4v16M7 8h10M7 16h10", chevU: "M6 15l6-6 6 6",
 };
 export const Icon = ({ n, size = 16 }: { n: keyof typeof P | string; size?: number }) => (
   <svg className="ico" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={P[n] ?? P.file} /></svg>

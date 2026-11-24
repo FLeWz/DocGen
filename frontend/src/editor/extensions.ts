@@ -9,10 +9,12 @@ import Heading from "@tiptap/extension-heading";
 import Paragraph from "@tiptap/extension-paragraph";
 import { Table, TableCell, TableHeader, TableRow } from "@tiptap/extension-table";
 import StarterKit from "@tiptap/starter-kit";
-import { cellCss, imgCss, listCss, pflags, pfmtCss, rowCss, runCss, safeId, tableCss } from "./fmt";
+import { esc, cellCss, imgCss, listCss, pflags, pfmtCss, rowCss, runCss, safeId, tableCss } from "./fmt";
 import { ooxmlToHtml, getMedia } from "./ooxml";
 import { BlockSelect } from "./blockrange";
 import { Pages } from "./pageplugin";
+import { entryText, listEntries, seqNumbers } from "./outline";
+import type { PMNode as JNode } from "./doc";
 
 const attr = (name: string, data: string, def: unknown = null) => ({
   default: def,
@@ -105,6 +107,11 @@ export const ImportAttrs = Extension.create({
     return [
       // orig = {s,e,h}: the body children this block was parsed from + a hash; unchanged blocks are exported as that original XML
       { types: ["paragraph", "heading", "table", "bulletList", "orderedList"], attributes: { orig: hidden() } },
+      // sec = {id, kind: section|appendix, title}: the block belongs to a marked section (a bookmark range in the DOCX); bm = bookmark name (REF target)
+      { types: ["paragraph", "heading", "table", "bulletList", "orderedList", "image", "opaque", "toc", "sectBreak"], attributes: {
+        sec: json("sec", (a): Record<string, string> => (a.sec ? { class: `in-sec sec-${safeId(a.sec.kind) ?? "section"}` } : {})) } },
+      { types: ["paragraph", "heading"], attributes: { bm: attr("bm", "data-bm") } },
+      { types: ["orderedList"], attributes: { continue: hidden() } },
       // slot = "CONTENT" | name: the paragraph is a {{ CONTENT }} / {{ SLOT:name }} placeholder of a base document (drawn as a dashed box)
       { types: ["paragraph"], attributes: { slot: { default: null, parseHTML: (el: HTMLElement) => el.getAttribute("data-slot"),
         renderHTML: (a: Record<string, any>) => (/^[A-Za-z_]\w{0,39}$/.test(a.slot ?? "") ? { "data-slot": a.slot } : {}) } } },
@@ -117,6 +124,115 @@ export const ImportAttrs = Extension.create({
       { types: ["tableCell", "tableHeader"], attributes: { eff: json("eff", (a) => st(cellCss(a.eff))), cfmt: json("cfmt", (a) => st(cellCss(a.cfmt))) } },
       { types: ["tableRow"], attributes: { rfmt: json("rfmt", (a) => st(rowCss(a.rfmt))) } },
     ];
+  },
+});
+
+
+const fieldLabel = (a: Record<string, any>) => (a.code === "SEQ" || a.code === "REF" || a.code === "PAGEREF") ? String(a.text || "?") : `‹${a.code}›`;
+/** Word field: PAGE / NUMPAGES / SECTIONPAGES (value per page), SEQ (caption number), REF / PAGEREF (cross reference). */
+export const Field = Node.create({
+  name: "field", group: "inline", inline: true, atom: true, selectable: true,
+  addAttributes() { return { code: attr("code", "data-field", "PAGE"), arg: attr("arg", "data-arg", ""), text: attr("text", "data-text", "") }; },
+  parseHTML: () => [{ tag: "span[data-field]" }],
+  renderHTML: ({ node, HTMLAttributes }) => ["span", mergeAttributes(HTMLAttributes, { class: `fld fld-${safeId(node.attrs.code) ?? "x"}`, title: `Field ${node.attrs.code} ${node.attrs.arg ?? ""}`.trim() }), fieldLabel(node.attrs)],
+  renderText: ({ node }) => fieldLabel(node.attrs),
+});
+
+/** Footnote / endnote: the number is derived (document order), the text is a plain string edited in a prompt. */
+export const Footnote = Node.create({
+  name: "footnote", group: "inline", inline: true, atom: true, selectable: true,
+  addAttributes() { return { kind: attr("kind", "data-kind", "footnote"), text: attr("text", "data-text", ""), n: { default: 1, rendered: false } }; },
+  parseHTML: () => [{ tag: "sup[data-footnote]" }],
+  renderHTML: ({ node, HTMLAttributes }) => ["sup", mergeAttributes(HTMLAttributes, { "data-footnote": "", class: `fn fn-${node.attrs.kind === "endnote" ? "end" : "foot"}`, title: String(node.attrs.text ?? "") }), node.attrs.kind === "endnote" ? roman(node.attrs.n) : String(node.attrs.n)],
+  renderText: ({ node }) => `[${node.attrs.n}]`,
+});
+const roman = (n: number) => ["i", "ii", "iii", "iv", "v", "vi", "vii", "viii", "ix", "x"][n - 1] ?? String(n);
+
+/** Table of contents / list of figures / list of tables: a generated block. `entries` (derived from headings/captions) is what the
+ *  view shows; `xml` is an imported original (cached entries drawn from it, written back unchanged). */
+export const Toc = Node.create({
+  name: "toc", group: "block", atom: true, selectable: true, draggable: true,
+  addAttributes() {
+    return { kind: attr("kind", "data-kind", "toc"), title: attr("title", "data-title", ""), levels: attr("levels", "data-levels", "1-3"), label: attr("label", "data-label"),
+      xml: attr("xml", "data-xml"), refresh: { default: false, rendered: false }, entries: { default: null, rendered: false } };
+  },
+  parseHTML: () => [{ tag: "div[data-toc]" }],
+  renderHTML: ({ node, HTMLAttributes }) => ["div", mergeAttributes(HTMLAttributes, { "data-toc": "", class: "toc-block", contenteditable: "false" }), `${TOC_NAME[node.attrs.kind as string] ?? "Table of contents"}`],
+  addNodeView() {
+    return ({ node }) => {
+      const dom = document.createElement("div");
+      dom.setAttribute("contenteditable", "false");
+      const paint = (n: typeof node) => {
+        const a = n.attrs, imported = !!a.xml;
+        dom.className = `toc-block toc-${safeId(a.kind) ?? "toc"}`;
+        dom.title = imported ? "Imported list: cached entries, refreshed by Word on open" : "Generated list: entries come from the headings/captions, Word refreshes it on open";
+        const entries: { level: number; text: string }[] = Array.isArray(a.entries) ? a.entries : [];
+        const head = `<div class="toc-h"><span class="toc-kind">${esc(TOC_NAME[a.kind as string] ?? "Table of contents")}</span>${a.title ? ` <b>${esc(a.title)}</b>` : ""}</div>`;
+        const body = imported ? ooxmlToHtml(String(a.xml), getMedia()) || `<div class="toc-empty">cached entries not drawn</div>`
+          : entries.length ? entries.map((e) => `<div class="toc-line toc-l${Math.min(Math.max(e.level, 1), 9)}"><span>${esc(e.text)}</span><i></i><span>·</span></div>`).join("") : `<div class="toc-empty">No ${a.kind === "toc" ? "headings" : "captions"} yet: entries appear here as you add them.</div>`;
+        dom.innerHTML = head + body;
+      };
+      paint(node);
+      return { dom, update: (n) => { if (n.type !== node.type) return false; paint(n); return true; } };
+    };
+  },
+});
+const TOC_NAME: Record<string, string> = { toc: "Table of contents", tof: "List of figures", tot: "List of tables" };
+
+/** Section break: ends a section; orientation/margins/start type describe the section that ends here (as in OOXML). */
+export const SectBreak = Node.create({
+  name: "sectBreak", group: "block", atom: true, selectable: true, draggable: true,
+  addAttributes() {
+    return { brk: attr("brk", "data-brk", "nextPage"), orient: attr("orient", "data-orient", "portrait"), top: attr("top", "data-top"), right: attr("right", "data-right"), bottom: attr("bottom", "data-bottom"), left: attr("left", "data-left") };
+  },
+  parseHTML: () => [{ tag: "div[data-sectbreak]" }],
+  renderHTML: ({ node, HTMLAttributes }) => ["div", mergeAttributes(HTMLAttributes, { "data-sectbreak": "", class: "sectbrk-edit", contenteditable: "false" }),
+    `Section break (${BRK[node.attrs.brk as string] ?? "next page"}${node.attrs.orient === "landscape" ? ", landscape" : ""})`],
+});
+const BRK: Record<string, string> = { nextPage: "next page", continuous: "continuous", evenPage: "even page", oddPage: "odd page" };
+
+/** Derived values kept current by a follow-up transaction (not undoable on their own): SEQ numbers, REF results, footnote numbers,
+ *  generated list entries. Not run for setContent, so merely opening a document never changes it. */
+export const Derived = Extension.create({
+  name: "derived",
+  addProseMirrorPlugins() {
+    return [new Plugin({
+      appendTransaction(trs, _old, state) {
+        if (!trs.some((t) => t.docChanged) || trs.some((t) => t.getMeta("preventUpdate"))) return null;
+        const blocks: JNode[] = [];
+        state.doc.forEach((n) => blocks.push(n.toJSON() as JNode));
+        const seq = seqNumbers(blocks), bm = new Map<string, string>(), notes = { footnote: 0, endnote: 0 };
+        state.doc.forEach((n) => { if (n.attrs.bm) bm.set(String(n.attrs.bm), entryText(n.toJSON() as JNode)); });
+        let si = 0;
+        const tr = state.tr;
+        state.doc.descendants((n, pos) => {
+          let attrs: Record<string, unknown> | null = null;
+          if (n.type.name === "field") {
+            const a = n.attrs;
+            const want = a.code === "SEQ" ? String(seq[si++]) : a.code === "REF" && bm.has(a.arg) ? bm.get(a.arg)! : null;
+            if (want !== null && want !== a.text) attrs = { ...a, text: want };
+          } else if (n.type.name === "footnote") {
+            const k = n.attrs.kind === "endnote" ? "endnote" : "footnote", num = ++notes[k];
+            if (n.attrs.n !== num) attrs = { ...n.attrs, n: num };
+          } else if (n.type.name === "toc" && !n.attrs.xml) {
+            const e = listEntries(blocks, n.attrs);
+            if (JSON.stringify(e) !== JSON.stringify(n.attrs.entries)) attrs = { ...n.attrs, entries: e };
+          }
+          if (attrs) tr.setNodeMarkup(pos, undefined, attrs);
+          return true;
+        });
+        return tr.docChanged ? tr.setMeta("addToHistory", false) : null;
+      },
+    })];
+  },
+});
+
+/** Keyboard shortcuts that open ribbon dialogs (the ribbon listens for `docgen:cmd`). */
+export const Shortcuts = Extension.create({
+  name: "shortcuts",
+  addKeyboardShortcuts() {
+    const go = (cmd: string) => () => { window.dispatchEvent(new CustomEvent("docgen:cmd", { detail: cmd })); return true; };
+    return { "Mod-k": go("link"), "Mod-f": go("find"), "Mod-h": go("find"), "Mod-/": go("shortcuts"), "Mod-Shift-x": () => { const e = this.editor, on = e.getAttributes("fmt").strike === true; e.chain().focus().setMark("fmt", { ...e.getAttributes("fmt"), strike: on ? null : true }).run(); return true; } };
   },
 });
 
@@ -156,6 +272,7 @@ export const extensions = [
   Table.extend({ addAttributes() { return { ...this.parent?.(), dynamicList: attr("dynamicList", "data-dynamic-list") }; } })
     .configure({ resizable: false }),
   TableRow, TableHeader, TableCell, Variable, ImageNode, Fmt, HardBreak, Opaque, ImportAttrs, HeadingNumbers,
+  Field, Footnote, Toc, SectBreak, Derived, Shortcuts,
 ];
 
 /** The editor of the page view: the schema above plus page-gap decorations (the conflict resolver edits without them). */

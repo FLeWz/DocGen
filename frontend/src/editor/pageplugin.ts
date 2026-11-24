@@ -50,7 +50,7 @@ function compute(view: import("@tiptap/pm/view").EditorView): { deco: Decoration
     if (sec !== prevSec && norm.sections[Math.min(sec, norm.sections.length - 1)]?.brk === "continuous") b.breakBefore = b.breakBefore ? true : false;
     prevSec = sec;
     blocks.push(b); offs.push({ pos, node });
-    if (node.type.name === "opaque" && node.attrs.kind === "section break") sec++;
+    if (node.type.name === "sectBreak" || (node.type.name === "opaque" && node.attrs.kind === "section break")) sec++;
   });
   if (!blocks.length) return null;
   const lay = layout(look, blocks), total = lay.spans.length, out: Decoration[] = [];

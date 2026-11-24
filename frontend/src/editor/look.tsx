@@ -4,10 +4,13 @@ import { useQuery } from "@tanstack/react-query";
 import { ReactNode, useMemo } from "react";
 import { api, Me, Style } from "../api";
 import "./editor.css";
+import type { PMNode } from "./doc";
 import { ooxmlToHtml, setMedia, setStyleTabs } from "./ooxml";
+import { partDocHtml } from "./render";
+import type { FieldCtx } from "./fields";
 
 export type Page = { w: number; h: number; top: number; right: number; bottom: number; left: number; header: number; footer: number; first_page_differs?: boolean };
-export type Part = { xml: string; media: Record<string, string> };
+export type Part = { xml: string; media: Record<string, string>; path?: string; kind?: "header" | "footer"; doc?: PMNode };
 /** A section: page setup, how it starts, titlePg, the header/footer part (index into Look.parts) per type, page numbering. */
 export type Sect = { page: Page; brk: string; title_pg: boolean; header: Partial<Record<"default" | "first" | "even", number>>; footer: Partial<Record<"default" | "first" | "even", number>>; num: { fmt: string; start: number | null } };
 export type Look = {
@@ -15,6 +18,18 @@ export type Look = {
   tabs?: Record<string, unknown>; flags?: Record<string, { keepNext?: boolean; keepLines?: boolean; pageBreakBefore?: boolean }>;
   sections?: Sect[]; parts?: Part[]; even_odd?: boolean;
 };
+/** HTML of a header/footer part: its edited TipTap doc when it has one, else the original XML. Fields evaluated with `f`. */
+export function partHtml(p: Part, f?: FieldCtx, tabs?: Record<string, unknown>): string {
+  if (!p.doc) return ooxmlToHtml(p.xml, p.media, f);
+  const h = partDocHtml(p.doc, tabs);
+  return f ? h.replace(/<span class="fld" data-fld="(PAGE|NUMPAGES|SECTIONPAGES)">[^<]*<\/span>/g, (_m, c) => `<span class="fld">${c === "PAGE" ? f.page : f.pages}</span>`) : h;
+}
+/** The look with edited header/footer docs (by part path) laid over the original parts. */
+export function withHf(look: Look | undefined, hf: Record<string, PMNode>): Look | undefined {
+  if (!look || !Object.keys(hf).length) return look;
+  const over = (p: Part | null) => (p?.path && hf[p.path] ? { ...p, doc: hf[p.path] } : p);
+  return { ...look, parts: look.parts?.map((p) => over(p)!), header: over(look.header), footer: over(look.footer) };
+}
 export type LookSrc = { base_doc?: string | null; import?: string | null };
 
 export function useLook(src: LookSrc) {
@@ -39,8 +54,8 @@ export function PageFrame({ look, children, zoom = 1, guides, bodyTestId, classN
   look?: Look; children: ReactNode; zoom?: number; guides?: boolean; bodyTestId?: string; className?: string; hdrHtml?: string; ftrHtml?: string;
 }) {
   const p = look?.page ?? FALLBACK;
-  const hdr0 = useMemo(() => (look?.header ? ooxmlToHtml(look.header.xml, look.header.media) : ""), [look]);
-  const ftr0 = useMemo(() => (look?.footer ? ooxmlToHtml(look.footer.xml, look.footer.media) : ""), [look]);
+  const hdr0 = useMemo(() => (look?.header ? partHtml(look.header, undefined, look.tabs) : ""), [look]);
+  const ftr0 = useMemo(() => (look?.footer ? partHtml(look.footer, undefined, look.tabs) : ""), [look]);
   const hdr = hdrHtml ?? hdr0, ftr = ftrHtml ?? ftr0;
   applyLook(look);
   const vars = pageVars(p, zoom);

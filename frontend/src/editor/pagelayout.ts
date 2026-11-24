@@ -1,9 +1,8 @@
 // Page layout of a document in the page view: sections (page size/margins, titlePg, even/odd, numbering), the header/footer each
 // page gets with its fields evaluated, and the usable body height (page minus margins, margins grow when a header/footer is taller).
 import { FieldCtx, pageLabel } from "./fields";
-import { Look, Page, Part, Sect } from "./look";
+import { Look, Page, Part, partHtml, Sect } from "./look";
 import { Block, PageSpan, paginate } from "./paginate";
-import { ooxmlToHtml } from "./ooxml";
 
 export const PT_PX = 96 / 72;
 type HF = "default" | "first" | "even";
@@ -46,7 +45,7 @@ export function measureHF(look: Look | undefined, norm: Norm): Map<string, numbe
           const box = document.createElement("div");
           box.className = "docx-page";
           box.style.cssText = `width:${s.page.w - s.page.left - s.page.right}pt;min-height:0;box-shadow:none;zoom:1;display:block`;
-          box.innerHTML = ooxmlToHtml(norm.parts[idx].xml, norm.parts[idx].media, fields);
+          box.innerHTML = partHtml(norm.parts[idx], fields, look?.tabs);
           root.appendChild(box);
           jobs.push([hfKey(si, kind, t), box]);
         }
@@ -95,7 +94,7 @@ export function layout(look: Look | undefined, blocks: Block[]): Layout {
 /** Header and footer HTML of a page with PAGE / NUMPAGES evaluated. */
 export function pageParts(look: Look | undefined, info: PageInfo, total: number): { hdr: string; ftr: string } {
   const norm = normalize(look), f: FieldCtx = { page: info.label, pages: String(total), now: new Date() };
-  const html = (i: number | null) => (i === null || !norm.parts[i] ? "" : ooxmlToHtml(norm.parts[i].xml, norm.parts[i].media, f));
+  const html = (i: number | null) => (i === null || !norm.parts[i] ? "" : partHtml(norm.parts[i], f, look?.tabs));
   return { hdr: html(info.hdr), ftr: html(info.ftr) };
 }
 
