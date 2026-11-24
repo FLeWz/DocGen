@@ -76,6 +76,8 @@ def png_bytes():
 
 
 def round_trip(content, base=SRC):
+    for n in D.walk(content):  # `orig` would short-circuit to the original XML (test_roundtrip.py); here the serializer is under test
+        (n.get("attrs") or {}).pop("orig", None)
     out, warn = D.export(base, content, lambda c, i: png_bytes())
     assert warn == []
     return out

@@ -51,6 +51,48 @@ def text(root):
     return re.sub(r"\s+", " ", " ".join(t.text or "" for t in root.iter("{%s}t" % W)))
 
 
+def fragments(pdf: bytes):
+    """[(page, text, x, y)] of every text fragment of the PDF."""
+    out = []
+    for n, page in enumerate(PdfReader(io.BytesIO(pdf)).pages):
+        page.extract_text(visitor_text=lambda t, cm, tm, fd, fs, n=n: out.append((n, t.strip(), round(tm[4] * cm[0] + cm[4], 1), round(tm[5] * cm[3] + cm[5], 1))) if t.strip() else None)
+    return out
+
+
+def tables_position_check(post, api) -> None:
+    """Render the import untouched (= the original XML) and with the text of every table cell edited (tables re-serialised):
+    everything outside the edited cells must sit within 3 pt of where it was, so the exporter keeps style, margins, widths, spacing."""
+    path = os.environ.get("E2E_TABLES_DOCX")
+    if not path:
+        return
+    iid = post("/api/import/docx", multipart={"file": {"name": "tables.docx", "mimeType": "application/octet-stream", "buffer": open(path, "rb").read()}}).json()["id"]
+    content = api.get(f"/api/imports/{iid}").json()["content"]
+    base = fragments(post("/api/render/pdf", data={"content": content, "import_id": iid}).body())
+    edited = 0
+    for n in content["content"]:
+        if n["type"] == "table":
+            for t in (x for x in walk(n) if x.get("type") == "text"):
+                t["text"] += "!"  # changes the block's fingerprint, so the whole table goes through the serializer
+                edited += 1
+    assert edited >= 4, "fixture should hold text in several table cells"
+    got = fragments(post("/api/render/pdf", data={"content": content, "import_id": iid}).body())
+    want = [f for f in base if not any(f[1] == t for t in ("T1-A", "T1-B", "T1-C", "T1-D", "T2-A", "T2-B", "T2-C"))]
+    have = [f for f in got if f[1].rstrip("!") == f[1]]
+    assert len(have) == len(want), f"fragment count {len(have)} vs {len(want)}"
+    worst = max((max(abs(a[2] - b[2]), abs(a[3] - b[3])) for a, b in zip(want, have) if a[0] == b[0]), default=0)
+    assert all(a[0] == b[0] and a[1] == b[1] for a, b in zip(want, have)), "text moved to another page"
+    cells = [(a, b) for a, b in zip([f for f in base if f[1] in ("T1-A", "T1-D", "T2-C")], [f for f in got if f[1].rstrip("!") in ("T1-A", "T1-D", "T2-C")])]
+    worst = max([worst] + [abs(a[3] - b[3]) for a, b in cells])  # edited cells: y only (centred text widens with the "!")
+    print(f"tables: {edited} cells edited, max text position shift {worst:.1f} pt over {len(want)} fragments")
+    assert worst <= 3, f"re-serialised tables moved by {worst} pt"
+
+
+def walk(n):
+    yield n
+    for c in n.get("content") or []:
+        yield from walk(c)
+
+
 def main() -> None:
     src = open(SRC, "rb").read()
     with sync_playwright() as pw:
@@ -95,6 +137,7 @@ def main() -> None:
             want = int(os.environ["E2E_FIDELITY_PAGES"])
             assert abs(len(pages) - want) <= max(1, want // 10), f"page count {len(pages)} vs source {want}"
         print("e2e fidelity OK")
+        tables_position_check(post, api)
 
 
 main()

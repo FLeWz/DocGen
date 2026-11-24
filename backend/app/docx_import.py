@@ -8,7 +8,9 @@ images; theme colours/fonts are resolved to literal values. The original package
 media) is reused on export.
 """
 import copy
+import hashlib
 import io
+import json
 import posixpath
 import re
 import zipfile
@@ -47,6 +49,26 @@ LIST_STYLE = {"decimal": "decimal", "lowerLetter": "lower-alpha", "upperLetter":
 STYLE_ID = re.compile(r"[A-Za-z0-9_-]{1,60}")
 loc = lambda e: e.tag.rpartition("}")[2] if isinstance(e.tag, str) else ""
 val = lambda e, k="val": e.get(W + k) if e is not None else None
+
+
+def fingerprint(node: dict) -> str:
+    """Hash of a block's TipTap JSON modulo what the editor may add or reorder (defaults, derived `eff`, mark order)."""
+    def norm(v):
+        if isinstance(v, dict):
+            d = {k: norm(x) for k, x in v.items() if k not in ("eff", "orig")}
+            if v.get("type") == "link" and isinstance(d.get("attrs"), dict):  # TipTap adds target/rel
+                d["attrs"] = {"href": d["attrs"].get("href")}
+            if v.get("type") == "orderedList" and isinstance(d.get("attrs"), dict) and d["attrs"].get("start") == 1:
+                del d["attrs"]["start"]
+            return {k: x for k, x in d.items() if x not in (None, False, {}, [])}
+        if isinstance(v, list):
+            return [norm(x) for x in v]
+        return v
+    n = norm(node)
+    for x in walk(n):
+        if isinstance(x.get("marks"), list):
+            x["marks"] = sorted(x["marks"], key=lambda m: json.dumps(m, sort_keys=True))
+    return hashlib.sha1(json.dumps(n, sort_keys=True).encode()).hexdigest()[:20]
 
 
 def _kind(el) -> str:
@@ -209,26 +231,37 @@ class _Parser:
     # ---- blocks ----
     def blocks(self, parent, depth=0) -> list:
         out, stack = [], []  # stack: (ilvl, list node, numId) of the open lists
-        for ch in parent:
+        spans: dict[int, list] = {}  # top level only: id(node) -> [node, first, last body child] it was parsed from
+
+        def span(node, i):
+            if depth == 0 and node["type"] != "opaque":
+                spans.setdefault(id(node), [node, i, i])[2] = i
+        for i, ch in enumerate(parent):
             t = loc(ch)
             if t == "p":
                 nodes, li = self.para(ch)
                 if li and nodes[0]["type"] == "paragraph":
                     self.item(out, stack, li, nodes[0])
+                    span(stack[0][1], i)
                     nodes = nodes[1:]
                 else:
                     stack.clear()
+                    if len(nodes) == 1:
+                        span(nodes[0], i)
                 if nodes:  # images after a list item end the list
                     stack.clear()
                     out.extend(nodes)
             elif t == "tbl":
                 stack.clear()
                 out.append(self.keep(ch, "nested table") if depth else self.table(ch))
+                span(out[-1], i)
             elif t in ("sectPr", "tcPr"):
                 continue
             else:
                 stack.clear()
                 out.append(self.keep(ch))
+        for node, a, b in spans.values():  # unchanged blocks are written back as the original XML (see export)
+            node.setdefault("attrs", {})["orig"] = {"s": a, "e": b, "h": fingerprint(node)}
         return out
 
     def item(self, out, stack, li, para):
@@ -326,19 +359,38 @@ def parse(data: bytes, store_image) -> tuple[dict, list[str]]:
 
 # ---- export / base document ----
 
-def _strip_body(orig: bytes):
+def _strip_body(orig: bytes, kept: list | None = None):
+    """The package with an empty body; the removed original children go to `kept` (same indexes as the parser's spans)."""
     doc = Document(io.BytesIO(orig))
     body = doc.element.body
     for ch in list(body):
         if ch.tag != qn("w:sectPr"):  # the final section (page size, header/footer refs) stays
             body.remove(ch)
+            if kept is not None:
+                kept.append(ch)
     return doc
+
+
+def _original(n: dict, kept: list):
+    """Original body XML of an unedited top-level block (its fingerprint still equals the parsed one), else None."""
+    o = (n.get("attrs") or {}).get("orig")
+    if not isinstance(o, dict) or not all(isinstance(o.get(k), int) and not isinstance(o.get(k), bool) for k in "se") \
+            or not 0 <= o["s"] <= o["e"] < len(kept) or o.get("h") != fingerprint(n):
+        return None
+    return [copy.deepcopy(c) for c in kept[o["s"]:o["e"] + 1]]
 
 
 def export(orig: bytes, content: dict, load_asset) -> tuple[bytes, list]:
     """Original package, body replaced by `content`. styles/numbering/headers/footers/theme/media stay as they were."""
-    doc, warnings = _strip_body(orig), []
-    Builder(doc, load_asset, warnings, rels=rel_ids(orig)).nodes((content or {}).get("content"), doc, {})
+    kept: list = []
+    doc, warnings = _strip_body(orig, kept), []
+    b, sect = Builder(doc, load_asset, warnings, rels=rel_ids(orig)), doc.element.body.find(qn("w:sectPr"))
+    for n in (content or {}).get("content") or []:
+        if (same := _original(n, kept)) is None:
+            b.node(n, doc, {})
+        else:  # unedited: the original paragraphs/table byte for byte, so nothing the editor model can't hold is lost
+            for el in same:
+                sect.addprevious(el) if sect is not None else doc.element.body.append(el)
     if not doc.paragraphs and not doc.tables:
         doc.add_paragraph()
     out = io.BytesIO()

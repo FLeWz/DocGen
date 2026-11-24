@@ -33,6 +33,6 @@ Stable `data-testid`s are used by `e2e/*.py`: `preview`, `word-pdf`, `save-statu
 
 ## Pages, tabs, tables in the document view
 - Editor and live preview show discrete pages. `paginate.ts` (pure) assigns blocks to pages from measured heights; the editor keeps ONE contenteditable and inserts non-editable page-gap widgets (footer + gap + next header) via `pageplugin.ts`; the preview (`pages.tsx`) clones blocks into paper cards. Per-section size/margins, titlePg and even/odd headers are honoured; PAGE/NUMPAGES are evaluated per page.
-- Pagination is an ESTIMATE (no line splitting, widow/orphan control or floats): the toolbar says "N pages (est.)". On the example manual: 12 pages vs LibreOffice's 11. `scripts/compare-render.py <docx> <outdir>` renders both side by side (needs the stack, pdftoppm, Pillow).
+- Pagination is an ESTIMATE (no line splitting, widow/orphan control or floats): the toolbar says "N pages (est.)". On the example manual: 11 pages, same as LibreOffice (was 12 before the opaque-paragraph spacing fix). `scripts/compare-render.py <docx> <outdir>` renders both side by side (needs the stack, pdftoppm, Pillow).
 - Tab stops (`pPr/tabs`, style tabs) are drawn in headers/footers/TOC/body (`tabs.ts`; tab-width decorations in the editor). Table styles (conditional formats, tblLook, borders, margins) are resolved by the backend into a derived per-cell `eff` attr (never exported); direct formatting stays in `cfmt`/`tfmt`/`rfmt`.
 - Import warnings and editor notices share one collapsed `NoticeBar`.

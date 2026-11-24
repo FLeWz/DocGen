@@ -137,7 +137,8 @@ def split_preview(import_id: UUID, level: int = Query(ge=1, le=2), ctx: Ctx = V)
 
 
 def _make(ctx: Ctx, folder, title: str, blocks: list) -> ImportSnippetOut:
-    content = {"type": "doc", "content": blocks}
+    blocks = [{**b, "attrs": {k: v for k, v in b["attrs"].items() if k != "orig"}} if "orig" in (b.get("attrs") or {}) else b for b in blocks]
+    content = {"type": "doc", "content": blocks}  # `orig` only means something inside the import's own package
     s = vcs.new_snippet(ctx, folder, title, content=content, styles=D.style_ids(content))
     kinds = sorted({(n.get("attrs") or {}).get("kind", "?") for b in blocks for n in D.walk(b) if n.get("type") == "opaque"})
     warn = [f"contains opaque block(s): {', '.join(kinds)} (exported only if self-contained)"] if kinds else []
