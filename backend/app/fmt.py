@@ -3,9 +3,9 @@ the style CSS resolver. Values stay close to OOXML units (twips, half-points, ei
 lossless; everything read back from client JSON is validated here (hex colours, enums, int ranges), junk is dropped.
 
 run   {b,i,u,strike,color,font,size,hl,va,caps,smallCaps,rStyle}      (b/i/u are marks, not part of the `fmt` mark)
-para  {jc,left,right,first,before,after,line,lineRule,shd,bdr,keepNext,keepLines,pageBreakBefore,tabs}
+para  {jc,left,right,first,before,after,line,lineRule,shd,bdr,keepNext,keepLines,pageBreakBefore,tabs,ctx (contextualSpacing),mark (paragraph-mark run props)}
       tabs = [{pos (twips), val: left|center|right|decimal|bar, leader: dot|hyphen|underscore|...}]
-cell  {shd,vAlign,bdr,mar,dir}   tbl {jc,bdr,width,ind,mar,layout}   row {h: {val,rule}, cant}
+cell  {shd,vAlign,bdr,mar,dir}   tbl {jc,bdr,width,ind,mar,layout}   row {h: {val,rule}, cant, jc}
 bdr = {top|left|bottom|right|insideH|insideV: {val,sz,color}}   mar = {top|left|bottom|right: twips}
 """
 import re
@@ -226,6 +226,13 @@ def para_fmt(ppr, theme=None) -> tuple[dict, set]:
     for k in ("keepNext", "keepLines", "pageBreakBefore"):
         if _on(ppr.find(W + k)) and ppr.find(W + k) is not None:
             d[k] = True
+    cs = ppr.find(W + "contextualSpacing")
+    if cs is not None and _on(cs):
+        d["ctx"] = True
+    mark, _ = run_fmt(ppr.find(W + "rPr"), theme)  # paragraph-mark properties: size of empty lines, number/bullet look
+    mark = {k: v for k, v in mark.items() if v not in (False, None) and k not in ("u", "rStyle")}
+    if mark:
+        d["mark"] = mark
     tabs = tab_stops(ppr.find(W + "tabs"))
     if tabs:
         d["tabs"] = tabs
@@ -331,6 +338,9 @@ def row_fmt(trpr) -> dict:
         d["h"] = {"val": int(h.get(W + "val")), "rule": "exact" if h.get(W + "hRule") == "exact" else "atLeast"}
     if trpr is not None and trpr.find(W + "cantSplit") is not None and _on(trpr.find(W + "cantSplit")):
         d["cant"] = True
+    j = trpr.find(W + "jc") if trpr is not None else None
+    if j is not None and j.get(W + "val") in ("left", "center", "right"):
+        d["jc"] = j.get(W + "val")
     return d
 
 
@@ -426,6 +436,14 @@ def write_para(ppr, d: dict) -> None:
             if old is not None:
                 ppr.remove(old)
             insert_ordered(ppr, box, PPR_ORDER)
+    if d.get("ctx") is True:
+        _set(ppr, PPR_ORDER, "contextualSpacing")
+    if isinstance(d.get("mark"), dict) and d["mark"]:
+        rpr = _set(ppr, PPR_ORDER, "rPr")
+        for k in ("b", "i"):
+            if d["mark"].get(k) is True:
+                _set(rpr, RPR_ORDER, k)
+        write_run(rpr, d["mark"], lambda s: False)
     _write_borders(ppr, PPR_ORDER, "pBdr", d.get("bdr"), SIDES)
     if _hex(d.get("shd")):
         _set(ppr, PPR_ORDER, "shd", val="clear", color="auto", fill=_hex(d["shd"]))
@@ -474,5 +492,7 @@ def write_row(trpr, d: dict) -> None:
         if old is not None:
             trpr.remove(old)
         insert_ordered(trpr, _el("trHeight", val=n, hRule="exact" if d["h"].get("rule") == "exact" else "atLeast"), TRPR_ORDER)
+    if isinstance(d, dict) and d.get("jc") in ("left", "center", "right") and trpr.find(W + "jc") is None:
+        insert_ordered(trpr, _el("jc", val=d["jc"]), TRPR_ORDER)
     if isinstance(d, dict) and d.get("cant") is True and trpr.find(W + "cantSplit") is None:
         insert_ordered(trpr, _el("cantSplit"), TRPR_ORDER)

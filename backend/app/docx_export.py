@@ -332,7 +332,8 @@ class Builder:
                     self.list(child, cont, ctx, min(level + 1, 8))
                 else:
                     p = cont.add_paragraph()
-                    self.apply_style(p, (child.get("attrs") or {}).get("styleId"), "ListParagraph")
+                    # imported paragraphs keep their own style (none = Normal): ListParagraph's contextual spacing would squeeze them
+                    self.apply_style(p, (child.get("attrs") or {}).get("styleId"), *(() if self.rels is not None else ("ListParagraph",)))
                     if first:
                         _numpr(p, num, level)
                         first = False
