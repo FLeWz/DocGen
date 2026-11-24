@@ -150,6 +150,10 @@ def render_docx(org_id, spec: dict) -> tuple[bytes, list]:
 def render_pdf(org_id, spec: dict) -> tuple[bytes, list]:
     """DOCX -> Gotenberg/LibreOffice. updateIndexes makes LibreOffice refresh the TOC and page-number fields."""
     docx, warnings = render_docx(org_id, spec)
+    return docx_to_pdf(docx), warnings
+
+
+def docx_to_pdf(docx: bytes) -> bytes:
     try:
         with httpx.stream("POST", f"{config.PDF_URL}/forms/libreoffice/convert", timeout=config.PDF_TIMEOUT_S,
                           files={"files": ("document.docx", docx, MIME["docx"])}, data={"updateIndexes": "true"}) as r:
@@ -166,7 +170,7 @@ def render_pdf(org_id, spec: dict) -> tuple[bytes, list]:
         raise ValueError(f"PDF service unavailable ({type(e).__name__})")
     if not out.startswith(b"%PDF"):
         raise ValueError("PDF service returned something that is not a PDF")
-    return bytes(out), warnings
+    return bytes(out)
 
 
 RENDERERS = {"docx": render_docx, "pdf": render_pdf}

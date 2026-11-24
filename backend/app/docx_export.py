@@ -20,6 +20,7 @@ from jinja2.exceptions import SecurityError
 from jinja2.sandbox import SandboxedEnvironment
 from PIL import Image as PILImage
 
+from . import fmt
 from .base_docs import CONTENT_RE, SLOT_RE
 from .ooxml import add_field, opaque_element, stable_zip
 
@@ -227,8 +228,8 @@ class Numbering:
             self._b = self._num(self._abstract("bullet"), False)
         return self._b
 
-    def ordered(self) -> int:  # fresh num per list so every ordered list restarts at 1
-        return self._num(self._abstract("decimal"), True)
+    def ordered(self, numfmt: str = "decimal") -> int:  # fresh num per list so every ordered list restarts at 1
+        return self._num(self._abstract(numfmt), True)
 
     def headings(self) -> int:
         if getattr(self, "_h", None) is None:
@@ -246,7 +247,7 @@ def _numpr(p, num_id: int, level: int) -> None:
         e = OxmlElement(tag)
         e.set(qn("w:val"), str(v))
         n.append(e)
-    ppr.append(n)
+    fmt.insert_ordered(ppr, n, fmt.PPR_ORDER)
 
 
 # ---- ProseMirror -> OOXML ----------------------------------------------------------------------
@@ -275,11 +276,13 @@ class Builder:
         if t == "paragraph":
             p = cont.add_paragraph()
             self.apply_style(p, a.get("styleId"))
+            self.pfmt(p, a)
             self.inline(n.get("content"), p)
         elif t == "heading":
             lvl = min(max(int(a.get("level") or 1), 1), 4)
             p = cont.add_paragraph()
             self.apply_style(p, a.get("styleId"), f"Heading{lvl}")
+            self.pfmt(p, a)
             self.inline(n.get("content"), p)
         elif t in ("bulletList", "orderedList"):
             self.list(n, cont, ctx, 0)
@@ -296,6 +299,10 @@ class Builder:
             pass
         else:
             self.warn.append(f"unsupported node '{t}' skipped")
+
+    def pfmt(self, p, a: dict) -> None:
+        if a.get("pfmt"):
+            fmt.write_para(p._p.get_or_add_pPr(), a["pfmt"])
 
     def opaque(self, a: dict, cont) -> None:
         """Raw OOXML block, re-validated here (it came from the client's JSON) and written back as is."""
@@ -315,7 +322,9 @@ class Builder:
         if self.rels is not None and nid in set(self.num._ids("w:num", "w:numId")):
             num = nid  # imported list keeps its Word numbering (continues across lists)
         else:
-            num = self.num.ordered() if n["type"] == "orderedList" else self.num.bullets()
+            nf = {"lower-alpha": "lowerLetter", "upper-alpha": "upperLetter", "lower-roman": "lowerRoman",
+                  "upper-roman": "upperRoman"}.get((n.get("attrs") or {}).get("listStyle"), "decimal")
+            num = self.num.ordered(nf) if n["type"] == "orderedList" else self.num.bullets()
         for li in n.get("content") or []:
             first = True
             for child in li.get("content") or []:
@@ -327,6 +336,7 @@ class Builder:
                     if first:
                         _numpr(p, num, level)
                         first = False
+                    self.pfmt(p, child.get("attrs") or {})
                     self.inline(child.get("content"), p)
 
     def inline(self, content, p) -> None:
@@ -337,7 +347,8 @@ class Builder:
             elif t == "variable":
                 self.run(p, chip(c.get("attrs") or {}), c.get("marks") or [])
             elif t == "hardBreak":
-                p.add_run().add_break()
+                from docx.enum.text import WD_BREAK
+                p.add_run().add_break(WD_BREAK.PAGE if (c.get("attrs") or {}).get("page") else WD_BREAK.LINE)
 
     def run(self, p, text: str, marks: list) -> None:
         r = p.add_run(text)
@@ -350,13 +361,17 @@ class Builder:
                 r.italic = True
             elif k == "underline":
                 r.underline = True
+            elif k == "fmt":
+                fmt.write_run(r._r.get_or_add_rPr(), m.get("attrs") or {}, lambda s: s in self.styles)
             elif k == "link" and SAFE_HREF.match((m.get("attrs") or {}).get("href") or ""):
                 link = m["attrs"]["href"]
         if link:
             h = OxmlElement("w:hyperlink")
             h.set(qn("r:id"), p.part.relate_to(link, RT.HYPERLINK, is_external=True))
-            if self.style("Hyperlink"):
-                rpr = r._r.get_or_add_rPr()
+            rpr = r._r.get_or_add_rPr()
+            if rpr.find(qn("w:rStyle")) is not None:
+                pass
+            elif self.style("Hyperlink"):
                 rs = OxmlElement("w:rStyle")
                 rs.set(qn("w:val"), "Hyperlink")
                 rpr.insert(0, rs)
@@ -384,16 +399,18 @@ class Builder:
                 ncols = max(ncols, ci)
         t = self.doc.add_table(len(rows), ncols)
         ta = n.get("attrs") or {}
-        try:  # imported tables keep their own properties (style, borders, width) and column grid
-            pr = opaque_element(ta["tblPr"], self.rels, {"tblPr"}) if ta.get("tblPr") and self.rels is not None else None
+        try:  # tables from an import keep their own properties (style, borders, width) and column grid, in snippets too
+            pr = opaque_element(ta["tblPr"], self.rels, {"tblPr"}) if ta.get("tblPr") else None
         except ValueError:
             pr = None
+        if pr is not None and (st := pr.find(qn("w:tblStyle"))) is not None and st.get(qn("w:val")) not in self.styles:
+            pr.remove(st)  # style id of another document
         if pr is not None:
             t._tbl.remove(t._tbl.tblPr)
             t._tbl.insert(0, pr)
         elif s := self.style(ta.get("styleId"), "TableGrid"):
             t._tbl.tblPr.style = s
-        grid = ta.get("grid") if self.rels is not None else None
+        grid = ta.get("grid")
         if isinstance(grid, list) and len(grid) == ncols and all(isinstance(g, int) and g > 0 for g in grid):
             for gc, g in zip(t._tbl.tblGrid.findall(qn("w:gridCol")), grid):
                 gc.set(qn("w:w"), str(g))
@@ -409,6 +426,8 @@ class Builder:
                 m.width = Twips(sum(grid[ci:ci + cs]))
             for p in m._tc.findall(qn("w:p")):
                 m._tc.remove(p)
+            if cell.get("attrs", {}).get("cfmt"):
+                fmt.write_cell(m._tc.get_or_add_tcPr(), cell["attrs"]["cfmt"])
             self.nodes(cell.get("content"), m, ctx)
             if m._tc.find(qn("w:p")) is None:
                 m._tc.append(OxmlElement("w:p"))
@@ -432,9 +451,13 @@ class Builder:
                 b = io.BytesIO()
                 im.convert("RGBA").save(b, "PNG")
                 data = b.getvalue()
-        w = a.get("width")
+        w, h = a.get("width"), a.get("height")
+        ok = lambda v: isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0
         r = p.add_run()
-        shape = r.add_picture(io.BytesIO(data), width=Emu(min(int(w) * 9525, MAX_W)) if isinstance(w, (int, float)) and w > 0 else None)
+        shape = r.add_picture(io.BytesIO(data), width=Emu(min(int(w) * 9525, MAX_W)) if ok(w) else None,
+                              height=Emu(int(h) * 9525) if ok(w) and ok(h) else None)
+        if a.get("align") in fmt.JC:
+            fmt.write_para(p._p.get_or_add_pPr(), {"jc": a["align"]})
         if shape.width > MAX_W:
             shape.height, shape.width = int(shape.height * MAX_W / shape.width), Emu(MAX_W)
         dp = r._r.xpath(".//wp:docPr")[0]

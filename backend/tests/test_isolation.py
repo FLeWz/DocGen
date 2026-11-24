@@ -133,7 +133,8 @@ COVERED = {  # every API route must be listed: a new endpoint forces a new isola
     "DELETE /api/snippets/{snippet_id}/draft", "POST /api/snippets/{snippet_id}/resolve",
     "POST /api/snippets/{snippet_id}/restore", "GET /api/snippets/{snippet_id}/history",
     "GET /api/snippets/{snippet_id}/diff",  # all covered by test_b_cannot_touch_a_git_objects
-    "GET /api/styles", "POST /api/styles", "PATCH /api/styles/{style_pk}", "DELETE /api/styles/{style_pk}",
+    "GET /api/styles", "GET /api/styles/css", "POST /api/render/pdf",  # look-ups are org-scoped, see test_fidelity
+    "POST /api/styles", "PATCH /api/styles/{style_pk}", "DELETE /api/styles/{style_pk}",
     "POST /api/images", "GET /api/images/{image_id}",  # covered by test_b_cannot_touch_a_styles_and_images
     # milestone 4: all covered by test_b_cannot_touch_a_documents / test_b_cannot_touch_a_base_documents
     "GET /api/base-documents", "POST /api/base-documents", "GET /api/base-documents/{id}",

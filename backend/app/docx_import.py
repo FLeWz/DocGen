@@ -2,9 +2,10 @@
 
 Whatever the editor cannot represent stays an `opaque` node {kind, xml}: the raw OOXML of the whole block, written back
 verbatim on export (after re-validation, see ooxml.opaque_element). Granularity is the block: a paragraph with one
-unsupported inline thing (text box, field, tracked change...) becomes one opaque block. Direct run/paragraph formatting
-(colour, size, alignment...) is NOT kept; styles are, and the original package (styles, numbering, headers, theme, media)
-is reused on export.
+unsupported inline thing (text box, field, tracked change...) becomes one opaque block. Direct formatting is kept as
+attrs (see fmt.py): a `fmt` mark on runs, `pfmt` on paragraphs/headings, `cfmt` on cells, `tfmt` on tables, size/align on
+images; theme colours/fonts are resolved to literal values. The original package (styles, numbering, headers, theme,
+media) is reused on export.
 """
 import copy
 import io
@@ -17,6 +18,7 @@ from docx import Document
 from docx.oxml.ns import qn
 from lxml import etree
 
+from . import fmt
 from .base_docs import BadDocx, W, parse_styles
 from .docx_export import Builder
 from .ooxml import opaque_element, rel_ids, stable_zip
@@ -38,8 +40,8 @@ KINDS = [("txbxContent", "text box"), ("oMath", "equation"), ("oMathPara", "equa
          ("fldSimple", "field"), ("fldChar", "field"), ("instrText", "field"), ("pict", "legacy drawing"),
          ("object", "embedded object"), ("drawing", "drawing"), ("sectPr", "section break"), ("tbl", "table")]
 RUN_IGNORED = {"rPr", "t", "tab", "br", "drawing", "lastRenderedPageBreak"}
-FMT_IGNORED = {"b", "bCs", "i", "iCs", "u", "lang", "noProof", "szCs", "webHidden"}  # others count as dropped
-PPR_IGNORED = {"pStyle", "numPr", "rPr", "keepNext", "keepLines", "widowControl", "contextualSpacing"}
+LIST_STYLE = {"decimal": "decimal", "lowerLetter": "lower-alpha", "upperLetter": "upper-alpha", "lowerRoman": "lower-roman",
+              "upperRoman": "upper-roman", "decimalZero": "decimal-leading-zero"}
 STYLE_ID = re.compile(r"[A-Za-z0-9_-]{1,60}")
 loc = lambda e: e.tag.rpartition("}")[2] if isinstance(e.tag, str) else ""
 val = lambda e, k="val": e.get(W + k) if e is not None else None
@@ -69,9 +71,10 @@ class _Parser:
         self.numfmt = {}  # numId -> {ilvl: numFmt}
         if "word/numbering.xml" in names:
             n = parse("word/numbering.xml")
-            abstract = {a.get(W + "abstractNumId"): {l.get(W + "ilvl"): val(l.find(W + "numFmt"))
+            abstract = {a.get(W + "abstractNumId"): {l.get(W + "ilvl"): (val(l.find(W + "numFmt")), val(l.find(W + "lvlText")))
                                                       for l in a.findall(W + "lvl")} for a in n.findall(W + "abstractNum")}
             self.numfmt = {x.get(W + "numId"): abstract.get(val(x.find(W + "abstractNumId")), {}) for x in n.findall(W + "num")}
+        self.theme = fmt.load_theme(zf, parse)
         self.rel_ids = set(self.rels)
         self.opaque, self.dropped, self.blocked, self.images = Counter(), Counter(), [], {}
         self.root = parse("word/document.xml")
@@ -105,9 +108,10 @@ class _Parser:
         if not self.images[path]:
             return None
         ext, dp = drawing.find(".//wp:extent", NS), drawing.find(".//wp:docPr", NS)
-        w = int(ext.get("cx")) // 9525 if ext is not None and (ext.get("cx") or "").isdigit() else None
+        px = lambda k: int(ext.get(k)) // 9525 if ext is not None and (ext.get(k) or "").isdigit() else None
         return {"type": "image", "attrs": {"imageId": self.images[path], "alt": (dp.get("descr") or "")[:200] if dp is not None else "",
-                                           "width": w or None}}
+                                           "width": px("cx") or None, "height": px("cy") or None,
+                                           "anchored": drawing.find("wp:anchor", NS) is not None or None}}
 
     def run(self, r, marks: list, out: list, images: list):
         """Appends inline nodes of run `r`; returns the offending element when the run can't be represented."""
@@ -121,8 +125,12 @@ class _Parser:
             u = rpr.find(W + "u")
             if u is not None and val(u) not in ("none", "0", None):
                 mk.append({"type": "underline"})
-            if any(loc(c) not in FMT_IGNORED for c in rpr):
-                self.dropped["runs with direct formatting (font, size, colour, character style)"] += 1
+            d, left = fmt.run_fmt(rpr, self.theme)
+            f = {k: v for k, v in d.items() if k not in ("b", "i", "u") and v not in (False, None)}
+            if f:
+                mk.append({"type": "fmt", "attrs": f})
+            if left:
+                self.dropped["run properties (" + ", ".join(sorted(left)) + ")"] += 1
         for c in r:
             t = loc(c)
             if t == "t" or t == "tab":
@@ -132,9 +140,12 @@ class _Parser:
                 elif txt:
                     out.append({"type": "text", "text": txt, **({"marks": mk} if mk else {})})
             elif t == "br":
-                if c.get(W + "type") not in (None, "textWrapping"):
+                if c.get(W + "type") == "page":
+                    out.append({"type": "hardBreak", "attrs": {"page": True}})
+                elif c.get(W + "type") not in (None, "textWrapping"):
                     return c
-                out.append({"type": "hardBreak"})
+                else:
+                    out.append({"type": "hardBreak"})
             elif t == "drawing":
                 img = self.image(c)
                 if not img:
@@ -175,15 +186,15 @@ class _Parser:
                         return [self.keep(p, _kind(bad))], None
             else:
                 return [self.keep(p, _kind(c))], None
-        if ppr is not None:
-            if any(loc(x) not in PPR_IGNORED for x in ppr):
-                self.dropped["paragraphs with direct formatting (alignment, spacing, indent)"] += 1
+        pf, left = fmt.para_fmt(ppr, self.theme)
+        if left:
+            self.dropped["paragraph properties (" + ", ".join(sorted(left)) + ")"] += 1
         sid = val(ppr.find(W + "pStyle")) if ppr is not None and ppr.find(W + "pStyle") is not None else None
         sid = sid if sid and STYLE_ID.fullmatch(sid) else None
-        node = {"type": "paragraph", "attrs": {"styleId": sid}}
+        node = {"type": "paragraph", "attrs": {"styleId": sid, **({"pfmt": pf} if pf else {})}}
         lvl = self.heading.get(sid)
         if lvl and lvl <= 4:
-            node = {"type": "heading", "attrs": {"level": lvl, "styleId": sid}}
+            node = {"type": "heading", "attrs": {"level": lvl, "styleId": sid, **({"pfmt": pf} if pf else {})}}
         if out:
             node["content"] = out
         li = None
@@ -219,8 +230,9 @@ class _Parser:
 
     def item(self, out, stack, li, para):
         num, lvl = li
-        fmt = self.numfmt.get(num, {}).get(str(lvl))
-        node = lambda: {"type": "bulletList" if fmt == "bullet" else "orderedList", "attrs": {"numId": int(num)}, "content": []}
+        nf, text = self.numfmt.get(num, {}).get(str(lvl), (None, None))
+        style = "disc" if nf == "bullet" and text not in ("o", "▪", "§", "■") else "circle" if text == "o" else "square" if nf == "bullet" else LIST_STYLE.get(nf, "decimal")
+        node = lambda: {"type": "bulletList" if nf == "bullet" else "orderedList", "attrs": {"numId": int(num), "listStyle": style}, "content": []}
         while stack and stack[-1][0] > lvl:
             stack.pop()
         if stack and stack[-1][0] == lvl and stack[-1][2] == num:
@@ -254,9 +266,11 @@ class _Parser:
                     col += span
                     continue
                 widths = grid[col:col + span]
+                cf = fmt.cell_fmt(pr, self.theme)
                 cell = {"type": "tableHeader" if hdr else "tableCell",
                         "attrs": {"colspan": span, "rowspan": 1,
-                                  "colwidth": [round(w / 15) for w in widths] if len(widths) == span else None},
+                                  "colwidth": [round(w / 15) for w in widths] if len(widths) == span else None,
+                                  **({"cfmt": cf} if cf else {})},
                         "content": self.blocks(tc, 1) or [{"type": "paragraph", "attrs": {"styleId": None}}]}
                 if vm is not None:
                     new_origin[col] = cell
@@ -269,7 +283,9 @@ class _Parser:
         if pr is not None:
             pr = copy.deepcopy(pr)
             etree.cleanup_namespaces(pr)  # tblPr has no prefixed attribute values, so unused declarations can go
+        tf = fmt.tbl_fmt(tbl.find(W + "tblPr"), self.theme)
         return {"type": "table", "attrs": {"dynamicList": None, "styleId": sid if sid and STYLE_ID.fullmatch(sid) else None,
+                                           **({"tfmt": tf} if tf else {}),
                                            "grid": grid or None,
                                            "tblPr": etree.tostring(pr, encoding="unicode", with_tail=False) if pr is not None else None},
                 "content": rows}
