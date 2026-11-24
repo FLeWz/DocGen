@@ -20,6 +20,9 @@ export const pagesKey = new PluginKey<PS>("pages");
 const el = (cls: string, html = "", style = "", tag = "div") => { const e = document.createElement(tag); e.className = cls; if (html) e.innerHTML = html; if (style) e.style.cssText = style; return e; };
 const varsCss = (p: Parameters<typeof pageVars>[0]) => Object.entries(pageVars(p)).map(([k, v]) => `${k}:${v}`).join(";");
 
+const hash = (s: string) => { let h = 5381; for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0; return (h >>> 0).toString(36); };
+const hfHash = (look: Look | undefined, lay: Layout, k: number, total: number) => { const a = pageParts(look, lay.pages[k - 1], total), b = pageParts(look, lay.pages[k], total); return hash(a.ftr + b.hdr); };
+
 /** Gap between two pages: rest of page (fill), footer of the finished page, grey gap, header of the next page. */
 function gap(look: Look | undefined, lay: Layout, k: number, total: number): HTMLElement {
   const a = lay.pages[k - 1], b = lay.pages[k], pa = pageParts(look, a, total), pb = pageParts(look, b, total);
@@ -56,13 +59,13 @@ function compute(view: import("@tiptap/pm/view").EditorView): { deco: Decoration
   const lay = layout(look, blocks), total = lay.spans.length, out: Decoration[] = [];
   for (let k = 1; k < total; k++) {
     const from = lay.spans[k].from, { pos, node } = offs[Math.min(from.block, offs.length - 1)];
-    if (from.row === 0) { out.push(Decoration.node(pos, pos + node.nodeSize, { class: "pgtop" })); out.push(Decoration.widget(pos, () => gap(look, lay, k, total), { side: -1, key: `pg${k}-${lay.pages[k - 1].label}-${lay.pages[k].label}-${total}-${Math.round(lay.pages[k - 1].body - lay.spans[k - 1].used)}` })); continue; }
+    if (from.row === 0) { out.push(Decoration.node(pos, pos + node.nodeSize, { class: "pgtop" })); out.push(Decoration.widget(pos, () => gap(look, lay, k, total), { side: -1, key: `pg${k}-${lay.pages[k - 1].label}-${lay.pages[k].label}-${total}-${Math.round(lay.pages[k - 1].body - lay.spans[k - 1].used)}-${hfHash(look, lay, k, total)}` })); continue; }
     // inside a table: before row `from.row`
     let rp = pos + 1;
     for (let r = 0; r < from.row; r++) rp += node.child(r).nodeSize;
     const cols = Array.from({ length: node.child(0).childCount }, (_, i) => Number(node.child(0).child(i).attrs.colspan) || 1).reduce((x, y) => x + y, 0);
     const dom = view.nodeDOM(pos) as Element, rows = Array.from(dom.querySelectorAll("tr")).filter((r) => !r.classList.contains("pgsep-row") && !r.classList.contains("rep"));
-    out.push(Decoration.widget(rp, () => gapRow(look, lay, k, total, cols), { side: -1, key: `pg${k}-${lay.pages[k].label}-${total}-${Math.round(lay.pages[k - 1].body - lay.spans[k - 1].used)}` }));
+    out.push(Decoration.widget(rp, () => gapRow(look, lay, k, total, cols), { side: -1, key: `pg${k}-${lay.pages[k].label}-${total}-${Math.round(lay.pages[k - 1].body - lay.spans[k - 1].used)}-${hfHash(look, lay, k, total)}` }));
     for (let h = 0; h < lay.spans[k].repeat; h++) {
       const src = rows[h];
       if (src) out.push(Decoration.widget(rp, () => { const c = src.cloneNode(true) as HTMLElement; c.classList.add("rep"); c.contentEditable = "false"; c.removeAttribute("data-fmt"); return c; }, { side: -1 }));
@@ -70,7 +73,7 @@ function compute(view: import("@tiptap/pm/view").EditorView): { deco: Decoration
   }
   const last = lay.pages[total - 1], used = lay.spans[total - 1].used;
   out.push(Decoration.widget(doc.content.size, () => el("pgsep-end", "", `height:${Math.max(last.body - used, 0)}pt`), { side: 1, key: `end${Math.round(last.body - used)}` }));
-  const sig = JSON.stringify([lay.spans.map((s) => [s.from.block, s.from.row, Math.round(s.used)]), lay.pages.map((p) => [p.label, p.hdr, p.ftr, Math.round(p.body)])]);
+  const sig = JSON.stringify([lay.spans.map((s) => [s.from.block, s.from.row, Math.round(s.used)]), lay.pages.map((p) => [p.label, p.hdr, p.ftr, Math.round(p.body)]), (lay.pages.length > 1 ? hfHash(look, lay, 1, total) : "")]);
   return { deco: DecorationSet.create(doc, out), lay: { ...lay, total }, sig };
 }
 

@@ -109,7 +109,149 @@ with sync_playwright() as pw:
         page.keyboard.press("Shift+ArrowDown")
         make_snippet(page, "While offline")
         page.unroute(re.compile(r"/api/imports/[^/]+$"))
-        print("e2e editor (selection) OK")
+        # ---- ribbon tabs at 1100 px: every tab usable, nothing overflows, collapsible ----
+        page.set_viewport_size({"width": 1100, "height": 900})
+        rib = page.get_by_test_id("ribbon")
+        for tab, probe in (("Home", "Font family"), ("Insert", "Insert table with size"), ("Layout", "Cell shading"), ("References", "Insert caption (Figure/Table, SEQ numbering, style Caption)"), ("Review", "Find and replace (Ctrl+F)")):
+            rib.get_by_role("tab", name=tab).click()
+            expect(rib.get_by_role("tab", name=tab)).to_have_attribute("aria-selected", "true")
+            expect(rib.get_by_label(probe, exact=True).first).to_be_visible()
+            assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1"), f"page overflows horizontally on the {tab} tab"
+            assert page.evaluate("(() => { const r = document.querySelector('[data-testid=ribbon]'); return r.scrollWidth <= r.clientWidth + 1; })()"), f"ribbon overflows on {tab}"
+        rib.get_by_role("button", name="Collapse ribbon").click()
+        expect(rib.get_by_role("tabpanel")).to_be_hidden()
+        rib.get_by_role("tab", name="Home").click()  # picking a tab expands it again
+        expect(rib.get_by_role("tabpanel")).to_be_visible()
+
+        # direct formatting from the Home tab -> preview + exported XML; undo/redo buttons; find & replace with regex
+        ed.get_by_text("Paragraph 3 ", exact=False).first.scroll_into_view_if_needed()
+        ed.get_by_text("Paragraph 3 ", exact=False).first.click(click_count=3)
+        rib.get_by_label("Font size", exact=True).select_option("18")
+        rib.get_by_role("button", name="Bold (Ctrl+B)").click()
+        rib.get_by_role("button", name="Strikethrough (Ctrl+Shift+X)").click()
+        rib.get_by_role("button", name="Justify").click()
+        rib.get_by_label("Line spacing").select_option("360")
+        expect(ed.locator("p", has_text="Paragraph 3 ").first).to_have_css("text-align", "justify")
+        assert ed.locator("p", has_text="Paragraph 3 ").first.locator("span[data-fmt]").count() >= 1
+        rib.get_by_role("button", name="Undo (Ctrl+Z)").click()
+        rib.get_by_role("button", name="Redo (Ctrl+Y)").click()
+        rib.get_by_role("tab", name="Review").click()
+        rib.get_by_role("button", name="Find and replace (Ctrl+F)").click()
+        page.get_by_role("textbox", name="Find", exact=True).fill(r"Paragraph (\d)5 ")
+        page.get_by_role("button", name="Regex").click()
+        expect(page.get_by_test_id("find-count")).to_contain_text("matches")
+        page.get_by_role("textbox", name="Replace with").fill("Para $15 ")
+        page.get_by_role("button", name="Replace all").click()
+        page.get_by_role("button", name="Close", exact=True).click()
+        expect(ed.get_by_text("Para 15 ", exact=False).first).to_be_attached()
+        assert re.search(r"\d+ words", rib.get_by_test_id("word-count").inner_text())
+        saved(page)
+
+        # ---- caption + list of figures (References tab) ----
+        rib.get_by_role("tab", name="References").click()
+        img = ed.locator("img.img").first
+        img.scroll_into_view_if_needed(); img.click()
+        rib.get_by_role("button", name="Insert caption (Figure/Table, SEQ numbering, style Caption)").click()
+        page.get_by_label("Caption text").fill("A red box")
+        page.get_by_role("button", name="Insert caption", exact=True).click()
+        expect(ed.locator("p.st-Caption").first).to_contain_text("Figure 1: A red box")
+        ed.locator("p.st-Caption").first.click()
+        rib.get_by_role("button", name="Insert list of figures").first.click()
+        page.get_by_role("button", name="Insert", exact=True).click()
+        expect(ed.locator(".toc-tof")).to_contain_text("Figure 1: A red box")
+
+        # ---- mark / unmark a table of contents and a section; Structure outline ----
+        h1 = ed.locator("h1").first
+        h1.scroll_into_view_if_needed(); h1.click()
+        page.get_by_role("button", name="Select blocks").click()
+        ed.locator(".blk-handle").nth(1).click()
+        ed.locator(".blk-handle").nth(3).click(modifiers=["Shift"])
+        expect(page.get_by_test_id("sel-count")).to_contain_text("3 blocks selected")
+        rib.get_by_role("button", name="Mark the selected blocks as a section, appendix or generated list").click()
+        page.get_by_label("Kind").select_option("toc")
+        page.get_by_label("Title (empty: none)").fill("Contents")
+        page.get_by_role("button", name=re.compile(r"Mark 3 blocks")).click()
+        expect(ed.locator(".toc-toc")).to_have_count(1)
+        expect(ed.locator(".toc-toc")).to_contain_text("Chapter 1")
+        page.get_by_role("button", name="Select blocks").click()
+        page.get_by_role("button", name="Structure", exact=True).first.click()
+        st = page.get_by_test_id("structure")
+        expect(st.get_by_test_id("outline-list")).to_have_count(2)  # the TOC and the list of figures
+        st.get_by_test_id("outline-list").first.get_by_role("button", name="Unmark").click()
+        expect(ed.locator(".toc-toc")).to_have_count(0)
+        # a named section: mark 2 blocks, rename in the outline, jump, unmark
+        p10 = ed.get_by_text("Paragraph 10 ", exact=False).first
+        p10.scroll_into_view_if_needed(); p10.click()
+        page.keyboard.press("Shift+ArrowDown"); page.keyboard.press("Shift+ArrowDown")
+        rib.get_by_role("button", name="Mark the selected blocks as a section, appendix or generated list").click()
+        page.get_by_label("Kind").select_option("appendix")
+        page.get_by_label("Name").fill("Annex A")
+        page.get_by_role("button", name=re.compile(r"Mark \d blocks")).click()
+        row = st.get_by_test_id("outline-section")
+        expect(row).to_have_count(1)
+        row.get_by_role("textbox").fill("Annex B"); row.get_by_role("textbox").blur()
+        expect(row.get_by_role("textbox")).to_have_value("Annex B")
+        assert ed.locator(".in-sec.sec-appendix").count() >= 2
+        saved(page)
+        with page.expect_download(timeout=60_000) as dl:
+            page.get_by_role("button", name="Export DOCX").click()
+        exp = os.path.join(ART, "editor-sections.docx")
+        dl.value.save_as(exp)
+        x = part(exp, "word/document.xml")
+        assert "dgsec_appendix_1_Annex_B" in x and 'TOC \\h \\z \\c "Figure"' in x
+        assert "SEQ Figure" in x and "A red box" in x
+        assert '<w:jc w:val="both"/>' in x and "<w:strike" in x
+        row.get_by_role("button", name="Unmark").click()
+        expect(ed.locator(".in-sec")).to_have_count(0)
+
+        # ---- header/footer: click the header of a page, edit it, see it on every page and in the re-exported DOCX ----
+        pane = page.get_by_label("Editor pane")
+        hdr = pane.locator(".docx-hdr").first
+        hdr.scroll_into_view_if_needed()
+        box = hdr.bounding_box()
+        page.mouse.click(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+        hf = page.get_by_test_id("hf-editor")
+        expect(hf).to_be_visible()
+        expect(hf.get_by_test_id("hf-box")).to_contain_text("LONG-HEADER")
+        expect(page.get_by_test_id("hf-shared")).to_contain_text("section")
+        box_ed = hf.get_by_test_id("hf-box").locator(".ProseMirror")
+        box_ed.click(); page.keyboard.press("Control+a"); page.keyboard.type("ACME Corp — ")
+        hrib = hf.get_by_test_id("ribbon")
+        hrib.get_by_role("tab", name="Insert").click()
+        hrib.get_by_label("Insert field").select_option(label="Page number")
+        page.keyboard.type(" / ")
+        hrib.get_by_label("Insert field").select_option(label="Total pages")
+        hrib.get_by_label("Insert field").select_option(label="Document title")
+        expect(box_ed).to_contain_text("ACME Corp")
+        page.get_by_role("button", name="Done").click()
+        expect(pane.locator(".docx-hdr").first).to_contain_text("ACME Corp")
+        n_gaps = page.locator(".pgsep .docx-hdr").count()
+        assert n_gaps >= 20
+        expect(page.locator(".pgsep .docx-hdr", has_text="ACME Corp")).to_have_count(n_gaps)  # the edit is in every page header (layout re-measures after ~350 ms)
+        assert "LONG-HEADER" not in page.locator(".pgsep .docx-hdr").first.inner_text()
+        txt = page.locator(".pgsep .docx-hdr").nth(3).inner_text()
+        assert re.search(r"ACME Corp — 5 ?/ ?\d+", txt), txt  # PAGE and NUMPAGES evaluated per page
+        assert page.get_by_test_id("preview").locator(".docx-hdr", has_text="ACME Corp").count() >= 2
+        # footer click edits the footer, not the header
+        ftr = pane.locator(".docx-ftr").last
+        ftr.scroll_into_view_if_needed()
+        fb = ftr.bounding_box()
+        page.mouse.click(fb["x"] + fb["width"] / 2, fb["y"] + fb["height"] / 2)
+        expect(page.get_by_test_id("hf-box")).to_contain_text("LONG-FOOTER")
+        page.get_by_role("button", name="Done").click()
+        saved(page)
+        with page.expect_download(timeout=60_000) as dl:
+            page.get_by_role("button", name="Export DOCX").click()
+        exp = os.path.join(ART, "editor-header.docx")
+        dl.value.save_as(exp)
+        z = zipfile.ZipFile(exp)
+        h = part(exp, "word/header1.xml")
+        assert "ACME Corp" in h and "LONG-HEADER" not in h
+        assert re.search(r"<w:instrText[^>]*>\s*PAGE\s*</w:instrText>", h) and re.search(r"<w:instrText[^>]*>\s*NUMPAGES\s*</w:instrText>", h)
+        assert 'w:fldCharType="begin"' in h
+        assert "LONG-FOOTER" in part(exp, "word/footer1.xml")  # untouched part: original content
+        assert zipfile.ZipFile(long_docx).read("word/footer1.xml") == z.read("word/footer1.xml")  # byte-identical
+        print("e2e editor OK")
     except Exception:
         page.screenshot(path=f"{ART}/editor-failure.png", full_page=True)
         raise
