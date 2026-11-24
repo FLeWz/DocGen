@@ -1,4 +1,5 @@
 // Small UI kit: icons, modal dialogs (replace prompt/confirm/alert), toasts, menus, badges, states. Styles: app.css.
+import { formatDate, formatDateTime } from "./dates";
 import { createContext, FormEvent, ReactNode, useCallback, useContext, useEffect, useId, useMemo, useRef, useState } from "react";
 
 const P: Record<string, string> = {
@@ -196,8 +197,8 @@ export const useDebounced = <T,>(v: T, ms = 250) => {
   return d;
 };
 
-export const fmtDate = (s?: string | null) => (s ? new Date(s).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : "");
+export const fmtDate = formatDateTime;
 export const ago = (s: string) => {
   const m = Math.round((Date.now() - new Date(s).getTime()) / 60000);
-  return m < 1 ? "just now" : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} d ago`;
+  return m < 1 ? "just now" : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : formatDate(s);
 };

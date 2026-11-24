@@ -7,9 +7,10 @@ import { PageHead } from "../Shell";
 import { Candidates } from "../builder/FindVariables";
 import { Pick } from "../builder/picks";
 import { VariablesForm } from "../builder/Variables";
+import { formatDate } from "../dates";
 import { Badge, Banner, Empty, ErrorBanner, Field, fmtDate, Icon, Modal, Skeleton, useUI } from "../ui";
 
-const day = (s?: string | null) => (s ? new Date(s).toLocaleDateString(undefined, { dateStyle: "medium" }) : "");
+const day = formatDate;
 export const ph = (v: BaseDocVersion) => v.placeholders.content ? <Badge kind="green">CONTENT{v.placeholders.slots.length ? ` + ${v.placeholders.slots.length} slot${v.placeholders.slots.length > 1 ? "s" : ""}` : ""}</Badge> : <Badge kind="amber">no {"{{ CONTENT }}"}</Badge>;
 
 /** Variables of the current version: dynamic tables (default rows) and text variables (defaults), editable; "Find variables" turns detected values into new ones. */

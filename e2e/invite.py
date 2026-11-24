@@ -37,6 +37,7 @@ with sync_playwright() as pw:
         a.get_by_role("button", name="Send invite").click()
         row = a.get_by_test_id("invites").get_by_role("row").filter(has_text=guest)
         expect(row).to_contain_text("pending")
+        expect(row).to_contain_text(re.compile(r"\b\d{2}\.\d{2}\.\d{4} \d{2}:\d{2}\b"))  # round 11: DD.MM.YYYY HH:mm
 
         body = mail_to(guest)
         token = re.search(r"token=([\w\-.]+)", body).group(1)

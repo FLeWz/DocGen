@@ -96,6 +96,8 @@ Tables (round 8): while the cursor is in a table a contextual **Table** tab, a f
 
 Round 9: admins can **edit base documents** directly (Base documents > Details > Edit, or from the document builder): the same editor as imports, *Commit…* writes a new version (author = you; documents keep their pinned version, the builder offers the bump). *Insert > Revision table* drops in a dynamic table over the built-in `revision_history` (date, revision, author, changed sections, commit). Embedded Word objects (OLE) survive import/export; only linked/macro/executable ones are dropped, with a warning. See docs/DECISIONS.md, round 9.
 
+Dates (round 11): every date shown or generated is **DD.MM.YYYY** (timestamps in the UI: DD.MM.YYYY HH:mm, 24 h, browser time zone): UI tables, `doc.date`, date variables, revision history, `date` filter default (`%d.%m.%Y`). Date variables are text inputs accepting DD.MM.YYYY or YYYY-MM-DD, stored as ISO in the document. Frontend formatting lives in `frontend/src/dates.ts` only (a test forbids `toLocale*String`/`Intl.DateTimeFormat` elsewhere); backend in `backend/app/dates.py`. Explicit filter formats (`date:YYYY-MM-DD`, `date:%d/%m/%y`) are honoured. See docs/DECISIONS.md, round 11.
+
 ## Architecture
 
 ```

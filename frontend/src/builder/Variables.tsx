@@ -1,10 +1,12 @@
 import { RevRow, VarDecl, Variables } from "../api";
 import { NAME_RE } from "../editor/doc";
+import { formatDate, todayIso } from "../dates";
 import { Icon } from "../ui";
+import { DateInput } from "./DateInput";
 import { parseCols, reshape, Row } from "./blocks";
 
 const rowsOf = (v: unknown): Row[] => (Array.isArray(v) ? (v as Row[]) : []);
-const inputType = (t: VarDecl["type"]) => (t === "number" ? "number" : t === "date" ? "date" : "text");
+const inputType = (t: VarDecl["type"]) => (t === "number" ? "number" : "text");
 
 function Value({ d, v, ro, set }: { d: VarDecl; v: unknown; ro: boolean; set: (x: unknown) => void }) {
   if (d.type === "list") {
@@ -22,6 +24,7 @@ function Value({ d, v, ro, set }: { d: VarDecl; v: unknown; ro: boolean; set: (x
       </div>
     );
   }
+  if (d.type === "date") return <DateInput label={`Value of ${d.name}`} value={v} disabled={ro} placeholder={`value (default: ${d.default ? formatDate(d.default) : "none"})`} onChange={set} />;
   return <input aria-label={`Value of ${d.name}`} type={inputType(d.type)} disabled={ro} value={String(v ?? "")} placeholder={`value (default: ${d.default ?? "none"})`}
     onChange={(e) => set(e.target.value === "" ? null : d.type === "number" ? Number(e.target.value) : e.target.value)} />;
 }
@@ -43,6 +46,7 @@ export function VariablesForm({ vars, ro, onChange, fixed = false }: { vars: Var
           {fixed ? null : d.type === "list"
             ? <input aria-label={`Columns of ${d.name}`} placeholder="columns, comma separated" disabled={ro} defaultValue={(d.columns ?? []).join(", ")}
                 onBlur={(e) => { const cols = parseCols(e.target.value); onChange({ declarations: vars.declarations.map((x) => (x === d ? { ...x, columns: cols } : x)), values: { ...vars.values, [d.name]: reshape(rowsOf(vars.values[d.name]), cols) } }); }} />
+            : d.type === "date" ? <DateInput label={`Default of ${d.name}`} value={d.default} disabled={ro} placeholder="default" onChange={(x) => setDecl(d, { default: x })} />
             : <input aria-label={`Default of ${d.name}`} placeholder="default" disabled={ro} type={inputType(d.type)} value={String(d.default ?? "")}
                 onChange={(e) => setDecl(d, { default: e.target.value === "" ? null : d.type === "number" ? Number(e.target.value) : e.target.value })} />}
           <Value d={d} v={vars.values[d.name]} ro={ro} set={(x) => onChange({ ...vars, values: { ...vars.values, [d.name]: x } })} />
@@ -69,7 +73,7 @@ export function RevisionTable({ rows, auto, ro, onChange }: { rows: RevRow[]; au
         <div key={i} className="revrow">{keys.map((k) => <input key={k} className={`r-${k}`} aria-label={`Revision ${i + 1} ${k}`} placeholder={k === "message" ? "description" : k === "sections" ? "sections changed" : k === "commit" ? "commit name" : k} value={r[k] ?? ""} disabled={ro} onChange={(e) => onChange(rows.map((x, j) => (j === i ? { ...x, [k]: e.target.value } : x)))} />)}
           {!ro && <button className="btn ghost icon" aria-label={`Remove revision ${i + 1}`} onClick={() => onChange(rows.filter((_, j) => j !== i))}><Icon n="x" size={14} /></button>}</div>))}
       {rows.length === 0 && <p className="muted small">No commits yet.</p>}
-      {!ro && <div className="vact"><button className="btn sm" onClick={() => onChange([...rows, { version: "", date: new Date().toISOString().slice(0, 10), author: "", message: "", sections: "", commit: "" }])}><Icon n="plus" size={14} />Row</button>
+      {!ro && <div className="vact"><button className="btn sm" onClick={() => onChange([...rows, { version: "", date: formatDate(todayIso()), author: "", message: "", sections: "", commit: "" }])}><Icon n="plus" size={14} />Row</button>
         {!auto && <button className="btn sm ghost" onClick={() => onChange(null)}>Reset to auto</button>}</div>}
     </div>
   );

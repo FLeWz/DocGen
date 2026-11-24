@@ -36,7 +36,7 @@ const NUMBERS = [["decimal", "1. 2. 3."], ["lower-alpha", "a. b. c."], ["upper-a
 const SYMBOLS = "©®™°±×÷≠≤≥≈∞µπΩΣ√∂∆←→↑↓↔⇒§¶†‡•…–—‘’“”«»¡¿€£¥¢½¼¾²³¹αβγδελμσφ✓✗★☆♥♦♣♠".split("");
 const HF_FIELDS: [string, Record<string, unknown>][] = [
   ["Page number", { type: "field", attrs: { code: "PAGE", arg: "", text: "1" } }], ["Total pages", { type: "field", attrs: { code: "NUMPAGES", arg: "", text: "1" } }],
-  ["Section pages", { type: "field", attrs: { code: "SECTIONPAGES", arg: "", text: "1" } }], ["Date", { type: "variable", attrs: { name: "doc.date", default: "", filter: "date:YYYY-MM-DD" } }],
+  ["Section pages", { type: "field", attrs: { code: "SECTIONPAGES", arg: "", text: "1" } }], ["Date", { type: "variable", attrs: { name: "doc.date", default: "", filter: "date:DD.MM.YYYY" } }],
   ["Document title", { type: "variable", attrs: { name: "doc.title", default: "", filter: null } }], ["Version", { type: "variable", attrs: { name: "doc.version", default: "", filter: null } }],
   ["Author", { type: "variable", attrs: { name: "author", default: "", filter: null } }]];
 const SHORTCUTS: [string, string][] = [["Bold / italic / underline", "Ctrl+B / I / U"], ["Strikethrough", "Ctrl+Shift+X"], ["Undo / redo", "Ctrl+Z / Ctrl+Y"], ["Select all blocks", "Ctrl+A"], ["Link", "Ctrl+K"],
@@ -103,7 +103,7 @@ export function Ribbon({ editor, ro, styles, mode = "body", onErr, structure, on
   useEffect(() => { editor.view.dom.setAttribute("spellcheck", String(spell)); }, [editor, spell]);
 
   // ---- dialog state ----
-  const [vf, setVf] = useState({ name: "", default: "", kind: "" as "" | "upper" | "date", format: "YYYY-MM-DD", existing: false });
+  const [vf, setVf] = useState({ name: "", default: "", kind: "" as "" | "upper" | "date", format: "DD.MM.YYYY", existing: false });
   const [dynName, setDynName] = useState(""), [dynFields, setDynFields] = useState(""), [href, setHref] = useState("");
   const [dynCols, setDynCols] = useState<{ names: string[]; rows: string[][]; convert: boolean; refused: string } | null>(null);
   const [q, setQ] = useState<Query & { repl: string; idx: number }>({ find: "", regex: false, matchCase: false, repl: "", idx: 0 });
@@ -118,10 +118,10 @@ export function Ribbon({ editor, ro, styles, mode = "body", onErr, structure, on
     const sel = editor.state.selection;
     if (sel instanceof NodeSelection && sel.node.type.name === "variable") {
       const a = sel.node.attrs, [k, ...f] = String(a.filter ?? "").split(":");
-      setVf({ name: a.name, default: a.default ?? "", kind: (k as "") || "", format: f.join(":") || "YYYY-MM-DD", existing: true });
+      setVf({ name: a.name, default: a.default ?? "", kind: (k as "") || "", format: f.join(":") || "DD.MM.YYYY", existing: true });
     } else {
       const txt = editor.state.doc.textBetween(sel.from, sel.to, " ").trim();
-      setVf({ name: txt.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").replace(/^(\d)/, "_$1"), default: txt, kind: "", format: "YYYY-MM-DD", existing: false });
+      setVf({ name: txt.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").replace(/^(\d)/, "_$1"), default: txt, kind: "", format: "DD.MM.YYYY", existing: false });
     }
     setDlg("var");
   };
@@ -425,7 +425,7 @@ export function Ribbon({ editor, ro, styles, mode = "body", onErr, structure, on
           {st.dynamic && <div className="row-chips" data-testid="row-chips" role="group" aria-label="Row fields">{rowFields(editor).map((f) => <button key={f} type="button" className="btn sm" onClick={() => setVf({ ...vf, name: f })}>{`row.${f}`}</button>)}</div>}
           <Field label="Variable default" hint="Shown in the preview when the document gives no value">{(id) => <input id={id} value={vf.default} onChange={(e) => setVf({ ...vf, default: e.target.value })} />}</Field>
           <Field label="Variable filter">{(id) => <select id={id} value={vf.kind} onChange={(e) => setVf({ ...vf, kind: e.target.value as typeof vf.kind })}><option value="">No filter</option><option value="upper">UPPERCASE</option><option value="date">Date format</option></select>}</Field>
-          {vf.kind === "date" && <Field label="Date format" hint="e.g. YYYY-MM-DD">{(id) => <input id={id} value={vf.format} onChange={(e) => setVf({ ...vf, format: e.target.value })} />}</Field>}
+          {vf.kind === "date" && <Field label="Date format" hint="e.g. DD.MM.YYYY">{(id) => <input id={id} value={vf.format} onChange={(e) => setVf({ ...vf, format: e.target.value })} />}</Field>}
         </form></Modal>}
       {dlg === "link" && <Modal title="Link" onClose={() => setDlg(null)} actions={<><button className="btn" type="button" onClick={() => setDlg(null)}>Cancel</button><button className="btn primary" form="link-form">{href.trim() ? "Apply link" : "Remove link"}</button></>}>
         <form id="link-form" onSubmit={(e) => { e.preventDefault(); const h = href.trim(); if (!h) run().extendMarkRange("link").unsetLink().run(); else run().extendMarkRange("link").setLink({ href: h }).run(); setDlg(null); }}>

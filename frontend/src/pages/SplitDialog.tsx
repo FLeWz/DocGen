@@ -35,7 +35,7 @@ export function SplitDialog({ me, id, total, onClose }: { me: Me; id: string; to
           <ul className="outline" data-testid="split-headings" aria-label="Headings">{hs.map((h) => (
             <li key={h.index} style={{ paddingLeft: (h.level - minLevel) * 18 }} className={sel.has(h.index) ? "on" : ""}>
               <label className="chk"><input type="checkbox" checked={sel.has(h.index)} onChange={() => toggle(h.index)} aria-label={`Split at ${h.title}`} /><span className="lv">H{h.level}</span><span className="t">{h.title}</span></label>
-              <small className="muted">{h.blocks} block{h.blocks === 1 ? "" : "s"} · {h.chars.toLocaleString()} chars</small>
+              <small className="muted">{h.blocks} block{h.blocks === 1 ? "" : "s"} · {h.chars} chars</small>
               {sel.has(h.index) && <input className="ttl" aria-label={`Snippet title for ${h.title}`} placeholder={h.title} value={titles[h.index] ?? ""} onChange={(e) => setTitles({ ...titles, [h.index]: e.target.value })} maxLength={200} />}
             </li>))}</ul>
           {first > 0 && sel.size > 0 && <label className="chk"><input type="checkbox" checked={preface} onChange={(e) => setPreface(e.target.checked)} />Also create a “Preface” snippet from the {first} block{first === 1 ? "" : "s"} before the first selected heading

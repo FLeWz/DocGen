@@ -22,7 +22,7 @@ export function Candidates({ url, onPicks, dataKey = "candidates" }: { url: stri
         <tr key={r.id}>
           <td><input type="checkbox" aria-label={`Use ${r.value}`} checked={r.include} onChange={(e) => set(r.id, { include: e.target.checked })} /></td>
           <td className="nowrap">{Object.entries(r.locs).map(([k, n]) => `${LOC[k] ?? k}${n > 1 ? ` ×${n}` : ""}`).join(", ")}</td>
-          <td><code>{r.value}</code></td>
+          <td><code>{r.value}</code>{r.display && r.display !== r.value && <small className="muted"> → {r.display}</small>}</td>
           <td><input aria-label={`Name for ${r.value}`} value={r.name} disabled={!r.include} onChange={(e) => set(r.id, { name: e.target.value })} /></td>
         </tr>))}</tbody>
     </table>

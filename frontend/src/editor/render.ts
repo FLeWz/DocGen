@@ -4,6 +4,7 @@
 import type { Style } from "../api";
 import { effectiveStyle, PMNode } from "./doc";
 import { cellStyle, esc, imgCss, listCss, pflags, pfmtCss, rowCss, runCss, safeId, tableCss } from "./fmt";
+import { applyDateFilter, todayIso } from "../dates";
 import { ooxmlToHtml } from "./ooxml";
 import { tabbed, validStops } from "./tabs";
 import { listEntries } from "./outline";
@@ -13,9 +14,10 @@ export const safeHref = (h: unknown) => (/^(https?:|mailto:)/i.test(String(h ?? 
 
 /** Variable chip text: the default (filter applied) when set, else {{ name }}. */
 export function variableText(a: Record<string, any>): string {
-  const d = String(a.default ?? "");
+  const d = String(a.default ?? ""), f = String(a.filter ?? "");
+  if (f.startsWith("date:")) return applyDateFilter(d || (a.name === "doc.date" ? todayIso() : ""), f.slice(5)) || `{{ ${a.name} }}`; // sample value
   if (!d) return `{{ ${a.name} }}`;
-  return a.filter === "upper" ? d.toUpperCase() : d; // date filters need a runtime value: shown as default
+  return f === "upper" ? d.toUpperCase() : d;
 }
 
 const MARKS: Record<string, [string, string]> = { bold: ["<strong>", "</strong>"], italic: ["<em>", "</em>"], underline: ["<u>", "</u>"] };

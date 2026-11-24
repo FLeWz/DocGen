@@ -259,3 +259,4 @@ textarea, pre, .difftext { scrollbar-color: var(--border-strong) var(--surface-2
 @supports not (scrollbar-color: red blue) { /* Chrome < 121, Safari: same colours through the webkit pseudo-elements */
   ::-webkit-scrollbar { width: 10px; height: 10px; background: var(--surface); } ::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 5px; border: 2px solid var(--surface); } ::-webkit-scrollbar-corner { background: var(--surface); }
 }
+.dateinput { display: block; } .dateinput .err { color: var(--danger); display: block; } input[aria-invalid=true] { border-color: var(--danger); }
