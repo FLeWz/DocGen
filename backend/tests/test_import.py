@@ -315,7 +315,7 @@ def test_parser_blocks_dangerous_fragments_and_survives_odd_docs():
     doc = f'<w:document {ns}><w:body><w:p><w:r><w:instrText> DDEAUTO calc </w:instrText></w:r></w:p><w:p><w:r><w:t>ok</w:t></w:r></w:p></w:body></w:document>'
     data = rezip(SAMPLE, replace={"word/document.xml": doc.encode()})
     content, warn = D.parse(data, lambda b: None)
-    assert content["content"][0]["type"] == "paragraph" and "removed" in content["content"][0]["content"][0]["text"]
+    assert "content" not in content["content"][0]  # no visible placeholder
     assert any("blocked" in w for w in warn) and content["content"][1]["type"] == "paragraph"
 
 

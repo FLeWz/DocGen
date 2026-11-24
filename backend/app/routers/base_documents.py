@@ -8,6 +8,7 @@ from sqlalchemy import func, text
 from sqlalchemy.exc import IntegrityError
 
 from .. import base_docs, docx_vars
+from ..ooxml import neutralize_ole
 from ..deps import Ctx, require
 from ..git import repo as git
 from ..models import BaseDocument, BaseDocVersion, DocDraft, Document, Export, Role
@@ -89,6 +90,7 @@ def _read(file: UploadFile) -> bytes:
 def _store(ctx: Ctx, bd: BaseDocument, data: bytes, filename: str, message: str, variables: list | None = None) -> BaseDocVersion:
     try:
         info = base_docs.validate(data)
+        data, ole_warn = neutralize_ole(data)
     except base_docs.BadDocx as e:
         raise HTTPException(422, str(e))
     ctx.db.execute(text("select pg_advisory_xact_lock(hashtext(:k))"), {"k": f"base:{ctx.org_id}"})  # one writer per _base.git
@@ -97,7 +99,7 @@ def _store(ctx: Ctx, bd: BaseDocument, data: bytes, filename: str, message: str,
         git.init(repo)
     vs = _versions(ctx, bd)
     n = vs[0].number + 1 if vs else 1
-    msg = (message.strip() or f"Upload version {n}") + f"\n\nBase-Document-Id: {bd.id}\n"
+    msg = (message.strip() or f"Upload version {n}") + f"\n\nBase-Document-Id: {bd.id}\n" + "".join(f"Warning: {w}\n" for w in ole_warn)
     try:
         sha = git.commit(repo, re.sub(r"[<>\n]", "", ctx.user.name).strip() or "user", ctx.user.email, msg,
                          {f"base/{bd.id}.docx": data})

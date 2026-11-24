@@ -139,6 +139,7 @@ function run(r: Element, c: Ctx): string {
       else if (n === "footnoteReference" || n === "endnoteReference") out += `<sup class="fnref">${esc(wa(ch, "id"))}</sup>`;
       else if (n === "drawing") out += drawing(ch, c);
       else if (n === "pict") out += textbox(ch, c);
+      else if (n === "object") out += embeddedObject(ch, c);
     } else if (ch.namespaceURI === MC && n === "AlternateContent") {
       const choice = kids(ch).find((x) => ln(x) === "Choice") ?? kids(ch)[0];
       if (choice && visible(c)) for (const x of kids(choice)) out += x.namespaceURI === W && ln(x) === "drawing" ? drawing(x, c) : "";
@@ -153,6 +154,18 @@ function run(r: Element, c: Ctx): string {
     return h;
   };
   return out.split(TAB).map((x) => (x ? wrap(x) : "")).join(TAB); // tab markers stay outside the spans so a paragraph can split there
+}
+// w:object = embedded document: its preview picture (VML imagedata) when the server sent it as a raster, else a sized labelled box
+function embeddedObject(o: Element, c: Ctx): string {
+  const all = Array.from(o.getElementsByTagName("*"));
+  const shape = all.find((x) => x.localName === "shape"), img = all.find((x) => x.localName === "imagedata"), ole = all.find((x) => x.localName === "OLEObject");
+  const css = shape?.getAttribute("style") ?? "";
+  const dim = (k: string) => { const m = new RegExp(`(?:^|;)\\s*${k}:\\s*([0-9.]{1,8})pt`).exec(css); return m ? Math.round(parseFloat(m[1]) * 4 / 3) : 0; };
+  const wpx = dim("width"), hpx = dim("height");
+  const st = wpx && hpx ? ` style="width:${wpx}px;height:${hpx}px;max-width:100%"` : "";
+  const rid = img?.getAttributeNS(R, "id") ?? "", src = /^[A-Za-z0-9_]{1,40}$/.test(rid) ? c.media[rid] : undefined;
+  if (src?.startsWith("data:image/")) return `<img class="oleobj" src="${esc(src)}" alt=""${st}>`;
+  return `<span class="oleobj oleobj-box"${st}>Embedded document${ole?.getAttribute("ProgID") ? ` (${esc(ole.getAttribute("ProgID")!.slice(0, 40))})` : ""}</span>`;
 }
 const drawing = (d: Element, c: Ctx) => (d.getElementsByTagNameNS(W, "txbxContent").length ? textbox(d, c) : image(d, c));
 

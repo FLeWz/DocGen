@@ -156,3 +156,5 @@
 .tt-menu button { text-align: left; padding: 5px 10px; background: none; border: 0; border-radius: 4px; font: inherit; font-size: 13px; cursor: pointer; color: inherit; }
 .tt-menu button:hover:not(:disabled), .tt-menu button:focus-visible { background: var(--primary-soft, #e0e9ff); outline: none; } .tt-menu button:disabled { opacity: .4; cursor: default; } .tt-menu hr { margin: 3px 0; border: 0; border-top: 1px solid var(--border, #ddd); }
 .rtab.ctx { color: var(--primary, #2563eb); font-weight: 600; }
+.docx .oleobj { display: inline-block; vertical-align: top; max-width: 100%; }
+.docx .oleobj-box { box-sizing: border-box; border: 1px solid #c8c8c8; background: #f5f5f5; color: #666; font: 12px/1.3 sans-serif; padding: 6px; }

@@ -4,6 +4,7 @@ through two callbacks, so the same spec always yields the same bytes (timestamps
 spec = {title, built_ins:{doc.title, doc.version, doc.date, org.name, author}, variables:{declarations,values},
         links, revision_history:[{version,date,author,message}], blocks:[{type, slot, ..., pin:{folder_id, snippet_id, sha}}]}
 """
+import base64
 import copy
 import io
 import json
@@ -25,7 +26,9 @@ from . import fmt
 from .base_docs import CONTENT_RE, SLOT_RE
 from .docx_vars import clean_rows, clip_tables, fix_fields, text_width
 from .docx_rich import Rich, bm_name, seq_numbers
-from .ooxml import add_field, opaque_element, stable_zip
+from docx.opc.part import Part
+
+from .ooxml import PART_KINDS, R_NS, add_field, blob_problem, opaque_element, stable_zip
 
 MAX_W = 5_486_400  # 6 in; images wider than the text area are scaled down
 SAFE_HREF = re.compile(r"(https?://|mailto:)", re.I)
@@ -348,7 +351,7 @@ class Builder(Rich):
     def opaque(self, a: dict, cont) -> None:
         """Raw OOXML block, re-validated here (it came from the client's JSON) and written back as is."""
         try:
-            el = opaque_element(a.get("xml"), self.rels)
+            el = self.with_parts(a) if a.get("parts") and self.rels is None else opaque_element(a.get("xml"), self.rels)
         except ValueError as e:
             self.warn.append(f"opaque block '{str(a.get('kind'))[:40]}' skipped: {e}")
             return
@@ -357,6 +360,33 @@ class Builder(Rich):
             s.addprevious(el) if s is not None else self.doc.element.body.append(el)
         else:
             cont._tc.append(el)
+
+    def with_parts(self, a: dict):
+        """An opaque block that travels with its pictures/embedded objects (`attrs.parts`, from a snippet): every part
+        is re-checked, added under a fresh part name + relationship id of THIS package and the r:* ids are remapped."""
+        parts = a["parts"]
+        if not isinstance(parts, list) or len(parts) > 16:
+            raise ValueError("bad parts")
+        el = opaque_element(a.get("xml"), {str(p.get("rid")) for p in parts if isinstance(p, dict)})
+        new, pkg = {}, self.doc.part.package
+        for p in parts:
+            kind = p.get("kind") if isinstance(p, dict) else None
+            if kind not in PART_KINDS or p.get("ext") not in PART_KINDS[kind][2] or not isinstance(p.get("b64"), str):
+                raise ValueError("bad part")
+            try:
+                blob = base64.b64decode(p["b64"], validate=True)
+            except ValueError:
+                raise ValueError("bad part data")
+            if kind == "oleObject" and (why := blob_problem(blob)):
+                raise ValueError(why)
+            suffix, stem, types = PART_KINDS[kind]
+            part = Part(pkg.next_partname(f"/word/{stem}%d.{p['ext']}"), types[p["ext"]], blob, pkg)
+            new[p["rid"]] = self.doc.part.relate_to(part, "http://schemas.openxmlformats.org/officeDocument/2006/relationships" + suffix)
+        for e in el.iter():
+            for k, v in list(e.attrib.items()):
+                if k.startswith("{%s}" % R_NS) and v in new:
+                    e.set(k, new[v])
+        return el
 
     def list(self, n, cont, ctx, level, parent=None) -> None:
         a = n.get("attrs") or {}

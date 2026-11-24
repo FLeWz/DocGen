@@ -178,7 +178,7 @@ class _Parser:
             opaque_element(xml, self.rel_ids)
         except ValueError as e:  # would never be written back: say so instead of carrying a dead block
             self.blocked.append(f"{kind}: {e}")
-            return {"type": "paragraph", "content": [{"type": "text", "text": f"[{kind} removed: {e}]"}]}
+            return {"type": "paragraph"}  # never visible placeholder text: the reason is in the warnings
         self.opaque[kind] += 1
         return {"type": "opaque", "attrs": {"kind": kind, "xml": xml}}
 
@@ -496,7 +496,7 @@ def parse(data: bytes, store_image) -> tuple[dict, list[str]]:
             content = ps.blocks(ps.root.find(W + "body"))
         except (etree.XMLSyntaxError, KeyError, ValueError, RecursionError) as e:
             raise BadDocx(f"cannot parse document: {type(e).__name__}")
-    warn = [f"{n}× {k}: not editable, kept as an opaque block and written back unchanged" for k, n in ps.opaque.items()]
+    warn = [f"{n}× {k}: " + ("embedded document kept as is" if k == "embedded object" else "not editable, kept as an opaque block and written back unchanged") for k, n in ps.opaque.items()]
     warn += [f"blocked {b}" for b in ps.blocked]
     warn += [f"{n} {k}: not kept (editor has no support); styles are kept" for k, n in ps.dropped.items()]
     return {"type": "doc", "content": content or [{"type": "paragraph", "attrs": {"styleId": None}}]}, warn
@@ -611,7 +611,8 @@ def check_content(content: dict, rels: set) -> None:
     for n in walk(content):
         a = n.get("attrs") or {}
         if n.get("type") == "opaque":
-            opaque_element(a.get("xml"), rels)
+            own = {str(q.get("rid")) for q in a["parts"] if isinstance(q, dict)} if isinstance(a.get("parts"), list) and rels is None else rels
+            opaque_element(a.get("xml"), own)
         elif n.get("type") == "table" and a.get("tblPr"):
             opaque_element(a["tblPr"], rels, {"tblPr"})
 

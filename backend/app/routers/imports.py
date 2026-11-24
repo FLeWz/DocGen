@@ -1,4 +1,7 @@
+import copy
+import io
 import re
+import zipfile
 from uuid import UUID
 
 from lxml import etree
@@ -11,7 +14,7 @@ from .. import base_docs, docx_export, docx_hf, docx_import as D, docx_vars, vcs
 from ..deps import Ctx, require
 from ..files import image_path, import_path
 from ..models import BaseDocument, Image, Import, Organization, Role
-from ..ooxml import rel_ids
+from ..ooxml import collect_parts, neutralize_ole, opaque_element, rel_ids, rel_map
 from ..schemas import VarPicks, ImportBaseIn, ImportPut, ImportSnippetOut, SelectionIn, SplitIn
 from . import images
 from .base_documents import _get as get_base, _read, _store, add_base
@@ -44,6 +47,7 @@ def import_docx(file: UploadFile = File(), title: str | None = Form(default=None
     data = _read(file)
     try:  # same gate as base documents: zip structure, bombs, XXE, macros
         base_docs.validate(data)
+        data, ole_warn = neutralize_ole(data)
 
         def store(b: bytes):
             try:
@@ -51,6 +55,7 @@ def import_docx(file: UploadFile = File(), title: str | None = Form(default=None
             except HTTPException:
                 return None
         content, warnings = D.parse(data, store)
+        warnings = ole_warn + warnings
     except base_docs.BadDocx as e:
         raise HTTPException(422, str(e))
     if len(str(content)) > vcs.MAX_DOC:
@@ -195,11 +200,30 @@ def split_preview(import_id: UUID, level: int = Query(ge=1, le=2), ctx: Ctx = V)
     return _sections(_get(ctx, import_id).content, level)
 
 
-def _make(ctx: Ctx, folder, title: str, blocks: list) -> ImportSnippetOut:
+def _carry_parts(blocks: list, orig: bytes) -> None:
+    """Opaque blocks that point into the import's package (pictures, embedded objects) take those parts along, so a
+    snippet made from them exports on its own."""
+    with zipfile.ZipFile(io.BytesIO(orig)) as zf:
+        rels, ids = rel_map(zf), rel_ids(orig)
+        for n in (n for b in blocks for n in D.walk(b)):
+            a = n.get("attrs") or {}
+            if n.get("type") == "opaque" and isinstance(a.get("xml"), str) and "r:" in a["xml"]:
+                try:
+                    parts = collect_parts(opaque_element(a["xml"], ids), zf, rels)
+                except ValueError:
+                    continue
+                if parts:
+                    a["parts"] = parts
+
+
+def _make(ctx: Ctx, folder, title: str, blocks: list, orig: bytes | None = None) -> ImportSnippetOut:
+    blocks = copy.deepcopy(blocks)
+    if orig:
+        _carry_parts(blocks, orig)
     blocks = [{**b, "attrs": {k: v for k, v in b["attrs"].items() if k != "orig"}} if "orig" in (b.get("attrs") or {}) else b for b in blocks]
     content = {"type": "doc", "content": blocks}  # `orig` only means something inside the import's own package
     s = vcs.new_snippet(ctx, folder, title, content=content, styles=D.style_ids(content))
-    kinds = sorted({(n.get("attrs") or {}).get("kind", "?") for b in blocks for n in D.walk(b) if n.get("type") == "opaque"})
+    kinds = sorted({(n.get("attrs") or {}).get("kind", "?") for b in blocks for n in D.walk(b) if n.get("type") == "opaque" and not (n.get("attrs") or {}).get("parts")})
     warn = [f"contains opaque block(s): {', '.join(kinds)} (exported only if self-contained)"] if kinds else []
     return ImportSnippetOut(id=s.id, folder_id=folder.id, slug=s.slug, title=s.title, head_sha=None, has_draft=True, warnings=warn)
 
@@ -226,7 +250,8 @@ def split_apply(import_id: UUID, body: SplitIn, ctx: Ctx = E):
         raise HTTPException(422, f"too many sections (max {MAX_SECTIONS})")
     if any(len(str(blocks[s["start"]:s["end"]])) > vcs.MAX_DOC for s in secs):
         raise HTTPException(413, "a section is too large for a snippet")
-    out = [_make(ctx, f, s["title"], blocks[s["start"]:s["end"]]) for s in secs]
+    orig = _orig(ctx, i)
+    out = [_make(ctx, f, s["title"], blocks[s["start"]:s["end"]], orig) for s in secs]
     ctx.db.commit()
     return out
 
@@ -249,7 +274,7 @@ def selection_snippet(import_id: UUID, body: SelectionIn, ctx: Ctx = E):
         if body.end > len(blocks) or body.start >= body.end:
             raise HTTPException(422, f"block range out of bounds (0..{len(blocks)})")
         picked = blocks[body.start:body.end]
-    out = _make(ctx, f, body.title, picked)
+    out = _make(ctx, f, body.title, picked, _orig(ctx, i))
     ctx.db.commit()
     return out
 
