@@ -83,12 +83,12 @@ export function Field({ label, children, hint }: { label: string; children: (id:
 
 // ---- modal: native <dialog> (focus trap, Esc, backdrop, a11y role for free) ----
 /** size: sm = small prompt/confirm, md (default) = forms, wide = tables/outlines. One shared width scale, see `dialog.modal` in app.css. */
-export function Modal({ title, onClose, children, wide, size, actions }: { title: string; onClose: () => void; children: ReactNode; wide?: boolean; size?: "sm" | "md" | "wide"; actions?: ReactNode }) {
+export function Modal({ title, onClose, children, wide, size, tall, actions }: { title: string; onClose: () => void; children: ReactNode; wide?: boolean; size?: "sm" | "md" | "wide"; tall?: boolean; actions?: ReactNode }) {
   const ref = useRef<HTMLDialogElement>(null);
   useEffect(() => { const d = ref.current; if (d && !d.open) d.showModal(); }, []);
   const tid = useId();
   return (
-    <dialog ref={ref} className={`modal ${size ?? (wide ? "wide" : "md")}`} aria-labelledby={tid} onCancel={(e) => { e.preventDefault(); onClose(); }}
+    <dialog ref={ref} className={`modal ${size ?? (wide ? "wide" : "md")}${tall ? " tall" : ""}`} aria-labelledby={tid} onCancel={(e) => { e.preventDefault(); onClose(); }}
       onMouseDown={(e) => { if (e.target === ref.current) onClose(); }}>
       <div className="modal-h"><h2 id={tid}>{title}</h2><button type="button" className="btn ghost icon" aria-label="Close dialog" onClick={onClose}><Icon n="x" /></button></div>
       <div className="modal-b">{children}</div>

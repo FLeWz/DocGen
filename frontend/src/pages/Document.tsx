@@ -297,7 +297,7 @@ export function DocumentPage({ me }: { me: Me }) {
           <RevisionTable rows={w.revision_history ?? rev.data ?? []} auto={w.revision_history === null} ro={ro} onChange={(r) => upd({ revision_history: r })} /></details>
       </ContextPanel>
       {bump && <BumpDialog docId={id} block={bump} onApply={() => doBump.mutate(bump)} onClose={() => setBump(null)} />}
-      {preview && <Modal title="Document preview" wide onClose={() => setPreview(false)}>
+      {preview && <Modal title="Document preview" wide tall onClose={() => setPreview(false)}>
         <div className="tabs small" role="tablist" aria-label="Preview type">
           <button role="tab" className={pvMode === "pdf" ? "tab on" : "tab"} aria-selected={pvMode === "pdf"} onClick={() => setPvMode("pdf")}>PDF (as exported)</button>
           <button role="tab" className={pvMode === "draft" ? "tab on" : "tab"} aria-selected={pvMode === "draft"} onClick={() => setPvMode("draft")}>Draft view (fast, approximate)</button></div>
