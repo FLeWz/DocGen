@@ -77,6 +77,7 @@ export function paraAttrs(ppr: Element | null): Attrs {
   const sp = w(ppr, "spacing");
   if (sp) for (const k of ["before", "after", "line"]) { const n = int(wa(sp, k)); if (n !== undefined) p[k] = n; }
   if (sp && ["auto", "exact", "atLeast"].includes(wa(sp, "lineRule") ?? "")) p.lineRule = wa(sp, "lineRule");
+  const ms = int(wa(w(w(ppr, "rPr"), "sz"), "val")); if (ms) p.mark = { size: ms };
   const sh = hx(wa(w(ppr, "shd"), "fill")); if (sh) p.shd = sh;
   const bd = borders(w(ppr, "pBdr"), SIDES); if (Object.keys(bd).length) p.bdr = bd;
   const tabs = kids(w(ppr, "tabs") ?? ppr).filter((t) => ln(t) === "tab" && ["left", "center", "right", "decimal", "start", "end"].includes(wa(t, "val") ?? ""))
@@ -175,7 +176,7 @@ function para(p: Element, c: Ctx): string {
   const ppr = w(p, "pPr"), sid = safeId(wa(w(ppr, "pStyle"), "val"));
   const attrs = paraAttrs(ppr);
   const html = inline(p, c);
-  const cls = `${sid ? `st-${sid}` : ""}`;
+  const cls = `st-${sid ?? "Normal"}`; // same class as an editable paragraph, so table-style/default paragraph rules (e.g. TableGrid: no spacing after) apply
   const style = pfmtCss(attrs);
   let stops: Stop[] = validStops(attrs.tabs ?? (sid ? STYLE_TABS[sid] : undefined));
   if (html.includes(TAB) && !stops.length && !!sid && /^(TOC\d?|TableofFigures|TOCHeading)$/i.test(sid)) stops = [{ pos: 31680, val: "right", leader: "dot" }]; // TOC lines without explicit stops

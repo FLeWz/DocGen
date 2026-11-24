@@ -85,3 +85,18 @@ describe("header/footer: tab stops from the style and per-page fields", () => {
     expect(h).toContain("padding-left:10pt");
   });
 });
+
+test("opaque paragraph without pStyle is Normal, so table-style paragraph rules reach it", () => {
+  expect(ooxmlToHtml(`<w:p ${NS}><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText> X </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>x</w:t></w:r></w:p>`)).toContain('class="st-Normal"');
+});
+
+test("auto line spacing is a multiple of the single-spaced font line (259/240 -> 1.241), single stays normal", () => {
+  expect(pfmtCss({ line: 259, lineRule: "auto" })).toBe("line-height:1.241");
+  expect(pfmtCss({ line: 360 })).toBe("line-height:1.725");
+  expect(pfmtCss({ line: 480, lineRule: "atLeast" })).toBe("line-height:24pt");
+});
+
+test("paragraph-mark size sets the paragraph font size (strut), also for opaque paragraphs", () => {
+  expect(pfmtCss({ mark: { size: 16 }, line: 259 })).toBe("font-size:8pt;line-height:1.241");
+  expect(ooxmlToHtml(`<w:p ${NS}><w:pPr><w:rPr><w:sz w:val="16"/></w:rPr></w:pPr><w:r><w:t>small</w:t></w:r></w:p>`)).toContain("font-size:8pt");
+});

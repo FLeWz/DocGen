@@ -60,6 +60,8 @@ export function pfmtCss(p?: Attrs | null, inList = false): string {
   for (const [k, c] of [["before", "margin-top"], ["after", "margin-bottom"]]) { const n = num(p[k], 0, 31680); if (n !== null) o.push(`${c}:${pt(n)}`); }
   const first = num(p.first, -31680, 31680);
   if (first !== null && !inList) o.push(`text-indent:${pt(first)}`);
+  const ms = num(p.mark?.size, 2, 3276);  // paragraph-mark size = the line's strut: Word/LibreOffice size lines by the text and the mark, not the style
+  if (ms) o.push(`font-size:${ms / 2}pt`);
   const line = num(p.line, 0, 31680);
   if (line) o.push(p.lineRule === "exact" || p.lineRule === "atLeast" ? `line-height:${pt(line)}` : lineHeight(line));
   if (hex(p.shd)) o.push(`background:${hex(p.shd)}`);

@@ -102,6 +102,8 @@ export const ImportAttrs = Extension.create({
   name: "importAttrs",
   addGlobalAttributes() {
     return [
+      // orig = {s,e,h}: the body children this block was parsed from + a hash; unchanged blocks are exported as that original XML
+      { types: ["paragraph", "heading", "table", "bulletList", "orderedList"], attributes: { orig: hidden() } },
       { types: ["bulletList", "orderedList"], attributes: { numId: hidden(), listStyle: { default: null, parseHTML: (el: HTMLElement) => el.style.listStyleType || null,
         renderHTML: (a: Record<string, any>) => st(listCss(a.listStyle)) } } },
       { types: ["table"], attributes: { tblPr: hidden(), grid: hidden(),
