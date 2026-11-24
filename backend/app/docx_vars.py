@@ -24,10 +24,10 @@ DOCPROP = {"title": "doc.title", "author": "author", "company": "org.name", "las
 HINTS = (("title", "doc.title"), ("version", "doc.version"), ("revision", "doc.version"), ("date", "doc.date"),
          ("author", "author"), ("prepared", "author"), ("company", "org.name"), ("organi", "org.name"))
 DATE_RE = re.compile(r"\d{1,2}[./-]\d{1,2}[./-]\d{2,4}|\d{4}-\d{2}-\d{2}")
-VERSION_RE = re.compile(r"(?i)(v(ersion)?\.?\s*)?\d+(\.\d+)+|(rev(ision)?|issue)\.?\s*[\w.]+")
+VERSION_RE = re.compile(r"(?i)(v(ersion)?\.?\s*)?\d+(\.\d+)+|(v(ersion)?|rev(ision)?|issue)\.?\s*\d[\w.]*")
 NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)?")
 BUILTIN_ROOTS = {"doc", "org", "author", "revision_history", "linked_documents"}
-STRONG_STYLES = {"Title", "Subtitle"}
+STRONG_STYLES = {"Title"}  # Subtitle is often used as a heading of cover sections ("Table of contents")
 
 
 def text(el) -> str:
@@ -219,7 +219,7 @@ def suggest(kind: str, hint: str, value: str, strong: bool) -> str:
         return "doc.title" if hint == "Title" else "doc.date"
     if kind == "version":
         return "doc.version"
-    n = snake(re.sub(r"^(sl|doc)_?", "", hint, flags=re.I)) if hint and not hint.startswith(("Normal", "Heading")) else ""
+    n = snake(re.sub(r"^(sl|doc)_", "", hint, flags=re.I)) if hint and not hint.startswith(("Normal", "Heading")) else ""
     n = n or snake(" ".join(value.split()[:3])) or "value"
     return n if NAME_RE.fullmatch(n) else "v_" + n
 
@@ -352,4 +352,5 @@ def package_vars(data: bytes, existing: list | None = None) -> list[dict]:
 
 def picks_decls(items) -> list[dict]:
     """Text variables for the picked names (built-ins are filled by the exporter and never declared); default = detected value."""
-    return [dict(name=i.name, type="text", default=i.value) for i in items if i.name.split(".")[0] not in BUILTIN_ROOTS]
+    return [dict(name=i.name, type="text", default=None if i.value.startswith("Error!") else i.value)  # Word's own error text is no default
+            for i in items if i.name.split(".")[0] not in BUILTIN_ROOTS]

@@ -67,6 +67,7 @@ with sync_playwright() as pw:
         assert len(rows) == 5, rows  # title, version, subtitle, dead header REF, footer TITLE field
         expect(page.get_by_label("Name for Acme Spec")).to_have_value("doc.title")
         expect(page.get_by_label("Name for 1.2")).to_have_value("doc.version")
+        page.get_by_label("Use Project Falcon").check()  # plain text is off by default
         page.get_by_label("Name for Project Falcon").fill("subtitle")
         expect(tbl).not_to_contain_text("plain table text")
         page.get_by_role("button", name="Replace with variables").click()

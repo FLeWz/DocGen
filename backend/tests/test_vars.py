@@ -73,11 +73,18 @@ def test_candidates_are_values_not_structure(client):
     got = c.get(f"/api/imports/{iid}/variables").json()
     by = {x["value"]: x for x in got["candidates"]}
     assert by["Acme Spec"]["name"] == "doc.title" and by["Acme Spec"]["locs"] == {"cover": 1}
-    assert by["1.2"]["name"] == "doc.version" and by["Project Falcon"]["name"] == "subtitle" and by["Project Falcon"]["include"]
+    assert by["1.2"]["name"] == "doc.version" and by["Project Falcon"]["name"] == "subtitle" and not by["Project Falcon"]["include"]  # plain text: only Title style is on by default
     assert by["Old Title"]["name"] == "gone_bookmark" and by["Old Title"]["locs"] == {"header": 1}  # REF to a missing bookmark
     assert by["Stale Title"]["name"] == "doc.title"
     # never: bookmarked REF (source exists), PAGE/NUMPAGES, TOC, table text, headings/body
     assert not {"Introduction 1", "plain table text", "Notes", "Intro", "This body text stays editable content.", "1", "9"} & set(by)
+
+
+def test_name_and_kind_heuristics():
+    assert docx_vars.suggest("formtext", "Document status:", "Draft", False) == "document_status"  # no 'doc' prefix stripping
+    assert docx_vars.VERSION_RE.fullmatch("Revision 3") and docx_vars.VERSION_RE.fullmatch("1.2.0") and not docx_vars.VERSION_RE.fullmatch("Revision history")
+    assert docx_vars.suggest("field", "Sl_DocumentTitle_Copy_1", "x", False) == "doc.title"
+    assert docx_vars.suggest("field", "SL_DocRevision", "x", False) == "doc.version" and docx_vars.suggest("field", "Company", "x", False) == "org.name"
 
 
 def test_apply_import_keeps_formatting_and_declares_defaults(client):
