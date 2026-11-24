@@ -18,6 +18,11 @@ export const newId = () => (crypto.randomUUID ? crypto.randomUUID() : Math.rando
 export const snippetBlock = (folder_id: string, snippet_id: string, sha: string): Block =>
   ({ id: newId(), slot: "CONTENT", type: "snippet_ref", folder_id, snippet_id, version: { type: "commit", value: sha } });
 
+export const paragraphBlock = (): Block => ({ id: newId(), slot: "CONTENT", type: "paragraph", content: { type: "doc", content: [{ type: "paragraph", attrs: { styleId: null } }] } });
+export const TOC_KINDS = { toc: "Table of contents", tot: "List of tables", tof: "List of figures" } as const;
+export const listBlock = (kind: keyof typeof TOC_KINDS): Block =>
+  ({ id: newId(), slot: "CONTENT", type: "toc", kind, title: TOC_KINDS[kind], levels: "1-4", label: kind === "tot" ? "Table" : kind === "tof" ? "Figure" : "" });
+
 export type Row = Record<string, string | number | null>;
 /** Rows of a list variable after the column set changed: keep known cells, drop removed columns. */
 export const reshape = (rows: Row[], cols: string[]): Row[] => rows.map((r) => Object.fromEntries(cols.map((c) => [c, r[c] ?? ""])));

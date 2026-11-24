@@ -2,7 +2,9 @@ import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/rea
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, ApiError, BaseDoc, BaseDocVersion, Block, Commit, DocBody, DocFull, ExportStatus, LibraryGroup, Me, RefStatus, RevRow, Style, VarDecl } from "../api";
-import { insertAt, moveTo, newId, snippetBlock } from "../builder/blocks";
+import { insertAt, listBlock, moveTo, newId, paragraphBlock, snippetBlock, TOC_KINDS } from "../builder/blocks";
+import { ParagraphEditor } from "../builder/ParagraphEditor";
+import { PdfPreview } from "../builder/PdfPreview";
 import { RevisionTable, VariablesForm } from "../builder/Variables";
 import { folderPath, short, useFolders } from "../data";
 import { PMNode } from "../editor/doc";
@@ -97,7 +99,8 @@ function PreviewPanel({ blocks, st, styles, baseId }: { blocks: Block[]; st: Ref
       for (const b of blocks.filter((x) => x.slot === slot)) {
         if (b.type === "heading") out.push({ type: "heading", attrs: { level: b.level, styleId: b.styleId }, content: [{ type: "text", text: b.text }] });
         else if (b.type === "page_break") out.push(text("— page break —"));
-        else if (b.type === "toc") out.push(text("[Table of contents]"));
+        else if (b.type === "toc") out.push({ type: "toc", attrs: { kind: b.kind ?? "toc", title: b.title ?? "", levels: b.levels ?? "1-4", label: b.label || null, xml: null } });
+        else if (b.type === "paragraph") out.push(...(((b.content as PMNode).content ?? []) as PMNode[]));
         else out.push(...(res[refs.indexOf(b)]?.data?.content?.content ?? [text("…")]));
       }
     }
@@ -116,7 +119,7 @@ export function DocumentPage({ me }: { me: Me }) {
   const [status, setStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [err, setErr] = useState("");
   const [bump, setBump] = useState<string | null>(null);
-  const [preview, setPreview] = useState(false), [dragging, setDragging] = useState(false);
+  const [preview, setPreview] = useState(false), [pvMode, setPvMode] = useState<"pdf" | "draft">("pdf"), [dragging, setDragging] = useState(false);
   const [dl, setDl] = useState<{ fmt: "docx" | "pdf"; msg: string } | null>(null), [dlErr, setDlErr] = useState(""), [missing, setMissing] = useState<{ name: string; type: VarDecl["type"] }[]>([]);
   const [over, setOver] = useState<number | null>(null);
   const wRef = useRef<DocBody | null>(null), timer = useRef<number>(), pending = useRef(false), chain = useRef<Promise<unknown>>(Promise.resolve());
@@ -156,6 +159,7 @@ export function DocumentPage({ me }: { me: Me }) {
   const baseId = w?.base_document?.id;
   const bvers = useQuery({ queryKey: ["bversions", baseId], enabled: !!baseId, queryFn: () => api<BaseDocVersion[]>(`/base-documents/${baseId}/versions`) });
   const styles = useStyles(me, baseId ?? null);
+  const look = useLook({ base_doc: baseId ?? null }).data;
   const baseVars = bvers.data?.find((v) => v.sha === w?.base_document?.version)?.variables ?? [];
   const slots = ["CONTENT", ...(bvers.data?.find((v) => v.sha === w?.base_document?.version)?.placeholders.slots ?? [])];
 
@@ -216,7 +220,7 @@ export function DocumentPage({ me }: { me: Me }) {
         <input className="titleinput" aria-label="Document title" placeholder="Untitled document" value={w.title} disabled={ro} onChange={(e) => upd({ title: e.target.value })} />
         <span className={`savestatus ${status}`} data-testid="doc-save-status" data-status={status} role="status">{status === "saving" ? <><Spinner />Saving…</> : status === "saved" ? <><Icon n="check" size={14} />Draft saved</> : status === "error" ? <><Icon n="alert" size={14} />Save failed</> : null}</span>
         <div className="actions">
-          <button className="btn" onClick={() => setPreview(true)}><Icon n="eye" />Preview</button>
+          <button className="btn" onClick={() => { setPvMode("pdf"); setPreview(true); }}><Icon n="eye" />Preview</button>
           {dlBtn("docx")}{dlBtn("pdf")}
           {!ro && <button className="btn primary" onClick={() => flush().then(() => nav(`/commit/${q.data!.folder_id}?select=${id}`))}><Icon n="commit" />Commit…</button>}
         </div>
@@ -235,7 +239,10 @@ export function DocumentPage({ me }: { me: Me }) {
           <div className="blocks-h"><h2>Blocks <span className="cnt">{w.blocks.length}</span></h2>
             {!ro && <div className="actions">
               <button className="btn sm" onClick={() => add(w.blocks.length, { id: newId(), slot: "CONTENT", type: "heading", text: "New heading", level: 1, styleId: null, numbered: false })}><Icon n="plus" size={14} />Heading</button>
-              <button className="btn sm" onClick={() => add(w.blocks.length, { id: newId(), slot: "CONTENT", type: "toc" })}><Icon n="plus" size={14} />TOC</button>
+              <button className="btn sm" onClick={() => add(w.blocks.length, paragraphBlock())}><Icon n="plus" size={14} />Paragraph</button>
+              <button className="btn sm" onClick={() => add(w.blocks.length, listBlock("toc"))}><Icon n="plus" size={14} />TOC</button>
+              <button className="btn sm" onClick={() => add(w.blocks.length, listBlock("tot"))}><Icon n="plus" size={14} />List of tables</button>
+              <button className="btn sm" onClick={() => add(w.blocks.length, listBlock("tof"))}><Icon n="plus" size={14} />List of figures</button>
               <button className="btn sm" onClick={() => add(w.blocks.length, { id: newId(), slot: "CONTENT", type: "page_break" })}><Icon n="plus" size={14} />Page break</button></div>}</div>
           {w.blocks.length === 0 && <div className="emptydrop" onDragOver={(e) => { e.preventDefault(); setOver(0); }} onDragLeave={() => setOver(null)} onDrop={drop(0)}>
             <Icon n="layers" size={26} /><b>Drag snippets here</b><span className="muted">or use “Add” in the library</span></div>}
@@ -252,7 +259,12 @@ export function DocumentPage({ me }: { me: Me }) {
                       <button className={`btn sm ${b.numbered ? "on" : ""}`} aria-pressed={b.numbered} disabled={ro} onClick={() => setBlock(i, { ...b, numbered: !b.numbered })}>Numbered</button>
                       <label>Slot <select aria-label="Slot" value={b.slot} disabled={ro} onChange={(e) => setBlock(i, { ...b, slot: e.target.value })}>{slots.map((s) => <option key={s}>{s}</option>)}</select></label></div></div>}
                   {b.type === "page_break" && <div className="bbody"><div className="btitle"><Icon n="split" />Page break</div></div>}
-                  {b.type === "toc" && <div className="bbody"><div className="btitle"><Icon n="ul" />Table of contents</div></div>}
+                  {b.type === "toc" && <div className="bbody"><div className="btitle"><Icon n="ul" />{TOC_KINDS[b.kind ?? "toc"]}<input className="hin" aria-label="List title" placeholder="Title" value={b.title ?? ""} disabled={ro} maxLength={200} onChange={(e) => setBlock(i, { ...b, title: e.target.value })} /></div>
+                    <div className="bctl"><label>Kind <select aria-label="List kind" value={b.kind ?? "toc"} disabled={ro} onChange={(e) => { const kind = e.target.value as keyof typeof TOC_KINDS; setBlock(i, { ...b, kind, title: b.title === TOC_KINDS[b.kind ?? "toc"] ? TOC_KINDS[kind] : b.title, label: kind === "tot" ? "Table" : kind === "tof" ? "Figure" : "" }); }}>{Object.entries(TOC_KINDS).map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></label>
+                      {(b.kind ?? "toc") === "toc" ? <label>Levels <select aria-label="Heading levels" value={b.levels ?? "1-4"} disabled={ro} onChange={(e) => setBlock(i, { ...b, levels: e.target.value })}>{["1-1", "1-2", "1-3", "1-4"].map((l) => <option key={l}>{l}</option>)}</select></label>
+                        : <label>Caption label <input aria-label="Caption label" value={b.label ?? ""} disabled={ro} maxLength={60} onChange={(e) => setBlock(i, { ...b, label: e.target.value })} /></label>}</div></div>}
+                  {b.type === "paragraph" && <div className="bbody"><div className="btitle"><Icon n="edit" />Paragraph</div>
+                    <ParagraphEditor value={b.content as PMNode} styles={styles.data ?? []} look={look} ro={ro} onChange={(d) => setBlock(i, { ...b, content: d as never })} /></div>}
                   {!ro && <button className="btn ghost icon" aria-label="Remove block" title="Remove block" onClick={() => upd({ blocks: w.blocks.filter((_, j) => j !== i) })}><Icon n="trash" /></button>}
                 </li>
               </Fragment>))}
@@ -285,7 +297,11 @@ export function DocumentPage({ me }: { me: Me }) {
           <RevisionTable rows={w.revision_history ?? rev.data ?? []} auto={w.revision_history === null} ro={ro} onChange={(r) => upd({ revision_history: r })} /></details>
       </ContextPanel>
       {bump && <BumpDialog docId={id} block={bump} onApply={() => doBump.mutate(bump)} onClose={() => setBump(null)} />}
-      {preview && <Modal title="Document preview" wide onClose={() => setPreview(false)}><PreviewPanel blocks={w.blocks} st={updates.data ?? []} styles={styles.data ?? []} baseId={baseId} /></Modal>}
+      {preview && <Modal title="Document preview" wide onClose={() => setPreview(false)}>
+        <div className="tabs small" role="tablist" aria-label="Preview type">
+          <button role="tab" className={pvMode === "pdf" ? "tab on" : "tab"} aria-selected={pvMode === "pdf"} onClick={() => setPvMode("pdf")}>PDF (as exported)</button>
+          <button role="tab" className={pvMode === "draft" ? "tab on" : "tab"} aria-selected={pvMode === "draft"} onClick={() => setPvMode("draft")}>Draft view (fast, approximate)</button></div>
+        {pvMode === "pdf" ? <PdfPreview docId={id} flush={flush} /> : <PreviewPanel blocks={w.blocks} st={updates.data ?? []} styles={styles.data ?? []} baseId={baseId} />}</Modal>}
     </div>
   );
 }

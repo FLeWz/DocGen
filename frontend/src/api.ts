@@ -65,7 +65,9 @@ export type Pin = { type: "commit" | "tag" | "latest"; value: string | null };
 export type Block = { id: string; slot: string } & (
   | { type: "snippet_ref"; folder_id: string; snippet_id: string; version: Pin }
   | { type: "heading"; text: string; level: number; styleId: string | null; numbered: boolean }
-  | { type: "page_break" } | { type: "toc" });
+  | { type: "page_break" }
+  | { type: "toc"; kind?: "toc" | "tof" | "tot"; title?: string; levels?: string; label?: string }
+  | { type: "paragraph"; content: { type: "doc"; content: unknown[] } });
 export type LinkedDoc = { title: string; doc_id: string | null; version: string | null; url: string | null };
 export type VarDecl = { name: string; type: "text" | "date" | "number" | "list"; default: unknown; columns?: string[] };
 export type Variables = { declarations: VarDecl[]; values: Record<string, unknown> };
