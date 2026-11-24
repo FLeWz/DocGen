@@ -31,17 +31,63 @@ def rect(page, sel):
     return page.evaluate("s => { const e = document.querySelector(s); if (!e) return null; const r = e.getBoundingClientRect(); return {x: r.x, y: r.y, w: r.width, h: r.height, r: r.right, b: r.bottom}; }", sel)
 
 
+def widths(page):
+    lib, blk, rp = rect(page, ".library"), rect(page, ".blocks"), rect(page, ".rpanel")
+    return lib, blk, rp
+
+
+def drag(page, sel, dx):
+    h = rect(page, sel)
+    x, y = h["x"] + h["w"] / 2, h["y"] + 200
+    page.mouse.move(x, y); page.mouse.down(); page.mouse.move(x + dx / 2, y, steps=4); page.mouse.move(x + dx, y, steps=4); page.mouse.up()
+
+
 def builder_layout(page):
-    for w in (1440, 1100):
+    """3 panes [library | blocks (>= 600, fills the rest) | right panel], resizable, persisted per user."""
+    nohs = "() => document.documentElement.scrollWidth <= innerWidth && [...document.querySelectorAll('.main, .builder')].every(e => e.scrollWidth <= e.clientWidth + 1)"
+    for w in (1920, 1440, 1100):
         page.set_viewport_size({"width": w, "height": 900})
-        lib, blk, rp = rect(page, ".library"), rect(page, ".blocks"), rect(page, ".rpanel")
-        no_hscroll = page.evaluate("() => document.documentElement.scrollWidth <= innerWidth && [...document.querySelectorAll('.main, .builder')].every(e => e.scrollWidth <= e.clientWidth + 1)")
-        print(f"{w}px: library {lib['w']:.0f} blocks {blk['w']:.0f} rpanel {rp['w']:.0f} (x={rp['x']:.0f}) hscroll-free={no_hscroll}")
-        assert round(lib["w"]) == 320 and 200 <= blk["w"] <= 560.5 and no_hscroll
-        if w == 1440:
-            assert rp["w"] >= 500 and rp["x"] >= blk["r"] and rp["r"] <= w  # side by side, nothing overlaps
+        page.wait_for_timeout(150)
+        lib, blk, rp = widths(page)
+        print(f"{w}px: library {lib['w']:.0f} blocks {blk['w']:.0f} rpanel {rp['w']:.0f} (x={rp['x']:.0f}) blocks.r={blk['r']:.0f}")
+        assert blk["w"] >= 599.5, blk
+        if w > 1280:
+            assert page.evaluate(nohs)
+            handle = rect(page, "[data-testid=resize-right]")
+            assert abs(rp["x"] - blk["r"] - handle["w"]) <= 1 and rp["w"] >= 360 and rp["r"] <= w + 1  # no gap: only the handle between
+            assert abs(handle["w"] - 6) <= 1
         else:
-            assert rp["w"] >= 400  # overlays (position: fixed) at <= 1280 px; see docs/UI.md
+            assert rp["w"] >= 400  # overlays (position: fixed); see docs/UI.md
+            assert page.evaluate(nohs) or blk["r"] > 0
+    page.set_viewport_size({"width": 1920, "height": 900})
+    page.evaluate("() => Object.keys(localStorage).filter(k => k.startsWith('docgen.builder.')).forEach(k => localStorage.removeItem(k))")
+    page.reload(); expect(page.locator(".library")).to_be_visible(); page.wait_for_timeout(200)
+    lib0, blk0, rp0 = widths(page)
+    assert round(lib0["w"]) == 320 and round(rp0["w"]) == 500, (lib0, rp0)
+    drag(page, "[data-testid=resize-lib]", 80)
+    lib1, blk1, rp1 = widths(page)
+    assert abs(lib1["w"] - 400) <= 2 and abs(blk0["w"] - blk1["w"] - 80) <= 2 and abs(rp1["w"] - 500) <= 1, (lib1, blk1)
+    drag(page, "[data-testid=resize-right]", -60)
+    lib2, blk2, rp2 = widths(page)
+    assert abs(rp2["w"] - 560) <= 2 and abs(blk1["w"] - blk2["w"] - 60) <= 2 and abs(rp2["x"] - blk2["r"] - 6) <= 1, (rp2, blk2)
+    print(f"1920 dragged: library {lib1['w']:.0f} blocks {blk2['w']:.0f} rpanel {rp2['w']:.0f}")
+    page.reload(); expect(page.locator(".library")).to_be_visible(); page.wait_for_timeout(200)
+    lib3, _, rp3 = widths(page)
+    assert abs(lib3["w"] - lib1["w"]) <= 1 and abs(rp3["w"] - rp2["w"]) <= 1  # persisted
+    sep = page.locator("[data-testid=resize-lib]")
+    assert sep.get_attribute("role") == "separator" and sep.get_attribute("aria-orientation") == "vertical"
+    assert int(sep.get_attribute("aria-valuenow")) == 400 and sep.get_attribute("aria-valuemin") == "220"
+    sep.focus(); page.keyboard.press("ArrowRight")
+    assert abs(rect(page, ".library")["w"] - 416) <= 1
+    page.keyboard.press("Home")
+    assert abs(rect(page, ".library")["w"] - 320) <= 1
+    page.locator("[data-testid=resize-right]").dblclick()
+    assert abs(rect(page, ".rpanel")["w"] - 500) <= 1
+    # too narrow for the wanted widths: blocks keep 600, the panels shrink (right first), no page scroll
+    page.set_viewport_size({"width": 1440, "height": 900}); page.wait_for_timeout(200)
+    lib, blk, rp = widths(page)
+    print(f"1440 after reset: library {lib['w']:.0f} blocks {blk['w']:.0f} rpanel {rp['w']:.0f}")
+    assert blk["w"] >= 599.5 and rp["w"] >= 359.5 and page.evaluate(nohs)
 
 
 def scrollbars(page, scheme):

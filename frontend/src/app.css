@@ -201,8 +201,10 @@ dialog.modal.tall { width: min(1100px, 94vw); height: calc(100vh - 32px); max-he
 .vlist { list-style: none; margin: 0; padding: 0; } .vlist li { padding: 10px 0; border-bottom: 1px solid var(--border); } .vlist p { margin: 4px 0 2px; } .vlist small { color: var(--muted); display: block; } .vact { display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap; } .pinline { display: block; font-size: 12px; }
 
 /* ---- document builder ---- */
-.builder { flex: 1; min-height: 0; display: grid; grid-template-columns: 320px minmax(0, 560px); justify-content: start; gap: var(--sp-4); } /* library 320, blocks take the rest up to 560 */
-.body:has(.builder) { --rp-w: 500px; --sb-w: 200px; } .body:has(.builder) .rpanel { min-width: 500px; }
+.builder { flex: 1; min-height: 0; display: grid; grid-template-columns: var(--lib-w, 320px) 6px minmax(600px, 1fr) 6px; } /* library | handle | blocks (all the rest, >= 600) | handle; widths set by useBuilderWidths */
+@media (min-width: 1281px) { .builder { margin-right: calc(-1 * var(--sp-5)); } } /* the handle touches the right panel (page padding is 24px here) */
+.resizer { cursor: col-resize; touch-action: none; position: relative; outline: none; } .resizer::after { content: ""; position: absolute; top: 0; bottom: 0; left: 2px; width: 2px; border-radius: 1px; background: transparent; transition: background .12s; } .resizer:hover::after, .resizer:focus-visible::after, .resizer:active::after { background: var(--primary); }
+.body:has(.builder) { --rp-w: 500px; --sb-w: 200px; }
 .library { display: flex; flex-direction: column; gap: var(--sp-2); min-height: 0; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: var(--sp-3); } .libscroll { overflow: auto; flex: 1; min-height: 0; }
 .libfolder { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-weight: 600; margin: 10px 0 4px; } .libgroup ul { list-style: none; margin: 0; padding: 0; }
 .libgroup li { display: grid; grid-template-columns: 16px 1fr auto; align-items: center; gap: 2px 6px; padding: 6px 6px; border: 1px solid var(--border); border-radius: var(--radius-s); margin-bottom: 4px; background: var(--surface); cursor: grab; } .libgroup li:hover { border-color: var(--primary); }
@@ -247,6 +249,7 @@ dialog.modal.tall { width: min(1100px, 94vw); height: calc(100vh - 32px); max-he
 
 /* builder at <=1280px: the 500px panel would leave no room for the blocks, so it overlays the page (Details toggles it) */
 @media (max-width: 1280px) {
+  .builder { grid-template-columns: var(--lib-w, 320px) 6px minmax(600px, 1fr); }
   .body.withrp:has(.builder) { grid-template-columns: var(--sb-w) minmax(0, 1fr); } .body.nosb.withrp:has(.builder) { grid-template-columns: minmax(0, 1fr); }
   .body:has(.builder) .rpanel { position: fixed; right: 0; top: var(--top-h); bottom: 0; width: min(500px, 92vw); min-width: 0; z-index: 15; box-shadow: var(--shadow-lg); }
 }

@@ -1,8 +1,10 @@
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, ApiError, isAdmin, BaseDoc, BaseDocVersion, Block, Commit, DocBody, DocFull, ExportStatus, LibraryGroup, Me, RefStatus, RevRow, Style, VarDecl } from "../api";
 import { insertAt, listBlock, moveTo, newId, paragraphBlock, snippetBlock, TOC_KINDS } from "../builder/blocks";
+import { fit, limits, LIB, RIGHT } from "../builder/layout";
+import { Resizer } from "../builder/Resizer";
 import { ParagraphEditor } from "../builder/ParagraphEditor";
 import { PdfPreview } from "../builder/PdfPreview";
 import { RevisionTable, VariablesForm } from "../builder/Variables";
@@ -110,6 +112,36 @@ function PreviewPanel({ blocks, st, styles, baseId }: { blocks: Block[]; st: Ref
   return <Preview doc={doc} styles={styles} look={look} zoom={0.7} />;
 }
 
+/** Wanted widths of the library and the right panel (per user, localStorage) and the room they have; sets --lib-w on the builder and --rp-w on .body. */
+function useBuilderWidths(uid: string, ready: boolean) {
+  const kl = `docgen.builder.libW.${uid}`, kr = `docgen.builder.rightW.${uid}`;
+  const read = (k: string, d: number) => { const n = Number(localStorage.getItem(k)); return n > 0 ? n : d; };
+  const [want, setWant] = useState(() => ({ lib: read(kl, LIB.def), right: read(kr, RIGHT.def) }));
+  const [room, setRoom] = useState({ total: 1600, hasRight: true });
+  const ref = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const el = ref.current; if (!el) return;
+    const body = el.closest<HTMLElement>(".body"), rp = body?.querySelector<HTMLElement>(".rpanel");
+    const measure = () => {
+      const hasRight = !!rp && !rp.hidden && !matchMedia("(max-width: 1280px)").matches; // <= 1280px the panel overlays the page
+      setRoom({ total: el.clientWidth + (hasRight ? rp!.offsetWidth : 0), hasRight });
+    };
+    measure();
+    const ro = new ResizeObserver(measure); ro.observe(el); addEventListener("resize", measure);
+    return () => { ro.disconnect(); removeEventListener("resize", measure); body?.style.removeProperty("--rp-w"); };
+  }, [ready]);
+  const eff = fit(room.total, want.lib, want.right, room.hasRight), lim = limits(room.total, room.hasRight);
+  useLayoutEffect(() => {
+    ref.current?.style.setProperty("--lib-w", `${eff.lib}px`);
+    if (room.hasRight) ref.current?.closest<HTMLElement>(".body")?.style.setProperty("--rp-w", `${eff.right}px`);
+  }, [eff.lib, eff.right, room.hasRight]);
+  const save = (k: string, field: "lib" | "right") => (v: number | null) => {
+    if (v === null) localStorage.removeItem(k); else localStorage.setItem(k, String(v));
+    setWant((w) => ({ ...w, [field]: v ?? (field === "lib" ? LIB.def : RIGHT.def) }));
+  };
+  return { ref, eff, lim, hasRight: room.hasRight, setLib: save(kl, "lib"), setRight: save(kr, "right") };
+}
+
 export function DocumentPage({ me }: { me: Me }) {
   const { id = "" } = useParams(), nav = useNavigate(), qc = useQueryClient(), ui = useUI();
   const ro = me.org?.role === "viewer";
@@ -117,6 +149,7 @@ export function DocumentPage({ me }: { me: Me }) {
   const folders = useFolders(me);
   useActiveFolder(q.data?.folder_id ?? null);
   const [w, setW] = useState<DocBody | null>(null);
+  const bw = useBuilderWidths(me.user.id, !!w);
   const [status, setStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [err, setErr] = useState("");
   const [bump, setBump] = useState<string | null>(null);
@@ -234,8 +267,9 @@ export function DocumentPage({ me }: { me: Me }) {
             const declared = vars.declarations.some((d) => d.name === m.name);
             return <li key={m.name}><Icon n="x" size={14} /><code>{m.name}</code> <span className="muted">({m.type})</span>
               {declared ? <span className="muted"> — declared; give it a value or default in the Variables panel</span> : !ro && <button className="btn sm" onClick={() => upd({ variables: { ...vars, declarations: [...vars.declarations, { name: m.name, type: m.type, default: null, columns: [] }] } })}>Declare</button>}</li>; })}</ul></Banner>)}
-      <div className="builder">
+      <div className="builder" ref={bw.ref}>
         <Library disabled={ro} onAdd={(g, s) => add(w.blocks.length, snippetBlock(g.folder_id, s.id, s.head_sha))} onDragging={setDragging} />
+        <Resizer label="Resize snippet library" testid="resize-lib" dir={1} value={bw.eff.lib} min={LIB.min} max={bw.lim.libMax} onChange={bw.setLib} onReset={() => bw.setLib(null)} />
         <section className="blocks" aria-label="Document blocks">
           <div className="blocks-h"><h2>Blocks <span className="cnt">{w.blocks.length}</span></h2>
             {!ro && <div className="actions">
@@ -273,6 +307,7 @@ export function DocumentPage({ me }: { me: Me }) {
           </ol>
           <ErrorBanner e={doBump.error} />
         </section>
+        {bw.hasRight && <Resizer label="Resize right panel" testid="resize-right" dir={-1} value={bw.eff.right} min={RIGHT.min} max={bw.lim.rightMax} onChange={bw.setRight} onReset={() => bw.setRight(null)} />}
       </div>
       <ContextPanel essential>
         <details open className="acc"><summary>Base document</summary>
