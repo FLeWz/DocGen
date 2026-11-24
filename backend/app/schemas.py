@@ -1,10 +1,11 @@
+import json
 import re
 from datetime import datetime
 from uuid import UUID
 
 from typing import Annotated, Any, Literal, Union
 
-from pydantic import BaseModel as _B, ConfigDict, EmailStr, Field, model_validator
+from pydantic import BaseModel as _B, ConfigDict, EmailStr, Field, field_validator, model_validator
 
 
 class BaseModel(_B):
@@ -281,9 +282,49 @@ class TocBlock(BaseModel):
     type: Literal["toc"]
     id: str | None = _Bid
     slot: str = SlotName
+    kind: Literal["toc", "tof", "tot"] = "toc"  # contents / list of figures / list of tables
+    title: str = Field(default="", max_length=200)
+    levels: str = Field(default="1-4", pattern=r"^[1-4]-[1-4]$")
+    label: str = Field(default="", pattern=r"^[A-Za-z0-9 ._-]{0,60}$")  # SEQ identifier of tof/tot ("" = Figure/Table)
 
 
-Block = Annotated[Union[SnippetRefBlock, HeadingBlock, PageBreakBlock, TocBlock], Field(discriminator="type")]
+PARA_NODES = {"doc", "paragraph", "heading", "bulletList", "orderedList", "listItem", "text", "variable", "hardBreak", "field", "footnote"}
+PARA_MAX_CHARS, PARA_MAX_NODES, PARA_MAX_DEPTH = 100_000, 3000, 12
+
+
+def check_para(doc: dict) -> dict:
+    """A paragraph block's TipTap doc: known node types only (no tables/images/opaque XML), bounded size and depth."""
+    if len(json.dumps(doc)) > PARA_MAX_CHARS:
+        raise ValueError(f"paragraph block larger than {PARA_MAX_CHARS} characters")
+    n = [0]
+
+    def walk(x, depth):
+        if not isinstance(x, dict) or x.get("type") not in PARA_NODES or depth > PARA_MAX_DEPTH:
+            raise ValueError(f"paragraph block: unsupported node {x.get('type') if isinstance(x, dict) else x!r}")
+        n[0] += 1
+        if n[0] > PARA_MAX_NODES:
+            raise ValueError("paragraph block: too many nodes")
+        for c in x.get("content") or []:
+            walk(c, depth + 1)
+    walk(doc, 0)
+    if doc["type"] != "doc":
+        raise ValueError("paragraph block content must be a doc")
+    return doc
+
+
+class ParagraphBlock(BaseModel):
+    type: Literal["paragraph"]
+    id: str | None = _Bid
+    slot: str = SlotName
+    content: dict
+
+    @field_validator("content")
+    @classmethod
+    def _content(cls, v):
+        return check_para(v)
+
+
+Block = Annotated[Union[SnippetRefBlock, HeadingBlock, PageBreakBlock, TocBlock, ParagraphBlock], Field(discriminator="type")]
 
 
 class VarDecl(BaseModel):

@@ -114,6 +114,8 @@ def create(ctx: Ctx, d: Document, fmt: str) -> Export:
     for b in spec["blocks"]:
         v = "pin" in b and C.version_at(git.repo_path(ctx.org_id, b["pin"]["folder_id"]), b["pin"]["sha"], b["pin"]["snippet_id"])
         used_variables(v and v["content"], used)
+        if b["type"] == "paragraph":
+            used_variables(b["content"], used)
     v = spec["variables"]
     own = {d["name"] for d in v["declarations"]}
     merged = dict(v, declarations=[*(d for d in spec["base_variables"] if d["name"] not in own), *v["declarations"]])
