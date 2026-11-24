@@ -75,7 +75,7 @@ function ImportEditor({ id, me }: { id: string; me: Me }) {
       <h3>Imported document</h3>
       {warnings.length > 0 && <div role="note" data-testid="import-warnings" style={{ background: "#fff6e0", padding: "4px 12px" }}>
         <b>Not fully editable ({warnings.length}):</b><ul>{warnings.map((w) => <li key={w}>{w}</li>)}</ul></div>}
-      <RichEditor qkey={qkey} me={me} keyOf={() => id}
+      <RichEditor qkey={qkey} me={me} keyOf={() => id} lookSrc={{ import: id }}
         load={() => api<ImportDoc>(`/imports/${id}`)}
         save={(b) => api<ImportDoc>(`/imports/${id}`, "PUT", { title: b.title, content: b.content })}
         actions={({ editor: ed, flush }) => <>

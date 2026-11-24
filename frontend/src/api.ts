@@ -22,6 +22,17 @@ export async function api<T = unknown>(path: string, method = "GET", body?: unkn
   return (r.status === 204 ? undefined : await r.json()) as T;
 }
 
+/** POST JSON, get the raw body back (PDF). Same CSRF handling as api(). */
+export async function apiBlob(path: string, body: unknown): Promise<Blob> {
+  if (!readCookie("docgen_csrf")) await fetch("/api/auth/csrf");
+  const r = await fetch("/api" + path, { method: "POST", headers: { "Content-Type": "application/json", "X-CSRF-Token": readCookie("docgen_csrf") ?? "" }, body: JSON.stringify(body) });
+  if (!r.ok) {
+    const d = (await r.json().catch(() => ({}))).detail;
+    throw new ApiError(r.status, typeof d === "string" ? d : r.statusText, d);
+  }
+  return r.blob();
+}
+
 export type Role = "owner" | "admin" | "editor" | "viewer";
 export const ROLES: Role[] = ["viewer", "editor", "admin", "owner"];
 export type Org = { id: string; name: string; role: Role };

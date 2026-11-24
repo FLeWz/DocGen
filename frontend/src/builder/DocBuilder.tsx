@@ -2,6 +2,7 @@ import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/rea
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, ApiError, BaseDoc, BaseDocVersion, Block, Commit, DocBody, DocFull, ExportStatus, LibraryGroup, Me, RefStatus, RevRow, Style, VarDecl } from "../api";
 import { PMNode } from "../editor/doc";
+import { useLook } from "../editor/look";
 import { Preview } from "../editor/SnippetEditor";
 import { insertAt, moveTo, newId, snippetBlock } from "./blocks";
 import { RevisionTable, VariablesForm } from "./Variables";
@@ -74,7 +75,8 @@ function SnippetRow({ b, st, ro, slots, set, onBump }: {
   );
 }
 
-function PreviewPanel({ blocks, st, styles }: { blocks: Block[]; st: RefStatus[]; styles: Style[] }) {
+function PreviewPanel({ blocks, st, styles, baseId }: { blocks: Block[]; st: RefStatus[]; styles: Style[]; baseId?: string }) {
+  const look = useLook({ base_doc: baseId ?? null }).data;
   const refs = blocks.filter((b): b is Extract<Block, { type: "snippet_ref" }> => b.type === "snippet_ref");
   const res = useQueries({ queries: refs.map((b) => {
     const sha = st.find((s) => s.block_id === b.id)?.resolved_sha;
@@ -94,7 +96,7 @@ function PreviewPanel({ blocks, st, styles }: { blocks: Block[]; st: RefStatus[]
     }
     return { type: "doc", content: out };
   }, [blocks, res.map((r) => r.data).join("|"), refs.length]); // eslint-disable-line react-hooks/exhaustive-deps
-  return <Preview doc={doc} styles={styles} />;
+  return <Preview doc={doc} styles={styles} look={look} zoom={0.55} />;
 }
 
 export function DocBuilder({ id, me, onClose, onCommit }: { id: string; me: Me; onClose: () => void; onCommit: () => void }) {
@@ -224,7 +226,7 @@ export function DocBuilder({ id, me, onClose, onCommit }: { id: string; me: Me; 
             {!ro && w.blocks.length > 0 && zone(w.blocks.length)}
           </ol>
           <Err e={doBump.error} />
-          {preview && <PreviewPanel blocks={w.blocks} st={updates.data ?? []} styles={styles.data ?? []} />}
+          {preview && <PreviewPanel blocks={w.blocks} st={updates.data ?? []} styles={styles.data ?? []} baseId={baseId} />}
         </div>
         <aside style={{ width: 300 }}>
           <p>

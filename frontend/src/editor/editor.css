@@ -2,23 +2,56 @@
 .ed-wrap > div { flex: 1; min-width: 0; }
 .ed-tb { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; align-items: center; }
 .ed-tb button.on { background: #cfe3ff; }
-.ProseMirror { min-height: 320px; border: 1px solid #bbb; padding: 8px 12px; background: #fff; }
-.ProseMirror table, .page table { border-collapse: collapse; width: 100%; }
-.ProseMirror td, .ProseMirror th, .page td, .page th { border: 1px solid #888; padding: 3px 6px; vertical-align: top; min-width: 2em; }
-.ProseMirror .selectedCell { background: #cfe3ff; }
-.ProseMirror table[data-dynamic-list] { outline: 2px dashed #7a5af8; }
-.ProseMirror img, .page img { max-width: 100%; }
+.word-pdf { width: 100%; height: 78vh; border: 1px solid #bbb; background: #fff; }
+
+/* ---- Word page ("paper"): <PageFrame>, shared by editor and previews. Page size/margins come from the DOCX (custom props set inline) ---- */
+.docx { --zoom: 1; }
+.docx .docx-stage, .docx-stage { background: #e8e8e8; padding: 12px; overflow: auto; max-height: 80vh; }
+.docx-page { display: flex; flex-direction: column; box-sizing: border-box; width: var(--pw); min-height: var(--ph); background: #fff;
+  box-shadow: 0 1px 6px #0004; margin: 0 auto; zoom: var(--zoom); font-family: Calibri, Carlito, sans-serif; font-size: 11pt; color: #000; }
+.docx-hdr, .docx-ftr { box-sizing: border-box; padding-left: var(--pl); padding-right: var(--pr); color: #000; opacity: .85; pointer-events: none; }
+.docx-hdr { padding-top: var(--hd); min-height: var(--pt); }
+.docx-ftr { padding-bottom: var(--ft); min-height: var(--pb); display: flex; flex-direction: column; justify-content: flex-end; }
+.docx-body { box-sizing: border-box; flex: 1; padding: 0 var(--pr) 0 var(--pl); min-width: 0; }
+/* optional page-break guides: a rule every body-height (header/footer assumed to fit the margins) */
+.docx.guides .docx-body { background-image: repeating-linear-gradient(to bottom, transparent 0, transparent calc(var(--bh) - 1px), #e5534b88 calc(var(--bh) - 1px), #e5534b88 var(--bh));
+  background-size: 100% var(--bh); background-clip: content-box; }
+/* Word paragraph spacing adds up; flex children don't collapse margins like HTML blocks do */
+.docx .ProseMirror, .docx .pv { display: flex; flex-direction: column; outline: none; white-space: pre-wrap; tab-size: 36pt; min-height: 120px; }
+.docx .ProseMirror > *, .docx .pv > * { flex: none; }
+/* zero-specificity resets: the look CSS (classes, :where defaults) and inline direct formats win */
+:where(.docx) :is(p, h1, h2, h3, h4, h5, h6) { margin: 0; font-size: inherit; font-weight: inherit; }
+.docx ul, .docx ol { margin: 0 0 8pt; padding-left: 36pt; }
+.docx li > p { margin-left: 0 !important; text-indent: 0 !important; }
+.docx img { max-width: 100%; align-self: flex-start; }
+.docx .img { display: block; }
+.docx .num { margin-right: .4em; }
+.docx .dyn-badge { font-size: 9pt; color: #7a5af8; }
+.docx tr.tpl { background: #f4f0ff; }
+.docx .pgbrk { display: block; height: 0; margin: 6pt 0; border-top: 1px dashed #c33; position: relative; user-select: none; }
+.docx .pgbrk::after { content: "page break"; position: absolute; right: 0; top: -.9em; font: 8pt monospace; color: #c33; background: #fff; padding: 0 4px; }
+.docx .fnref { font-size: 8pt; vertical-align: super; }
+
+/* tables: borders come from custom properties set per table (direct tblBorders or the table style, see look CSS) */
+.docx table { border-collapse: collapse; margin-bottom: 8pt; --b-def: 1px solid #888; }
+.docx table.tbl { width: auto; }
+.docx td, .docx th { padding: 0 5.4pt; vertical-align: top; min-width: 1em; font-weight: inherit; text-align: inherit;
+  border-top: var(--b-insideH, var(--b-def)); border-bottom: var(--b-insideH, var(--b-def)); border-left: var(--b-insideV, var(--b-def)); border-right: var(--b-insideV, var(--b-def)); }
+.docx tr:first-child > :is(td, th) { border-top: var(--b-top, var(--b-insideH, var(--b-def))); }
+.docx tr:last-child > :is(td, th) { border-bottom: var(--b-bottom, var(--b-insideH, var(--b-def))); }
+.docx tr > :is(td, th):first-child { border-left: var(--b-left, var(--b-insideV, var(--b-def))); }
+.docx tr > :is(td, th):last-child { border-right: var(--b-right, var(--b-insideV, var(--b-def))); }
+.docx .ProseMirror .selectedCell { background: #cfe3ff; }
+.docx .ProseMirror table[data-dynamic-list] { outline: 2px dashed #7a5af8; }
 .var-chip { background: #ece6ff; color: #4b2db8; border-radius: 4px; padding: 0 4px; font-family: monospace; font-size: .9em; }
 .ProseMirror .ProseMirror-selectednode.var-chip { outline: 2px solid #4b2db8; }
-.page-scroll { background: #e8e8e8; padding: 12px; overflow: auto; max-height: 75vh; }
-/* A4 with 2.5 cm margins, scaled down to fit the pane */
-.page { width: 21cm; min-height: 29.7cm; box-sizing: border-box; padding: 2.5cm; background: #fff; box-shadow: 0 1px 6px #0004;
-  zoom: .55; font-family: Calibri, Carlito, sans-serif; font-size: 11pt; margin: 0 auto; }
-.page.small { zoom: .35; min-height: 0; }
-.page p { margin: 0 0 8pt; }
-.page .num { margin-right: .4em; }
-.page .dyn-badge { font-size: 9pt; color: #7a5af8; }
-.page tr.tpl { background: #f4f0ff; }
-.page ul, .page ol { margin: 0 0 8pt; }
+
+/* opaque (not editable) blocks: faithful HTML of their OOXML, or a labelled chip */
+.opaque-view { position: relative; cursor: default; }
+.opaque-view:hover { outline: 1px dashed #aaa; }
+.ProseMirror .opaque-view.ProseMirror-selectednode { outline: 2px solid #555; }
+.docx .txbx { display: inline-block; vertical-align: top; box-sizing: border-box; border: 1px solid #999; padding: 3pt 5pt; max-width: 100%; }
+.docx .tabbed { display: flex; align-items: baseline; }
+.docx .tabbed .lead { flex: 1; border-bottom: 1px dotted #000; margin: 0 .25em; min-width: 1em; }
 .opaque-chip { display: block; width: fit-content; margin: 4px 0; padding: 2px 10px; background: #e3e3e3; color: #555; border: 1px dashed #999; border-radius: 12px; font: .85em monospace; user-select: none; }
 .ProseMirror .opaque-chip.ProseMirror-selectednode { outline: 2px solid #555; }

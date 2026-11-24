@@ -1,0 +1,58 @@
+import { expect, test } from "vitest";
+import { cellCss, fontStack, pfmtCss, runCss, tableCss } from "./fmt";
+import { ooxmlToHtml } from "./ooxml";
+
+const NS = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" ' +
+  'xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" ' +
+  'xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"';
+
+test("font stacks fall back to metric-compatible fonts", () => {
+  expect(fontStack("Calibri")).toBe("'Calibri', 'Carlito', sans-serif");
+  expect(fontStack("Garamond")).toBe("'Garamond', serif");
+});
+
+test("exact/atLeast line spacing is points, auto is a multiple; justify maps to CSS", () => {
+  expect(pfmtCss({ line: 240, lineRule: "exact", jc: "both" })).toBe("text-align:justify;line-height:12pt");
+  expect(pfmtCss({ line: 240 })).toBe("line-height:1.2");
+  expect(runCss({ size: 21, caps: true })).toBe("font-size:10.5pt;text-transform:uppercase");
+  expect(cellCss({ bdr: { left: { val: "nil" } } })).toBe("border-left:none");
+  expect(tableCss({ width: { w: 5000, type: "pct" }, jc: "center" })).toBe("width:100%;table-layout:fixed;max-width:100%;margin-left:auto;margin-right:auto");
+});
+
+test("field instructions are hidden, the cached result stays (TOC / REF / FORMTEXT)", () => {
+  const h = ooxmlToHtml(`<w:p ${NS}><w:pPr><w:pStyle w:val="Subtitle"/></w:pPr><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText> REF X </w:instrText></w:r>` +
+    `<w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:rPr><w:b/><w:color w:val="FF0000"/></w:rPr><w:t>RESULT</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>`);
+  expect(h).toContain("RESULT");
+  expect(h).not.toContain("REF X");
+  expect(h).toContain('class="st-Subtitle"');
+  expect(h).toContain("<strong>");
+  expect(h).toContain("color:#FF0000");
+});
+
+test("text box content, content control, tabs with leader (TOC), footnote reference", () => {
+  const box = ooxmlToHtml(`<w:p ${NS}><w:r><mc:AlternateContent><mc:Choice><w:drawing><wp:inline><wp:extent cx="952500" cy="95250"/><a:graphic><w:txbxContent><w:p><w:r><w:t>IN-BOX</w:t></w:r></w:p></w:txbxContent></a:graphic></wp:inline></w:drawing></mc:Choice>` +
+    `<mc:Fallback><w:pict><w:txbxContent><w:p><w:r><w:t>IN-BOX</w:t></w:r></w:p></w:txbxContent></w:pict></mc:Fallback></mc:AlternateContent></w:r></w:p>`);
+  expect(box.match(/IN-BOX/g)).toHaveLength(1); // Choice only, not the Fallback copy
+  expect(box).toContain('class="txbx" style="width:100px"');
+  const sdt = ooxmlToHtml(`<w:sdt ${NS}><w:sdtContent><w:p><w:pPr><w:pStyle w:val="TOC1"/></w:pPr><w:r><w:t>Intro</w:t></w:r><w:r><w:tab/></w:r><w:r><w:t>3</w:t></w:r></w:p></w:sdtContent></w:sdt>`);
+  expect(sdt).toContain('class="st-TOC1 tabbed"');
+  expect(sdt).toContain('<span class="lead"></span><span><span>3</span></span>');
+  expect(ooxmlToHtml(`<w:p ${NS}><w:r><w:footnoteReference w:id="2"/></w:r></w:p>`)).toContain('<sup class="fnref">2</sup>');
+});
+
+test("tables: grid, shading, vertical merge, borders", () => {
+  const h = ooxmlToHtml(`<w:tbl ${NS}><w:tblPr><w:tblBorders><w:top w:val="single" w:sz="4" w:color="909FA4"/></w:tblBorders></w:tblPr><w:tblGrid><w:gridCol w:w="2000"/><w:gridCol w:w="1000"/></w:tblGrid>` +
+    `<w:tr><w:tc><w:tcPr><w:vMerge w:val="restart"/><w:shd w:fill="D9E2F3"/></w:tcPr><w:p><w:r><w:t>A</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>B</w:t></w:r></w:p></w:tc></w:tr>` +
+    `<w:tr><w:tc><w:tcPr><w:vMerge/></w:tcPr><w:p/></w:tc><w:tc><w:p><w:r><w:t>D</w:t></w:r></w:p></w:tc></w:tr></w:tbl>`);
+  expect(h).toContain('rowspan="2" style="background:#D9E2F3"');
+  expect(h).toContain("--b-top:0.5pt solid #909FA4");
+  expect(h).toContain('<col style="width:66.67%"><col style="width:33.33%">');
+  expect(h.match(/<td/g)).toHaveLength(3);
+});
+
+test("images come only from the server-provided media map; junk XML gives empty output", () => {
+  const xml = `<w:p ${NS}><w:r><w:drawing><wp:inline><wp:extent cx="952500" cy="476250"/><a:graphic><a:blip r:embed="rId5"/></a:graphic></wp:inline></w:drawing></w:r></w:p>`;
+  expect(ooxmlToHtml(xml, { rId5: "data:image/png;base64,AAAA" })).toContain('<img src="data:image/png;base64,AAAA" alt="" style="width:100px;height:50px">');
+  expect(ooxmlToHtml(xml, { rId5: "javascript:alert(1)" })).not.toContain("<img");
+  expect(ooxmlToHtml("<w:p><unclosed")).toBe("");
+});
