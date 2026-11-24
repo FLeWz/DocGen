@@ -80,8 +80,8 @@ export function TableTab({ editor, ui, off, styles, onCaption }: { editor: Edito
   const G = ({ label, children }: { label: string; children: React.ReactNode }) => <div className="rgroup" role="group" aria-label={label}><div className="rrow">{children}</div><div className="rlabel">{label}</div></div>;
   return <>
     <G label="Rows and columns">
-      <I i="rowAdd" t="Insert row above" fn={a.rowAbove} /><I i="rowAdd" t="Insert row below" fn={a.rowBelow} />
-      <I i="colAdd" t="Insert column left" fn={a.colLeft} /><I i="colAdd" t="Insert column right" fn={a.colRight} />
+      <I i="rowAdd" t="Insert row above" flip fn={a.rowAbove} /><I i="rowAdd" t="Insert row below" fn={a.rowBelow} />
+      <I i="colAdd" t="Insert column left" flip fn={a.colLeft} /><I i="colAdd" t="Insert column right" fn={a.colRight} />
       <I i="rowDel" t="Delete row" fn={a.delRows} /><I i="colDel" t="Delete column" fn={a.delCols} /><I i="trash" t="Delete table" fn={a.delTable} />
       <I i="rowAdd" t="Duplicate row" fn={a.dupRow} /><I i="colAdd" t="Duplicate column" fn={a.dupCol} />
       <I i="chevU" t="Move row up (Alt+Shift+Up)" fn={() => a.moveRow(-1)} /><I i="chevD" t="Move row down (Alt+Shift+Down)" fn={() => a.moveRow(1)} />
@@ -254,7 +254,7 @@ export function TableTools({ editor, ro }: { editor: Editor; ro: boolean }) {
         return <>
           <div className="tt-bar" data-testid="table-toolbar" role="toolbar" aria-label="Table tools" style={{ left: Math.max(X0, 2), top: tbTop }} onMouseDown={(e) => e.preventDefault()}>
             {sel && sel.pos === geo.pos ? <>
-              <Btn i="rowAdd" t="Insert row above" fn={a.rowAbove} /><Btn i="rowAdd" t="Insert row below" fn={a.rowBelow} /><Btn i="colAdd" t="Insert column left" fn={a.colLeft} /><Btn i="colAdd" t="Insert column right" fn={a.colRight} />
+              <Btn i="rowAdd" t="Insert row above" flip fn={a.rowAbove} /><Btn i="rowAdd" t="Insert row below" fn={a.rowBelow} /><Btn i="colAdd" t="Insert column left" flip fn={a.colLeft} /><Btn i="colAdd" t="Insert column right" fn={a.colRight} />
               <Btn i="rowDel" t="Delete row" fn={a.delRows} /><Btn i="colDel" t="Delete column" fn={a.delCols} /><Btn i="merge" t="Merge cells" fn={a.merge} /><Btn i="split" t="Split cell" fn={a.split} />
               <Btn i="trash" t="Delete table" fn={a.delTable} /><Btn i="refresh" t="Dynamic rows…: header row → variables, body rows → default values" fn={a.dynamic} />
             </> : <span className="muted small">Click in the table to edit it</span>}

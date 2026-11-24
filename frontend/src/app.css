@@ -238,3 +238,5 @@ dialog.modal.tall { width: min(1100px, 94vw); height: calc(100vh - 32px); max-he
 .noticetext { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
 .noticebody { max-height: 40vh; overflow: auto; padding: 0 12px 8px 36px; color: var(--text); border-top: 1px solid #0001; }
 .noticebody ul { margin: 4px 0 0; padding-left: 18px; }
+
+.tb.flip svg { transform: rotate(180deg); }

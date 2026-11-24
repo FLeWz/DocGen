@@ -44,9 +44,9 @@ export const BORDERS_SIDE = (val: string) => ({ val, sz: 4, color: "000000" });
 const BORDERS_ON = Object.fromEntries(["top", "left", "bottom", "right"].map((k) => [k, BORDERS_SIDE("single")]));
 const BORDERS_OFF = Object.fromEntries(["top", "left", "bottom", "right"].map((k) => [k, { val: "nil", sz: 0 }]));
 
-export function Btn({ i, t, label, on, fn, off }: { i: string; t: string; label?: string; on?: boolean; fn: () => void; off?: boolean }) {
+export function Btn({ i, t, label, on, fn, off, flip }: { i: string; t: string; label?: string; on?: boolean; fn: () => void; off?: boolean; flip?: boolean }) {
   return (
-    <button type="button" className={`tb ${on ? "on" : ""} ${label ? "wide" : ""}`} disabled={off} title={t} aria-label={t} aria-pressed={on}
+    <button type="button" className={`tb ${on ? "on" : ""} ${label ? "wide" : ""}${flip ? " flip" : ""}`} disabled={off} title={t} aria-label={t} aria-pressed={on}
       onMouseDown={(e) => e.preventDefault()} onClick={fn}><Icon n={i} />{label && <span>{label}</span>}</button>
   );
 }
