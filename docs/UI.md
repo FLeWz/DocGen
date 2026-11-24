@@ -39,3 +39,9 @@ Stable `data-testid`s are used by `e2e/*.py`: `preview`, `word-pdf`, `save-statu
 
 ## Base documents (round 5A)
 - Import page: badge `{{ CONTENT }}` set / none, buttons `{{ CONTENT }}` (Ctrl+Alt+C, inserts a dashed `p[data-slot]` at the cursor), *Insert slot…*, *Find variables*. The variables modal (`builder/FindVariables.tsx`) lists Use / Where / Detected value / Variable name; *Use as base document* embeds the same table. Settings > Base documents > Versions shows the head version's variables (editable defaults, list defaults as rows); the document builder shows them under *Base document*.
+
+## Editor ribbon and structure (round 5B)
+
+- Ribbon with tabs Home / Insert / Layout / References / Review (`data-testid="ribbon"`, collapsible). Tooltips carry the shortcut.
+- View bar: `Select blocks` (gutter handles), `N blocks selected` (`data-testid="sel-count"`), `Structure` toggle (sidebar `data-testid="structure"`: headings, marked sections with rename/jump/unmark, lists, captions).
+- Click a page header/footer in the editor pane to open `hf-editor` (section / part / variant selects, a RichEditor box `hf-box`, Done). Page headers update live.

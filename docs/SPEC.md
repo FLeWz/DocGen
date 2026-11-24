@@ -112,6 +112,10 @@ Keep the layout simple: left sidebar (org switcher, folder tree), main area, rig
 
 ---
 
+### Editor (round 5B)
+
+Imports and snippets share one editor with a ribbon. Imported documents also edit their header/footer parts (stored as `content.hf`, written back on export, untouched parts byte-identical). Ranges of blocks can be marked as sections, appendices, TOC, list of figures or list of tables (bookmark ranges / SDT+field). Snippets can be created from any selection; the client sends the selected blocks. See DECISIONS round 5B.
+
 ## 5. Export pipeline (DOCX + PDF)
 
 1. Load the pinned base document version.

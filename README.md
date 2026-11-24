@@ -88,6 +88,10 @@ exporter, converted by Gotenberg/LibreOffice; slower, but real pagination) or of
 API: `GET /api/styles/css?import=<id>|base_doc=<id>`, `POST /api/render/pdf`. Scripted check on any DOCX:
 `E2E_FIDELITY_DOCX=file.docx E2E_FIDELITY_PAGES=<n> python e2e/fidelity.py` (needs a user from `scripts/e2e-users.sh`).
 
+## Editing
+
+The editor has a ribbon (Home / Insert / Layout / References / Review). On an imported DOCX, click a page header or footer to edit it; use References → Mark as… for sections and generated TOC/figure/table lists; use *Select blocks* or any selection (any size, across pages) for *Create snippet from selection*. Details: docs/DECISIONS.md, round 5B.
+
 ## Architecture
 
 ```
