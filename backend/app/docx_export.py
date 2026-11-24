@@ -23,7 +23,7 @@ from PIL import Image as PILImage
 
 from . import fmt
 from .base_docs import CONTENT_RE, SLOT_RE
-from .docx_vars import clip_tables, fix_fields, text_width
+from .docx_vars import clean_rows, clip_tables, fix_fields, text_width
 from .docx_rich import Rich, bm_name, seq_numbers
 from .ooxml import add_field, opaque_element, stable_zip
 
@@ -112,6 +112,17 @@ def render_texts(roots, ctx: dict, missing: set, warnings: list, done: set) -> N
                 try:
                     t.text = env.from_string(s).render(ctx)
                     t.set(qn("xml:space"), "preserve")
+                    if "\n" in t.text:  # a value with line breaks (default rows keep them): real <w:br/> between the parts
+                        first, *rest = t.text.split("\n")
+                        t.text, at = first, t
+                        for part in rest:
+                            br = OxmlElement("w:br")
+                            nt = OxmlElement("w:t")
+                            nt.text = part
+                            nt.set(qn("xml:space"), "preserve")
+                            at.addnext(br)
+                            br.addnext(nt)
+                            at = nt
                 except Exception as e:  # syntax error / sandbox violation: keep the text as typed
                     warnings.append(f"template text left as is: {s[:40]!r} ({type(e).__name__})")
 
@@ -266,6 +277,7 @@ class Builder(Rich):
         self.doc, self.load_asset, self.warn, self.rels = doc, load_asset, warnings, rels
         self.styles = {s.style_id for s in doc.styles}
         self.num = Numbering(doc)
+        self.list_defaults: dict = {}  # dynamic tables' default rows (attrs.dynamicRows): used when no value is given
         self.top = [doc]  # containers whose tables may be built (the body, header/footer parts)
         self._init_rich(max([int(x.get(qn("w:id"))) for x in doc.element.body.iter(qn("w:bookmarkStart")) if (x.get(qn("w:id")) or "").isdigit()] + [9000]))
         self.note_base = {k: max([int(x.get(qn("w:id"))) for part in doc.part.package.iter_parts() if str(part.partname) == f"/word/{k}s.xml"
@@ -511,6 +523,8 @@ class Builder(Rich):
         if name and not re.fullmatch(r"[A-Za-z_]\w*", str(name)):
             self.warn.append(f"dynamic table: invalid list name {name!r}")
             name = None
+        if name and (rows_ := clean_rows((n.get("attrs") or {}).get("dynamicRows"))) is not None:
+            self.list_defaults.setdefault(name, rows_)
         if name:  # the last row is the row template; expand_rows repeats it between these markers
             last = t.rows[-1]._tr
             for tag, txt in (("addprevious", f"{{%tr for row in {name} %}}"), ("addnext", "{%tr endfor %}")):
@@ -679,6 +693,8 @@ def build(spec: dict, base: bytes, load_content, load_asset) -> tuple[bytes, lis
     for r in roots[1:]:
         clip_tables(r, tw, warnings)
     ctx, done = context(spec), set()
+    for n_, rows_ in b.list_defaults.items():  # a dynamic table's own rows: the default when neither the document nor the base declares the list
+        ctx.setdefault(n_, rows_)
     for r in roots:
         expand_rows(r, ctx, missing, warnings, done)
     render_texts(roots, ctx, missing, warnings, done)

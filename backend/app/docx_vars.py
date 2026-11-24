@@ -325,6 +325,39 @@ DEFAULT_RE = re.compile(r"\|\s*default\(\s*(['\"])(.*?)\1")
 FOR_RE = re.compile(r"\{%tr\s+for\s+([A-Za-z_]\w*)\s+in\s+([A-Za-z_]\w*)\s*%\}")
 
 
+COL_RE = re.compile(r"[A-Za-z_]\w{0,39}")
+
+
+def clean_rows(rows, cols=None) -> list | None:
+    """Default rows of a dynamic table (attrs.dynamicRows from the editor): <= 1000 rows of <= 20 scalar columns with valid names, else None."""
+    if not isinstance(rows, list) or len(rows) > 1000:
+        return None
+    out = []
+    for r in rows:
+        if not isinstance(r, dict) or len(r) > 20 or not all(isinstance(k, str) and COL_RE.fullmatch(k) for k in r):
+            return None
+        out.append({k: "" if v is None else v if isinstance(v, (str, int, float)) and not isinstance(v, bool) else str(v) for k, v in r.items()})
+    return out
+
+
+def table_decls(content) -> list[dict]:
+    """List-variable declarations (name, columns, default rows) for the dynamic tables of editor content that carry default rows."""
+    out: dict = {}
+
+    def rec(n):
+        if not isinstance(n, dict):
+            return
+        a = n.get("attrs") or {}
+        if n.get("type") == "table" and isinstance(a.get("dynamicList"), str) and re.fullmatch(r"[A-Za-z_]\w*", a["dynamicList"]) and (rows := clean_rows(a.get("dynamicRows"))) is not None:
+            cols = [c for c in (a.get("dynamicCols") or []) if isinstance(c, str) and COL_RE.fullmatch(c)][:20]
+            cols += [k for r in rows for k in r if k not in cols][:max(20 - len(cols), 0)]
+            out.setdefault(a["dynamicList"], dict(name=a["dynamicList"], type="list", columns=cols, default=rows))
+        for c in n.get("content") or []:
+            rec(c)
+    rec(content)
+    return list(out.values())
+
+
 def parse_vars(roots: list, existing: list | None = None) -> list[dict]:
     """Variables a base document uses: `{{ name }}` text and `{%tr for x in list %}` table loops (columns from
     `{{ x.col }}`). Built-ins, CONTENT, SLOT and loops over built-in lists are skipped. Entries of `existing` (edited

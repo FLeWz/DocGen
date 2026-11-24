@@ -33,7 +33,8 @@ def used_variables(node, out: dict) -> None:
     a = node.get("attrs") or {}
     t = node.get("type")
     if t == "table" and a.get("dynamicList"):
-        out.setdefault(a["dynamicList"], dict(list=True, required=True))["list"] = True
+        o = out.setdefault(a["dynamicList"], dict(list=True, required=True))
+        o["list"], o["required"] = True, o["required"] and not isinstance(a.get("dynamicRows"), list)  # its own default rows (made from existing rows)
     if t == "variable":
         n = a.get("name") or ""
         if not n.startswith("row.") and n.split(".")[0] not in BUILTIN_ROOTS:

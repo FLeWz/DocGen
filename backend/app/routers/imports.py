@@ -119,6 +119,9 @@ def put_import(import_id: UUID, body: ImportPut, ctx: Ctx = E):
     except ValueError as e:
         raise HTTPException(422, f"invalid opaque block: {e}")
     i.content = body.content
+    decls = docx_vars.table_decls(body.content)  # dynamic tables made from existing rows: the list variable with its default rows
+    if decls:
+        i.variables = [*(d for d in (i.variables or []) if d["name"] not in {x["name"] for x in decls}), *decls]
     if body.title:
         i.title = body.title
     ctx.db.commit()
@@ -261,7 +264,7 @@ def use_as_base(import_id: UUID, body: ImportBaseIn, ctx: Ctx = A):
         data = D.as_base_doc(_orig(ctx, i), i.content, _asset(ctx))
     except Exception as e:
         raise HTTPException(422, f"export failed: {type(e).__name__}: {e}")
-    v = _store(ctx, bd, data, i.filename, f"From import '{i.title}'", i.variables)
+    v = _store(ctx, bd, data, i.filename, f"From import '{i.title}'", [*docx_vars.table_decls(i.content), *(i.variables or [])])
     ctx.db.commit()
     return dict(base_document_id=bd.id, name=bd.name, version=v.number, sha=v.sha, placeholders=v.placeholders)
 
