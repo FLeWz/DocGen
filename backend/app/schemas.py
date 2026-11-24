@@ -387,10 +387,19 @@ class ImportPut(BaseModel):
 
 
 class SelectionIn(BaseModel):
+    """Either `blocks` (the selected top-level blocks as the editor holds them: independent of whether the autosave
+    reached the server) or a block index range [start, end) of the stored content."""
     folder_id: UUID
     title: str = Field(min_length=1, max_length=200)
-    start: int = Field(ge=0)  # top-level block index range [start, end) of the import's content
-    end: int = Field(gt=0)
+    start: int | None = Field(default=None, ge=0)
+    end: int | None = Field(default=None, gt=0)
+    blocks: list[dict] | None = Field(default=None, min_length=1, max_length=5000)
+
+    @model_validator(mode="after")
+    def _one_source(self):
+        if self.blocks is None and (self.start is None or self.end is None):
+            raise ValueError("give blocks or start+end")
+        return self
 
 
 class SplitIn(BaseModel):

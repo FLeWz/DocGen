@@ -5,7 +5,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, Doc, isAdmin, Me } from "../api";
 import { Candidates } from "../builder/FindVariables";
 import { hasContentSlot, Pick } from "../builder/picks";
-import { blockRange } from "../editor/blockrange";
+import { blockRange, selectedBlocks } from "../editor/blockrange";
 import { RichEditor } from "../editor/SnippetEditor";
 import { canEdit, folderLabel, ImportRow, useFolders, useImports } from "../data";
 import { PageHead } from "../Shell";
@@ -50,13 +50,14 @@ export function ImportPage({ me }: { me: Me }) {
   const folders = useFolders(me);
   const [panel, setPanel] = useState<"sel" | "split" | "base" | "vars" | null>(null);
   const [rev, setRev] = useState(0), [sel2, setSel2] = useState<{ picks: Pick[]; error: string }>({ picks: [], error: "" }), edRef = useRef<Editor | null>(null);
-  const [range, setRange] = useState<[number, number]>([0, 1]);
+  const [range, setRange] = useState<[number, number]>([0, 1]), picked = useRef<unknown[]>([]);
   const [folder, setFolder] = useState(""), [title, setTitle] = useState(""), [level, setLevel] = useState(1), [name, setName] = useState("");
   const f = folder || folders.data?.[0]?.id || "";
   const edit = canEdit(me), admin = isAdmin(me.org?.role);
   const preview = useQuery({ queryKey: ["split", id, level], enabled: panel === "split", queryFn: () => api<Section[]>(`/imports/${id}/split?level=${level}`) });
   const done = (t: string) => { ui.toast(t); setPanel(null); qc.invalidateQueries(); };
-  const sel = useMutation({ mutationFn: () => api<Created>(`/imports/${id}/selection-snippet`, "POST", { folder_id: f, title, start: range[0], end: range[1] }), onSuccess: (r) => done(`Created snippet draft "${r.title}"${r.warnings.length ? ` (${r.warnings[0]})` : ""}`) });
+  const sel = useMutation({ mutationFn: () => api<Created>(`/imports/${id}/selection-snippet`, "POST", { folder_id: f, title, blocks: picked.current }), // the blocks themselves: independent of the autosave reaching the server
+     onSuccess: (r) => done(`Created snippet draft "${r.title}"${r.warnings.length ? ` (${r.warnings[0]})` : ""}`) });
   const split = useMutation({ mutationFn: () => api<Created[]>(`/imports/${id}/split`, "POST", { folder_id: f, level }), onSuccess: (r) => done(`Created ${r.length} snippet drafts`) });
   // the editor holds the old text after the server replaced values: a new key makes it load the stored content again
   const applyVars = () => api(`/imports/${id}/variables`, "POST", { items: sel2.picks }).then(() => { if (sel2.picks.length) { setRev((r) => r + 1); return qc.invalidateQueries({ queryKey: qkey }); } });
@@ -91,7 +92,7 @@ export function ImportPage({ me }: { me: Me }) {
           {edit && <button className="btn" title="Insert a {{ CONTENT }} paragraph at the cursor (Ctrl+Alt+C)" onClick={() => insertSlot(false)}><Icon n="plus" />{"{{ CONTENT }}"}</button>}
           {edit && <button className="btn" onClick={() => insertSlot(true)}><Icon n="plus" />Insert slot…</button>}
           {edit && <button className="btn" onClick={async () => { await flush(); setPanel("vars"); }}><Icon n="layers" />Find variables</button>}
-          {edit && <button className="btn" onClick={async () => { await flush(); setRange(blockRange(ed)); setTitle(""); setPanel("sel"); }}><Icon n="file" />Create snippet from selection</button>}
+          {edit && <button className="btn" onClick={async () => { await flush(); setRange(blockRange(ed)); picked.current = selectedBlocks(ed); setTitle(""); setPanel("sel"); }}><Icon n="file" />Create snippet from selection</button>}
           {edit && <button className="btn" onClick={async () => { await flush(); setPanel("split"); }}><Icon n="layers" />Split by headings</button>}
           {admin && <button className="btn" onClick={async () => { await flush(); setPanel("base"); }}><Icon n="doc" />Use as base document</button>}
           <button className="btn primary" onClick={async () => { await flush(); location.href = `/api/imports/${id}/export`; }}><Icon n="download" />Export DOCX</button>
@@ -99,7 +100,7 @@ export function ImportPage({ me }: { me: Me }) {
       {panel === "sel" && (
         <Modal title="Create snippet from selection" onClose={() => setPanel(null)} actions={<>{cancel}<button className="btn primary" form="sel-form" disabled={!f || sel.isPending}>Create snippet</button></>}>
           <form id="sel-form" className="stack" onSubmit={(e) => { e.preventDefault(); sel.mutate(); }}>
-            <p className="muted">Blocks {range[0] + 1}–{range[1]} of the selection become a snippet draft (styles and images kept).</p>
+            <p className="muted">{range[1] - range[0]} block{range[1] - range[0] === 1 ? "" : "s"} (no. {range[0] + 1}–{range[1]}) become a snippet draft (styles and images kept).</p>
             {folderPick}<Field label="Snippet title">{(i) => <input id={i} value={title} onChange={(e) => setTitle(e.target.value)} required autoFocus />}</Field><ErrorBanner e={sel.error} />
           </form>
         </Modal>)}

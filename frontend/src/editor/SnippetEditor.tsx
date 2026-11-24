@@ -5,6 +5,7 @@ import { EditorContent, useEditor, useEditorState } from "@tiptap/react";
 import { ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, apiBlob, BaseDoc, Doc, Draft, Me, Style } from "../api";
 import { ErrorBanner, Field, Icon, Modal, Notice, NoticeBar, Spinner, useUI } from "../ui";
+import { blockRange, hasSelection, selectModeOn, setSelectMode } from "./blockrange";
 import { effectiveStyle, extractStyles, extractVariables, NAME_RE, PMNode } from "./doc";
 import "./editor.css";
 import { headingNumbering, pagedExtensions } from "./extensions";
@@ -113,7 +114,8 @@ export function RichEditor({ qkey, load, save, keyOf, me, idleSaved, notices = [
         bold: e.isActive("bold"), italic: e.isActive("italic"), underline: e.isActive("underline"), link: e.isActive("link"),
         jc: (p.attrs.pfmt?.jc as string | undefined) ?? "left", bullet: e.isActive("bulletList"), ordered: e.isActive("orderedList"), table: e.isActive("table"), headerRow: e.isActive("tableHeader"),
         dynamic: (e.getAttributes("table").dynamicList as string | null) ?? null,
-        variable: sel instanceof NodeSelection && sel.node.type.name === "variable" };
+        variable: sel instanceof NodeSelection && sel.node.type.name === "variable",
+        nsel: hasSelection(e) ? blockRange(e)[1] - blockRange(e)[0] : 0, selMode: selectModeOn(e) };
     },
   });
 
@@ -188,7 +190,10 @@ export function RichEditor({ qkey, load, save, keyOf, me, idleSaved, notices = [
   const B = (p: Omit<React.ComponentProps<typeof Btn>, "ro">) => <Btn ro={ro} {...p} />;
 
   return (
-    <div className="editorpage">
+    <div className="editorpage" onKeyDown={(e) => {  // Ctrl+A with focus on the toolbar/page would select the web page, not the document
+      const t = e.target as HTMLElement;
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "a" && !t.closest("input,textarea,select,[contenteditable=true]")) { e.preventDefault(); editor.chain().focus().selectAll().run(); }
+    }}>
       <div className="edhead">
         <input className="titleinput" value={title} disabled={ro} aria-label="Title" placeholder="Untitled" onChange={(e) => { setTitle(e.target.value); titleRef.current = e.target.value; touch(); }} />
         <span className={`savestatus ${status}`} data-testid="save-status" data-status={status} role="status">
@@ -243,6 +248,8 @@ export function RichEditor({ qkey, load, save, keyOf, me, idleSaved, notices = [
         <button type="button" className={`btn sm ${guides ? "on" : ""}`} aria-pressed={guides} onClick={() => setGuides(!guides)}>Page guides</button>
         {pv === "word" && <button type="button" className="btn sm" disabled={pdf.busy} onClick={renderWord}>{pdf.busy ? "Rendering…" : "Re-render PDF"}</button>}
         <span className="muted small" data-testid="page-count" title="Estimated page count (browser layout; Word/LibreOffice may differ)">{lay ? `${lay.total} page${lay.total === 1 ? "" : "s"} (est.)` : ""}</span>
+        <button type="button" className={`btn sm ${st?.selMode ? "on" : ""}`} aria-pressed={!!st?.selMode} title="Show a handle on every block: click selects one block, Shift+click a range (works across pages)" onMouseDown={(e) => e.preventDefault()} onClick={() => setSelectMode(editor, !st?.selMode)}>Select blocks</button>
+        <span className="small" data-testid="sel-count" aria-live="polite">{st?.nsel ? <b>{st.nsel} block{st.nsel === 1 ? "" : "s"} selected</b> : ""}</span>
         <span className="spacer" />
         <span className="muted small">Styles: {extractStyles(doc).join(", ") || "—"} · Variables: {extractVariables(doc).join(", ") || "—"}</span>
       </div>

@@ -176,10 +176,22 @@ def split_apply(import_id: UUID, body: SplitIn, ctx: Ctx = E):
 @router.post("/imports/{import_id}/selection-snippet", status_code=201, response_model=ImportSnippetOut)
 def selection_snippet(import_id: UUID, body: SelectionIn, ctx: Ctx = E):
     i, f = _get(ctx, import_id), vcs.get_folder(ctx, body.folder_id)
-    blocks = i.content.get("content") or []
-    if body.end > len(blocks) or body.start >= body.end:
-        raise HTTPException(422, f"block range out of bounds (0..{len(blocks)})")
-    out = _make(ctx, f, body.title, blocks[body.start:body.end])
+    if body.blocks is not None:  # what the user selected, as the editor holds it (no dependence on the stored copy being current)
+        if len(str(body.blocks)) > vcs.MAX_DOC:
+            raise HTTPException(413, "selection too large")
+        if any(not isinstance(b.get("type"), str) for b in body.blocks):
+            raise HTTPException(422, "invalid block")
+        try:
+            D.check_content({"type": "doc", "content": body.blocks}, rel_ids(_orig(ctx, i)))
+        except ValueError as e:
+            raise HTTPException(422, f"invalid opaque block: {e}")
+        picked = body.blocks
+    else:
+        blocks = i.content.get("content") or []
+        if body.end > len(blocks) or body.start >= body.end:
+            raise HTTPException(422, f"block range out of bounds (0..{len(blocks)})")
+        picked = blocks[body.start:body.end]
+    out = _make(ctx, f, body.title, picked)
     ctx.db.commit()
     return out
 

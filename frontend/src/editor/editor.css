@@ -84,3 +84,7 @@
 
 /* {{ CONTENT }} / {{ SLOT:name }} placeholder paragraph of a base document */
 .docx .ProseMirror p[data-slot] { border: 2px dashed var(--ok, #12b76a); background: color-mix(in srgb, var(--ok, #12b76a) 10%, transparent); padding: 4px 8px; font-family: ui-monospace, monospace; }
+/* select-blocks mode: a handle in the left gutter of every top-level block */
+.docx .ProseMirror .blk-handle { position: absolute; left: -38px; width: 30px; height: 20px; padding: 0; border: 1px solid #8aa; border-radius: 4px; background: #eef4ff; color: #345; font: 11px/18px system-ui; cursor: pointer; z-index: 3; }
+.docx .ProseMirror .blk-handle:hover { background: #cfe0ff; }
+.docx .ProseMirror .blk-sel { outline: 2px solid var(--primary, #2563eb); outline-offset: 1px; background-color: #2563eb14; }

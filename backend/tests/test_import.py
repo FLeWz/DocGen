@@ -333,3 +333,45 @@ def test_roles(imported):
     for url in (f"/api/imports/{iid}", f"/api/imports/{iid}/export", f"/api/imports/{iid}/split?level=1", "/api/imports"):
         assert v.get(url).status_code == 200, url  # viewers read and export
     assert new_client().get("/api/imports").status_code == 401
+
+
+# ---- selection snippets: large ranges, ranges across section/page boundaries, blocks payload ----
+
+@pytest.fixture(scope="module")
+def long_doc():
+    from .fixtures.long import build as build_long
+    return build_long(700)
+
+
+def test_selection_large_range_across_section_break(team, long_doc):
+    ed = team["editor"]
+    iid = imp(ed, long_doc, "long.docx").json()["id"]
+    blocks = ed.get(f"/api/imports/{iid}").json()["content"]["content"]
+    assert len(blocks) > 700
+    brk = next(k for k, b in enumerate(blocks) if b["type"] == "opaque" and b["attrs"]["kind"] == "section break")
+    fo = folder(ed)
+    for start, end in ((0, len(blocks)), (brk - 3, brk + 3), (5, 650)):  # everything, over the break, hundreds of blocks
+        r = ed.post(f"/api/imports/{iid}/selection-snippet", json={"folder_id": fo, "title": f"r{start}", "start": start, "end": end})
+        assert r.status_code == 201, r.text
+        d = ed.get(f"/api/snippets/{r.json()['id']}/draft").json()
+        got = d["content"]["content"]
+        assert len(got) == end - start
+        assert all("orig" not in (b.get("attrs") or {}) for b in got)
+        assert [b["type"] for b in got] == [b["type"] for b in blocks[start:end]]
+    assert ed.post(f"/api/imports/{iid}/selection-snippet", json={"folder_id": fo, "title": "x", "start": 0, "end": len(blocks) + 1}).status_code == 422
+
+
+def test_selection_blocks_payload_does_not_need_the_stored_copy(team, long_doc):
+    ed = team["editor"]
+    iid = imp(ed, long_doc, "long.docx").json()["id"]
+    blocks = ed.get(f"/api/imports/{iid}").json()["content"]["content"]
+    fo = folder(ed)
+    new = [{"type": "paragraph", "attrs": {"styleId": "Callout"}, "content": [{"type": "text", "text": "typed after the last save"}]}] + blocks[:600]
+    r = ed.post(f"/api/imports/{iid}/selection-snippet", json={"folder_id": fo, "title": "live", "blocks": new})
+    assert r.status_code == 201, r.text
+    d = ed.get(f"/api/snippets/{r.json()['id']}/draft").json()
+    assert len(d["content"]["content"]) == 601 and "Callout" in d["styles"]
+    bad = [{"type": "opaque", "attrs": {"kind": "x", "xml": "<w:p xmlns:w='http://schemas.openxmlformats.org/wordprocessingml/2006/main'><w:r><w:object><w:OLEObject/></w:object></w:r></w:p>"}}]
+    assert ed.post(f"/api/imports/{iid}/selection-snippet", json={"folder_id": fo, "title": "evil", "blocks": bad}).status_code == 422
+    assert ed.post(f"/api/imports/{iid}/selection-snippet", json={"folder_id": fo, "title": "none"}).status_code == 422
+    assert team["viewer"].post(f"/api/imports/{iid}/selection-snippet", json={"folder_id": fo, "title": "v", "blocks": new[:1]}).status_code == 403

@@ -11,6 +11,7 @@ import { Table, TableCell, TableHeader, TableRow } from "@tiptap/extension-table
 import StarterKit from "@tiptap/starter-kit";
 import { cellCss, imgCss, listCss, pflags, pfmtCss, rowCss, runCss, safeId, tableCss } from "./fmt";
 import { ooxmlToHtml, getMedia } from "./ooxml";
+import { BlockSelect } from "./blockrange";
 import { Pages } from "./pageplugin";
 
 const attr = (name: string, data: string, def: unknown = null) => ({
@@ -158,4 +159,4 @@ export const extensions = [
 ];
 
 /** The editor of the page view: the schema above plus page-gap decorations (the conflict resolver edits without them). */
-export const pagedExtensions = [...extensions, Pages];
+export const pagedExtensions = [...extensions, Pages, BlockSelect];
