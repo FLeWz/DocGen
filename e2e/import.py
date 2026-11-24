@@ -70,18 +70,28 @@ with sync_playwright() as pw:
         page.get_by_role("button", name="Create snippet", exact=True).click()
         expect(page.get_by_text('Created snippet draft "Callout"')).to_be_visible()
 
-        # split preview
+        # split: individual headings (default = level 1), shortcuts, two non-adjacent headings, edited title
         page.get_by_role("button", name="Split by headings").click()
-        expect(page.get_by_test_id("split-preview").locator("li")).to_have_count(4)
-        page.get_by_label("Split at").select_option("2")
-        expect(page.get_by_test_id("split-preview").locator("li")).to_have_count(5)
-        page.get_by_role("button", name="Cancel").click()
+        pv = page.get_by_test_id("split-preview")
+        expect(pv.locator("li")).to_have_count(4)
+        page.get_by_role("button", name="Level 1–2").click()
+        expect(pv.locator("li")).to_have_count(5)
+        page.get_by_role("button", name="None", exact=True).click()
+        expect(pv.locator("li")).to_have_count(0)
+        page.get_by_role("button", name="Cancel").click()  # applied at the end, so the commit steps below see only the Callout draft
 
         # use as base document (owner = admin)
         page.get_by_role("button", name="Use as base document").click()
         page.get_by_label("Base document name").fill("From import")
         page.get_by_role("button", name="Save as base document").click()
         expect(page.get_by_text('Saved as base document "From import"')).to_be_visible()
+        # same name again (other case): asked whether to create a new version instead
+        page.get_by_role("button", name="Use as base document").click()
+        page.get_by_label("Base document name").fill("from IMPORT")
+        page.get_by_role("button", name="Save as base document").click()
+        expect(page.get_by_test_id("name-conflict")).to_contain_text("A base document named From import already exists")
+        page.get_by_role("button", name="Create new version").click()
+        expect(page.get_by_text('Saved as version 2 of base document "From import"')).to_be_visible()
 
         # export the edited import: original package kept, edit present
         with page.expect_download(timeout=30_000) as dl:
@@ -125,6 +135,23 @@ with sync_playwright() as pw:
         doc = part(out, "word/document.xml")
         assert "Callout paragraph with a custom style" in doc and 'w:pStyle w:val="Callout"' in doc, "style id lost"
         assert 'w:styleId="Callout"' in part(out, "word/styles.xml") and "HEADER-MARKER" in part(out, "word/header1.xml")
+        # apply the split: two non-adjacent headings (the one between them merges into the first), one renamed
+        page.get_by_role("link", name="Imports", exact=True).click()
+        page.locator("a.titlelink").first.click()
+        page.get_by_role("button", name="Split by headings").click()
+        pv = page.get_by_test_id("split-preview")
+        page.get_by_role("button", name="None", exact=True).click()
+        page.get_by_label("Split at Introduction").check()
+        page.get_by_label("Split at Merged cells").check()
+        expect(pv.locator("li")).to_have_count(2)
+        page.get_by_label("Snippet title for Introduction").fill("Intro part")
+        expect(pv.locator("li").first).to_contain_text("Intro part")
+        page.get_by_role("button", name="Create 2 snippets").click()
+        expect(page.get_by_text("Created 2 snippet drafts")).to_be_visible()
+        open_folder(page, "Imported")
+        expect(page.get_by_test_id("item-row").filter(has_text="Intro part")).to_be_visible()
+        titles = page.get_by_test_id("item-row").all_inner_texts()
+        assert any("Intro part" in t for t in titles) and any("Merged cells" in t for t in titles) and not any("Revision history" in t for t in titles), titles
         print("e2e import OK")
     except Exception:
         page.screenshot(path=f"{ART}/import-failure.png", full_page=True)

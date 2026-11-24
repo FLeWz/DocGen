@@ -12,7 +12,7 @@ import zipfile
 
 from playwright.sync_api import expect, sync_playwright
 
-from common import ART, commit_from_editor, editor_ready, login, new_folder, new_item, open_folder, saved, type_into, user
+from common import ART, BASE, commit_from_editor, editor_ready, login, new_folder, new_item, open_folder, saved, type_into, user
 
 email, password, _ = user("basedoc")
 os.makedirs(ART, exist_ok=True)
@@ -82,10 +82,9 @@ with sync_playwright() as pw:
         expect(page.get_by_text('Saved as base document "Cover base"')).to_be_visible()
 
         # settings: the base document's variables (subtitle, default = detected value) are editable under the base document
-        page.get_by_role("link", name="Settings").click()
-        page.get_by_role("tab", name="Base documents").click()
+        page.get_by_role("link", name="Base documents").click()
         expect(page.get_by_text("CONTENT").first).to_be_visible()
-        page.get_by_role("button", name="Versions").click()
+        page.get_by_role("button", name="Details of Cover base").click()
         bv = page.get_by_test_id("base-doc-vars")
         expect(bv).to_contain_text("subtitle")
         expect(bv.get_by_label("Value of subtitle")).to_be_visible()
@@ -130,6 +129,44 @@ with sync_playwright() as pw:
         from pypdf import PdfReader
         pt = "\n".join(p.extract_text() for p in PdfReader(pdf).pages)
         assert "Error!" not in pt and "Report" in pt and "Eagle" in pt and "Chapter text here" in pt, pt[:500]
+        # management: unique names (case-insensitive) -> "create new version?" dialog, rename, delete refused while a document uses it
+        page.get_by_role("link", name="Base documents").click()
+        page.get_by_role("button", name="New base document").click()
+        page.get_by_label("Base document name").fill("cover BASE")
+        page.get_by_label("Source").select_option("default")
+        page.get_by_role("button", name="Create", exact=True).click()
+        expect(page.get_by_test_id("name-conflict")).to_contain_text("A base document named Cover base already exists")
+        expect(page.get_by_role("button", name="Create new version")).to_have_count(0)  # default template has no file to version with
+        page.get_by_role("button", name="Choose another name").click()
+        page.get_by_label("Base document name").fill("Spare")
+        page.get_by_role("button", name="Create", exact=True).click()
+        expect(page.get_by_test_id("base-row").filter(has_text="Spare")).to_be_visible()
+        page.get_by_role("button", name="Rename Spare").click()
+        page.get_by_role("textbox", name="Name", exact=True).fill("Cover Base")  # clash again: error toast, nothing renamed
+        page.get_by_role("button", name="Rename", exact=True).click()
+        expect(page.get_by_text("already exists")).to_be_visible()
+        page.get_by_role("button", name="Rename Spare").click()
+        page.get_by_role("textbox", name="Name", exact=True).fill("Spare 2")
+        page.get_by_role("button", name="Rename", exact=True).click()
+        expect(page.get_by_test_id("base-row").filter(has_text="Spare 2")).to_be_visible()
+        row = page.get_by_test_id("base-row").filter(has_text="Cover base")
+        expect(row.locator("td").nth(4)).to_have_text("1")  # the Report document is pinned to it
+        page.get_by_role("button", name="Delete Cover base").click()
+        expect(page.get_by_test_id("in-use")).to_contain_text("Report")
+        expect(page.get_by_role("button", name="Delete base document")).to_be_disabled()
+        page.get_by_role("button", name="Cancel").click()
+        page.get_by_role("button", name="Delete Spare 2").click()
+        page.get_by_role("button", name="Delete base document").click()
+        expect(page.get_by_test_id("base-row").filter(has_text="Spare 2")).to_have_count(0)
+        # side menu: Base documents and Styles sit under Imports; old settings URLs redirect
+        nav = page.get_by_label("Navigation")
+        assert [t.strip() for t in nav.locator(".navlinks a").all_inner_texts()][:5] == ["Dashboard", "Imports", "Base documents", "Styles", "Settings"]
+        page.goto(BASE + "/settings/styles")
+        expect(page).to_have_url(re.compile("/styles$"))
+        expect(page.get_by_role("heading", name="Styles", level=1)).to_be_visible()
+        page.set_viewport_size({"width": 1100, "height": 800})
+        page.get_by_role("link", name="Base documents").click()
+        expect(page.get_by_test_id("base-docs")).to_be_visible()
         print("e2e basedoc OK")
     except Exception:
         page.screenshot(path=f"{ART}/basedoc-failure.png", full_page=True)

@@ -23,12 +23,12 @@ with sync_playwright() as pw:
             new_folder(page, name)
 
         # org settings: a base document (bundled default)
-        page.get_by_role("link", name="Settings").click()
-        page.get_by_role("tab", name="Base documents").click()
+        page.get_by_role("link", name="Base documents").click()
         page.get_by_role("button", name="New base document").click()
         page.get_by_label("Base document name").fill("Corporate")
+        page.get_by_label("Source").select_option("default")
         page.get_by_role("button", name="Create", exact=True).click()
-        expect(page.get_by_role("cell", name="Corporate")).to_be_visible()
+        expect(page.get_by_role("cell", name="Corporate", exact=True)).to_be_visible()
 
         # snippet in folder A, committed as v1
         open_folder(page, "Security")

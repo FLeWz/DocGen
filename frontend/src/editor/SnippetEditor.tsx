@@ -71,7 +71,7 @@ export function RichEditor({ qkey, load, save, keyOf, me, idleSaved, notices = [
   const flush = useCallback((): Promise<unknown> => {
     window.clearTimeout(timer.current);
     const ed = editorRef.current;
-    if (!pending.current || !ed) return chain.current;
+    if (!pending.current || !ed || !loaded.current) return chain.current; // before the document arrived the editor is empty: saving it would wipe the stored one
     pending.current = false;
     const body = ed.getJSON() as PMNode, t = titleRef.current;
     const content = (Object.keys(hfRef.current).length ? { ...body, hf: hfRef.current } : body) as PMNode;

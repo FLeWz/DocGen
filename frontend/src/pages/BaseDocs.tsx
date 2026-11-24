@@ -9,6 +9,7 @@ import { Pick } from "../builder/picks";
 import { VariablesForm } from "../builder/Variables";
 import { Badge, Banner, Empty, ErrorBanner, Field, fmtDate, Icon, Modal, Skeleton, useUI } from "../ui";
 
+const day = (s?: string | null) => (s ? new Date(s).toLocaleDateString(undefined, { dateStyle: "medium" }) : "");
 export const ph = (v: BaseDocVersion) => v.placeholders.content ? <Badge kind="green">CONTENT{v.placeholders.slots.length ? ` + ${v.placeholders.slots.length} slot${v.placeholders.slots.length > 1 ? "s" : ""}` : ""}</Badge> : <Badge kind="amber">no {"{{ CONTENT }}"}</Badge>;
 
 /** Variables of the current version: dynamic tables (default rows) and text variables (defaults), editable; "Find variables" turns detected values into new ones. */
@@ -153,11 +154,11 @@ export function BaseDocsPage({ me }: { me: Me }) {
           <tbody>{list.data.map((b) => (
             <Fragment key={b.id}>
               <tr data-testid="base-row"><td><b>{b.name}</b></td><td>{b.head ? `v${b.head.number}` : "—"}</td><td>{b.head && ph(b.head)}</td><td>{b.head?.variables.length ?? 0}</td>
-                <td title="Documents (committed or draft) pinned to this base document">{b.used_by}</td><td className="nowrap">{fmtDate(b.created_at)}</td><td className="nowrap">{fmtDate(b.updated_at)}</td>
+                <td title="Documents (committed or draft) pinned to this base document">{b.used_by}</td><td className="nowrap" title={fmtDate(b.created_at)}>{day(b.created_at)}</td><td className="nowrap" title={fmtDate(b.updated_at)}>{day(b.updated_at)}</td>
                 <td className="end nowrap"><button className="btn sm" aria-expanded={open === b.id} aria-label={`Details of ${b.name}`} onClick={() => setOpen(open === b.id ? null : b.id)}><Icon n={open === b.id ? "chevD" : "chevR"} />Details</button>
-                  {admin && <><button className="btn sm ghost" aria-label={`Rename ${b.name}`} onClick={() => rename(b)}><Icon n="edit" />Rename</button>
-                    <button className="btn sm ghost" aria-label={`New version of ${b.name}`} onClick={() => setVer(b)}><Icon n="upload" />New version</button>
-                    <button className="btn sm ghost" aria-label={`Delete ${b.name}`} onClick={() => setDel(b)}><Icon n="trash" />Delete</button></>}</td></tr>
+                  {admin && <><button className="btn sm ghost" aria-label={`Rename ${b.name}`} title="Rename" onClick={() => rename(b)}><Icon n="edit" /></button>
+                    <button className="btn sm ghost" aria-label={`New version of ${b.name}`} title="Upload new version" onClick={() => setVer(b)}><Icon n="upload" /></button>
+                    <button className="btn sm ghost" aria-label={`Delete ${b.name}`} title="Delete" onClick={() => setDel(b)}><Icon n="trash" /></button></>}</td></tr>
               {open === b.id && <tr><td colSpan={8}><Versions b={b} admin={admin} /></td></tr>}
             </Fragment>))}</tbody></table></div>)}
       <ErrorBanner e={list.error} />
