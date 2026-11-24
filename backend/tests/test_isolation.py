@@ -154,6 +154,8 @@ COVERED = {  # every API route must be listed: a new endpoint forces a new isola
     "POST /api/imports/{import_id}/selection-snippet", "POST /api/imports/{import_id}/base-document",
     # milestone 8: test_b_cannot_delete_a_snippets_and_imports / test_cleanup_is_org_scoped
     "DELETE /api/imports/{import_id}", "DELETE /api/snippets/{snippet_id}", "POST /api/maintenance/cleanup",
+    # UI round: test_overview.py::test_overview_counts_and_isolation
+    "GET /api/overview",
 }
 
 

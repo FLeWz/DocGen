@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { EditorContent, useEditor } from "@tiptap/react";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { api, Change, Doc, Draft, Me, Style, ThreeWay } from "../api";
 import { canEdit, folderPath, useFolders } from "../data";
@@ -61,21 +61,16 @@ export function CommitPage({ me }: { me: Me }) {
   useActiveFolder(f ? folderId : null);
   const styles = useStyles(me).data ?? [];
   const ch = useQuery({ queryKey: ["changes", folderId], queryFn: () => api<Change[]>(`/folders/${folderId}/changes`), enabled: !!f, refetchOnWindowFocus: false });
-  const [picked, setPicked] = useState<Set<string>>(new Set()), [focus, setFocus] = useState<string | null>(null), [msg, setMsg] = useState("");
-  const [init, setInit] = useState(false);
-  useEffect(() => { // preselect the item the user came from (?select=id), focus the first change
-    if (!ch.data || init) return;
-    setInit(true);
-    const want = sp.get("select"), c = ch.data.find((x) => keyOf(x) === want);
-    if (c && !c.conflict) setPicked(new Set([keyOf(c)]));
-    setFocus(keyOf(c ?? ch.data[0] ?? ({} as Change)) ?? null);
-  }, [ch.data, init, sp]);
+  // ?select=<id> (coming from an editor) is checked from the first paint: an effect would race with early clicks
+  const want = sp.get("select");
+  const [picked, setPicked] = useState<Set<string>>(() => new Set(want ? [want] : [])), [focus, setFocus] = useState<string | null>(want), [msg, setMsg] = useState("");
   const refresh = () => qc.invalidateQueries();
+  const chosen = (ch.data ?? []).filter((c) => picked.has(keyOf(c)) && !c.conflict);
   const commit = useMutation({
     mutationFn: () => api<{ sha: string }>(`/folders/${folderId}/commit`, "POST", {
-      message: msg, snippet_ids: ch.data!.filter((c) => c.kind !== "document" && picked.has(keyOf(c))).map((c) => c.snippet_id),
-      document_ids: ch.data!.filter((c) => c.kind === "document" && picked.has(keyOf(c))).map((c) => c.document_id) }),
-    onSuccess: (r) => { ui.toast(`Committed ${picked.size} item${picked.size > 1 ? "s" : ""} (${r.sha?.slice(0, 7) ?? ""})`); setMsg(""); setPicked(new Set()); refresh(); },
+      message: msg, snippet_ids: chosen.filter((c) => c.kind !== "document").map((c) => c.snippet_id),
+      document_ids: chosen.filter((c) => c.kind === "document").map((c) => c.document_id) }),
+    onSuccess: (r) => { ui.toast(`Committed ${chosen.length} item${chosen.length > 1 ? "s" : ""} (${r.sha?.slice(0, 7) ?? ""})`); setMsg(""); setPicked(new Set()); refresh(); },
   });
   const toggle = (id: string) => setPicked((p) => { const n = new Set(p); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   const path = folderPath(folders.data, folderId);
@@ -87,7 +82,7 @@ export function CommitPage({ me }: { me: Me }) {
     <div className="page fill">
       <PageHead crumbs={[{ label: "Dashboard", to: "/" }, ...path.map((p) => ({ label: p.name, to: `/folders/${p.id}` })), { label: "Changes" }]} title={`Commit changes in ${f.name}`} tabs={FolderTabs(folderId, rows.length)} />
       <ErrorBanner e={ch.error} />
-      {ch.isLoading ? <Skeleton rows={5} h={34} /> : rows.length === 0 ? (
+      {ch.isLoading || (ch.isFetching && !rows.length) ? <Skeleton rows={5} h={34} /> : rows.length === 0 ? (  // a stale empty cache must not flash "no changes"
         <div data-testid="no-changes"><Empty icon="check" title="No changes to commit">Everything in this folder is committed. <Link to={`/folders/${folderId}`}>Back to the folder</Link></Empty></div>
       ) : (
         <div className="commitgrid">
@@ -111,7 +106,7 @@ export function CommitPage({ me }: { me: Me }) {
       {edit && rows.length > 0 && (
         <form className="commitbar" onSubmit={(e) => { e.preventDefault(); commit.mutate(); }}>
           <input aria-label="Commit message" placeholder="Commit message — what changed and why" value={msg} onChange={(e) => setMsg(e.target.value)} />
-          <button className="btn primary" disabled={!msg.trim() || !picked.size || commit.isPending}><Icon n="commit" />Commit {picked.size || ""}</button>
+          <button className="btn primary" disabled={!msg.trim() || !chosen.length || commit.isPending}><Icon n="commit" />Commit {chosen.length || ""}</button>
           {commit.error && <div className="banner err" role="alert"><Icon n="alert" />{(commit.error as Error).message}</div>}
         </form>)}
     </div>
