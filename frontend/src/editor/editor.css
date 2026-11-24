@@ -106,7 +106,7 @@
 .docx .ProseMirror .ProseMirror-selectednode.toc-block, .docx .ProseMirror .ProseMirror-selectednode.sectbrk-edit { outline: 2px solid var(--primary, #2563eb); }
 .docx .ProseMirror-selectednode.fld, .docx .ProseMirror-selectednode.fn { outline: 2px solid var(--primary, #2563eb); }
 .docx .pgsep-hdr, .docx .pgsep-ftr { cursor: pointer; }
-.hfedit .hfbox { box-sizing: border-box; width: calc(var(--pw) - var(--pl) - var(--pr)); max-width: 100%; padding: 6pt 8pt; min-height: 56px; border: 1px solid var(--border); background: #fff; color: #000; overflow: auto; }
+.hfedit .hfbox { box-sizing: border-box; width: calc(var(--pw) - var(--pl) - var(--pr) + 2px); max-width: 100%; padding: 6pt 0; min-height: 56px; border: 1px solid var(--border); background: #fff; color: #000; overflow-x: hidden; overflow-y: auto; }
 .hfedit .ProseMirror { outline: none; min-height: 36px; display: flex; flex-direction: column; }
 /* ribbon */
 .ribbon { position: sticky; top: 0; z-index: 10; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); }
@@ -132,3 +132,9 @@
 .structure .kind { font-size: 10px; text-transform: uppercase; background: var(--surface-2); border-radius: 3px; padding: 0 4px; color: var(--muted, #666); }
 .structure input { height: 24px; font-size: 12px; min-width: 0; flex: 1; }
 .kbd { font-family: ui-monospace, monospace; font-size: 11px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 3px; padding: 0 4px; }
+
+/* dynamic table (rows repeat per item of a list variable): dashed outline + "dynamic: list" badge; last row = template */
+.docx .ProseMirror table[data-dynamic-list] { outline: 2px dashed var(--primary, #2563eb); outline-offset: 2px; }
+.docx .ProseMirror table[data-dynamic-list]::before { content: "dynamic: " attr(data-dynamic-list); display: table-caption; caption-side: top; text-align: left; font: 600 11px/1.6 system-ui, sans-serif; color: var(--primary, #2563eb); user-select: none; }
+.docx .ProseMirror table[data-dynamic-list] tr:last-child > * { background-image: linear-gradient(#2563eb14, #2563eb14); }
+.row-chips { display: flex; flex-wrap: wrap; gap: 6px; }

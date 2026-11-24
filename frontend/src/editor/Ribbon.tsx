@@ -14,6 +14,15 @@ import { captionLabel, entryText } from "./outline";
 import { blockRange } from "./blockrange";
 import { insertList, markList, markSection, type ListKind } from "./sections";
 
+/** Fields (`row.x` chips) used in the table around the cursor; the last row's chips are the template. */
+function rowFields(editor: Editor): string[] {
+  const $f = editor.state.selection.$from; let d = $f.depth;
+  while (d > 0 && $f.node(d).type.name !== "table") d--;
+  const out = new Set<string>(["name"]);
+  if ($f.node(d).type.name === "table") $f.node(d).descendants((n) => { if (n.type.name === "variable" && /^row\.\w+$/.test(n.attrs.name)) out.add(n.attrs.name.slice(4)); });
+  return [...out];
+}
+
 const FONTS = ["Arial", "Calibri", "Cambria", "Courier New", "Georgia", "Times New Roman", "Verdana"];
 const SIZES = [8, 9, 10, 11, 12, 14, 16, 18, 20, 24, 28, 32, 36, 48];
 const LINES: [string, number][] = [["1.0", 240], ["1.15", 276], ["1.5", 360], ["2.0", 480]];
@@ -85,7 +94,7 @@ export function Ribbon({ editor, ro, styles, mode = "body", onErr, structure, on
 
   // ---- dialog state ----
   const [vf, setVf] = useState({ name: "", default: "", kind: "" as "" | "upper" | "date", format: "YYYY-MM-DD", existing: false });
-  const [dynName, setDynName] = useState(""), [href, setHref] = useState("");
+  const [dynName, setDynName] = useState(""), [dynFields, setDynFields] = useState(""), [href, setHref] = useState("");
   const [q, setQ] = useState<Query & { repl: string; idx: number }>({ find: "", regex: false, matchCase: false, repl: "", idx: 0 });
   const [sec, setSec] = useState({ brk: "nextPage", orient: "portrait", top: "", bottom: "", left: "", right: "" });
   const [lst, setLst] = useState({ kind: "toc" as ListKind, title: "", levels: "1-3", label: "Figure" });
@@ -104,6 +113,26 @@ export function Ribbon({ editor, ro, styles, mode = "body", onErr, structure, on
       setVf({ name: txt.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").replace(/^(\d)/, "_$1"), default: txt, kind: "", format: "YYYY-MM-DD", existing: false });
     }
     setDlg("var");
+  };
+  const makeDynamic = () => {
+    const v = dynName.trim(), fields = dynFields.split(",").map((x) => x.trim()).filter(Boolean);
+    if (v && !/^[A-Za-z_][A-Za-z0-9_]*$/.test(v)) { onErr("List variable name: letters, digits, _"); return; }
+    if (fields.some((f) => !/^[A-Za-z_]\w*$/.test(f))) { onErr("Row fields: letters, digits, _"); return; }
+    onErr("");
+    run().updateAttributes("table", { dynamicList: v || null }).run();
+    if (v && fields.length) {  // chips into the last row, replacing what the cells held (the template row)
+      const { state } = editor, $f = state.selection.$from;
+      let d = $f.depth; while (d > 0 && $f.node(d).type.name !== "table") d--;
+      const tbl = $f.node(d), start = $f.before(d), row = tbl.lastChild!;
+      let pos = start + 1 + tbl.content.size - row.nodeSize + 1;
+      const cells: { pos: number; size: number }[] = [];
+      row.forEach((c) => { cells.push({ pos, size: c.nodeSize }); pos += c.nodeSize; });
+      const tr = state.tr, S = state.schema;
+      for (let i = Math.min(fields.length, cells.length) - 1; i >= 0; i--)
+        tr.replaceWith(cells[i].pos + 1, cells[i].pos + cells[i].size - 1, S.nodes.paragraph.create(null, S.nodes.variable.create({ name: `row.${fields[i]}`, default: "", filter: null })));
+      editor.view.dispatch(tr);
+    }
+    setDlg(null);
   };
   const saveVariable = () => {
     if (!NAME_RE.test(vf.name)) { onErr("Variable name: letters, digits, _ (optionally row.field)"); return; }
@@ -253,11 +282,16 @@ export function Ribbon({ editor, ro, styles, mode = "body", onErr, structure, on
     </G>
   </>;
 
+  // "Make dynamic table": whenever the cursor is in a table (Insert and Layout tabs)
+  const dynBtn = <I i="refresh" t="Make dynamic table: the rows come from a list variable (the last row is the template)" label={st.dynamic ? `Dynamic: ${st.dynamic}` : "Dynamic table"} on={!!st.dynamic} off={off || !st.table || hf}
+    fn={() => { setDynName(st.dynamic ?? ""); setDynFields(""); setDlg("dyn"); }} />;
+
   const insert = <>
     <G label="Tables">
       <I i="table" t="Insert table 3×3" fn={() => run().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()} />
       <select className="tb-sel tb-size" aria-label="Insert table with size" disabled={off} value="" onChange={(e) => { const [r, c] = e.target.value.split("x").map(Number); if (r) run().insertTable({ rows: r, cols: c, withHeaderRow: true }).run(); }}>
         <option value="">Rows × cols</option>{["2x2", "3x2", "3x3", "4x3", "5x4", "6x5", "8x6", "10x4"].map((v) => <option key={v} value={v}>{v.replace("x", " × ")}</option>)}</select>
+      {dynBtn}
     </G>
     <G label="Illustrations">
       <I i="image" t="Insert image from file" fn={() => document.getElementById(hf ? "img-in-hf" : "img-in")?.click()} />
@@ -302,7 +336,7 @@ export function Ribbon({ editor, ro, styles, mode = "body", onErr, structure, on
       <I i="rowAdd" t="Toggle header row" label="Header row" on={st.headerRow} off={off || !st.table} fn={() => run().toggleHeaderRow().run()} />
       <I i="merge" t="Merge cells" off={off || !st.table} fn={() => run().mergeCells().run()} /><I i="split" t="Split cell" off={off || !st.table} fn={() => run().splitCell().run()} />
       <I i="trash" t="Delete table" off={off || !st.table} fn={() => run().deleteTable().run()} />
-      <I i="refresh" t="Mark table dynamic" label={st.dynamic ? `Dynamic: ${st.dynamic}` : "Dynamic table"} on={!!st.dynamic} off={off || !st.table || hf} fn={() => { setDynName(st.dynamic ?? ""); setDlg("dyn"); }} />
+      {dynBtn}
     </G>
     <G label="Cells">
       <input type="color" className="tb-color" aria-label="Cell shading" title="Cell shading" disabled={off || !st.table} defaultValue="#d9e2f3" onChange={(e) => cellFmt({ shd: e.target.value.slice(1).toUpperCase() })} />
@@ -359,7 +393,8 @@ export function Ribbon({ editor, ro, styles, mode = "body", onErr, structure, on
 
       {dlg === "var" && <Modal title={vf.existing ? "Edit variable" : "Make variable"} onClose={() => setDlg(null)} actions={<><button className="btn" type="button" onClick={() => setDlg(null)}>Cancel</button><button className="btn primary" form="var-form">{vf.existing ? "Update" : "Create"} variable</button></>}>
         <form id="var-form" className="stack" onSubmit={(e) => { e.preventDefault(); saveVariable(); }}>
-          <Field label="Variable name" hint="Letters, digits and _ (e.g. client_name)">{(id) => <input id={id} value={vf.name} onChange={(e) => setVf({ ...vf, name: e.target.value })} autoFocus />}</Field>
+          <Field label="Variable name" hint={st.dynamic ? `Inside the dynamic table ${st.dynamic} use row.field` : "Letters, digits and _ (e.g. client_name)"}>{(id) => <input id={id} value={vf.name} onChange={(e) => setVf({ ...vf, name: e.target.value })} autoFocus />}</Field>
+          {st.dynamic && <div className="row-chips" data-testid="row-chips" role="group" aria-label="Row fields">{rowFields(editor).map((f) => <button key={f} type="button" className="btn sm" onClick={() => setVf({ ...vf, name: f })}>{`row.${f}`}</button>)}</div>}
           <Field label="Variable default" hint="Shown in the preview when the document gives no value">{(id) => <input id={id} value={vf.default} onChange={(e) => setVf({ ...vf, default: e.target.value })} />}</Field>
           <Field label="Variable filter">{(id) => <select id={id} value={vf.kind} onChange={(e) => setVf({ ...vf, kind: e.target.value as typeof vf.kind })}><option value="">No filter</option><option value="upper">UPPERCASE</option><option value="date">Date format</option></select>}</Field>
           {vf.kind === "date" && <Field label="Date format" hint="e.g. YYYY-MM-DD">{(id) => <input id={id} value={vf.format} onChange={(e) => setVf({ ...vf, format: e.target.value })} />}</Field>}
@@ -368,9 +403,10 @@ export function Ribbon({ editor, ro, styles, mode = "body", onErr, structure, on
         <form id="link-form" onSubmit={(e) => { e.preventDefault(); const h = href.trim(); if (!h) run().extendMarkRange("link").unsetLink().run(); else run().extendMarkRange("link").setLink({ href: h }).run(); setDlg(null); }}>
           <Field label="Link URL" hint="http, https or mailto. Empty removes the link.">{(id) => <input id={id} value={href} onChange={(e) => setHref(e.target.value)} autoFocus />}</Field></form></Modal>}
       {dlg === "dyn" && <Modal title="Dynamic table" onClose={() => setDlg(null)} actions={<><button className="btn" type="button" onClick={() => setDlg(null)}>Cancel</button><button className="btn primary" form="dyn-form">{dynName.trim() ? "Make dynamic" : "Make static"}</button></>}>
-        <form id="dyn-form" className="stack" onSubmit={(e) => { e.preventDefault(); const v = dynName.trim(); if (v && !/^[A-Za-z_][A-Za-z0-9_]*$/.test(v)) { onErr("List variable name: letters, digits, _"); return; } onErr(""); run().updateAttributes("table", { dynamicList: v || null }).run(); setDlg(null); }}>
-          <p className="muted">The rows of a dynamic table come from a list variable. The last row is the row template; use <code>{"{{ row.field }}"}</code> variable chips in it.</p>
-          <Field label="List variable" hint="Empty makes the table static again.">{(id) => <input id={id} value={dynName} onChange={(e) => setDynName(e.target.value)} autoFocus />}</Field></form></Modal>}
+        <form id="dyn-form" className="stack" onSubmit={(e) => { e.preventDefault(); makeDynamic(); }}>
+          <p className="muted">The rows of a dynamic table come from a list variable. The <b>last row is the row template</b>: its cells use <code>{"{{ row.field }}"}</code> variable chips (or that text). Leave the list name empty to make the table static again.</p>
+          <Field label="List variable" hint="Letters, digits, _ (e.g. team)">{(id) => <input id={id} value={dynName} onChange={(e) => setDynName(e.target.value)} autoFocus />}</Field>
+          <Field label="Row fields (optional)" hint="Comma separated, e.g. name, email: fills the cells of the last row, left to right, with row.name, row.email chips">{(id) => <input id={id} value={dynFields} onChange={(e) => setDynFields(e.target.value)} placeholder="name, email" />}</Field></form></Modal>}
       {dlg === "symbols" && <Modal title="Symbols and special characters" onClose={() => setDlg(null)}><div className="symgrid">{SYMBOLS.map((c) => <button key={c} type="button" title={`U+${c.codePointAt(0)!.toString(16).toUpperCase().padStart(4, "0")}`} onClick={() => { run().insertContent(c).run(); }}>{c}</button>)}</div></Modal>}
       {dlg === "shortcuts" && <Modal title="Keyboard shortcuts" onClose={() => setDlg(null)}><table className="tbl"><tbody>{SHORTCUTS.map(([a, k]) => <tr key={a}><td>{a}</td><td><span className="kbd">{k}</span></td></tr>)}</tbody></table></Modal>}
       {dlg === "find" && <Modal title="Find and replace" onClose={() => setDlg(null)} actions={<button className="btn" type="button" onClick={() => setDlg(null)}>Close</button>}>

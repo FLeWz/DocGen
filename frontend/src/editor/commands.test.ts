@@ -64,3 +64,8 @@ test("find & replace: plain, regex, case, atoms keep offsets", () => {
   expect(e.getText()).toContain("Cow and cow");
   expect(e.state.doc.child(1).content.size).toBe(2 + 1 + 4);  // "x " + atom + " cow": the atom is untouched
 });
+
+test("captionLabel: an imported SEQ arg keeps its switches (`Table \\* ARABIC`) but the label is the sequence name", () => {
+  expect(captionLabel(cap("Table \\* ARABIC", "A"))).toBe("Table");
+  expect(captionLabel(cap("AD \\* ARABIC", "A"))).toBe("AD");
+});
