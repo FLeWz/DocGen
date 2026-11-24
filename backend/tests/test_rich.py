@@ -220,3 +220,25 @@ def test_snippet_with_a_toc_block_exports_through_a_document():
     text = [("".join(t.text or "" for t in p.iter(qn("w:t")))) for p in b.find(qn("w:sdt")).iter(qn("w:p"))]
     assert text == ["Contents", "One", "Two"]
     assert not any("unsupported" in w for w in warn)
+
+
+def test_table_alignment_and_column_width_from_the_ribbon():
+    cell = lambda t, **a: {"type": "tableCell", "attrs": {"colspan": 1, "rowspan": 1, **a}, "content": [P(T(t))]}
+    tbl = {"type": "table", "attrs": {"tfmt": {"jc": "center"}}, "content": [{"type": "tableRow", "content": [cell("a", colwidth=[200]), cell("b", colwidth=[100])]}]}
+    out, _ = export([tbl])
+    t = body(out).find(qn("w:tbl"))
+    assert t.find(f"{qn('w:tblPr')}/{qn('w:jc')}").get(qn("w:val")) == "center"
+    assert [c.find(f"{qn('w:tcPr')}/{qn('w:tcW')}").get(qn("w:w")) for c in t.iter(qn("w:tc"))] == ["3000", "1500"]
+
+
+def test_ribbon_direct_formatting_reaches_the_xml():
+    runs = T("Hi\u00a0there", [{"type": "bold"}, {"type": "fmt", "attrs": {"font": "Arial", "size": 28, "color": "C00000", "hl": "FFFF00", "strike": True, "va": "superscript"}}])
+    out, _ = export([P(runs, T("x"), pfmt={"jc": "both", "left": 720, "first": 360, "line": 360, "lineRule": "auto", "before": 120, "after": 240})])
+    p = next(p for p in body(out).iter(qn("w:p")) if "Hi" in "".join(t.text or "" for t in p.iter(qn("w:t"))))
+    ppr, rpr = p.find(qn("w:pPr")), p.find(qn("w:r")).find(qn("w:rPr"))
+    assert ppr.find(qn("w:jc")).get(qn("w:val")) == "both"
+    sp, ind = ppr.find(qn("w:spacing")), ppr.find(qn("w:ind"))
+    assert (sp.get(qn("w:line")), sp.get(qn("w:before")), sp.get(qn("w:after"))) == ("360", "120", "240") and (ind.get(qn("w:left")), ind.get(qn("w:firstLine"))) == ("720", "360")
+    assert rpr.find(qn("w:rFonts")).get(qn("w:ascii")) == "Arial" and rpr.find(qn("w:sz")).get(qn("w:val")) == "28" and rpr.find(qn("w:color")).get(qn("w:val")) == "C00000"
+    assert rpr.find(qn("w:strike")) is not None and rpr.find(qn("w:vertAlign")).get(qn("w:val")) == "superscript" and rpr.find(qn("w:b")) is not None
+    assert "Hi\u00a0there" in "".join(t.text for t in p.iter(qn("w:t")))  # non-breaking space survives

@@ -464,6 +464,15 @@ class Builder(Rich):
             t._tbl.insert(0, pr)
         elif s := self.style(ta.get("styleId"), "TableGrid"):
             t._tbl.tblPr.style = s
+        jc = (ta.get("tfmt") or {}).get("jc")
+        if jc in fmt.JC:  # table alignment chosen in the ribbon (tblPr jc sits before the spacing/indent/borders/layout/look elements)
+            tp = t._tbl.tblPr
+            for old in tp.findall(qn("w:jc")):
+                tp.remove(old)
+            e = OxmlElement("w:jc")
+            e.set(qn("w:val"), fmt.JC[jc])
+            nxt = next((c for c in tp if c.tag.split("}")[1] in ("tblCellSpacing", "tblInd", "tblBorders", "shd", "tblLayout", "tblCellMar", "tblLook", "tblCaption", "tblDescription")), None)
+            nxt.addprevious(e) if nxt is not None else tp.append(e)
         grid = ta.get("grid")
         if isinstance(grid, list) and len(grid) == ncols and all(isinstance(g, int) and g > 0 for g in grid):
             for gc, g in zip(t._tbl.tblGrid.findall(qn("w:gridCol")), grid):
@@ -479,8 +488,11 @@ class Builder(Rich):
         for ri, ci, cs, rs, cell in placed:
             a = t.cell(ri, ci)
             m = a.merge(t.cell(ri + rs - 1, ci + cs - 1)) if cs > 1 or rs > 1 else a
+            cw = (cell.get("attrs") or {}).get("colwidth")
             if grid:
                 m.width = Twips(sum(grid[ci:ci + cs]))
+            elif isinstance(cw, list) and cw and all(isinstance(w, (int, float)) and not isinstance(w, bool) and 0 < w < 5000 for w in cw):
+                m.width = Twips(int(sum(cw) * 15))  # px -> twips (column width set in the ribbon)
             for p in m._tc.findall(qn("w:p")):
                 m._tc.remove(p)
             if cell.get("attrs", {}).get("cfmt"):
