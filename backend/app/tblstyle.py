@@ -80,8 +80,7 @@ class TableEff:
             b = (props.get("bdr") or {}).get(s, b)  # style cell borders (also conditional ones)
             b = dbd.get(key, b)
             b = (direct.get("bdr") or {}).get(s, b)
-            if b:
-                bdr[s] = b
+            bdr[s] = b or {"val": "nil", "sz": 0}  # no border says Word: say it explicitly, the view has a grid default for editor-made tables
         out: dict = {"bdr": bdr} if bdr else {}
         mar = {**tmar, **(props.get("mar") or {}), **(direct.get("mar") or {})}
         if mar:

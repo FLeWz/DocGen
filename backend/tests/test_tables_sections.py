@@ -22,6 +22,8 @@ THEME = ('<a:theme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/mai
          '<a:accent1><a:srgbClr val="4472C4"/></a:accent1></a:clrScheme></a:themeElements></a:theme>')
 STYLES = f'''<w:styles {NS}><w:docDefaults><w:rPrDefault><w:rPr><w:sz w:val="22"/></w:rPr></w:rPrDefault></w:docDefaults>
 <w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style>
+<w:style w:type="paragraph" w:styleId="Keep"><w:name w:val="Keep"/><w:basedOn w:val="Normal"/><w:pPr><w:keepNext/><w:pageBreakBefore/></w:pPr></w:style>
+<w:style w:type="paragraph" w:styleId="Keep2"><w:name w:val="Keep2"/><w:basedOn w:val="Keep"/></w:style>
 <w:style w:type="paragraph" w:styleId="Footer"><w:name w:val="footer"/><w:basedOn w:val="Normal"/><w:pPr><w:tabs><w:tab w:val="center" w:pos="4513"/><w:tab w:val="right" w:pos="9026"/></w:tabs></w:pPr></w:style>
 <w:style w:type="table" w:default="1" w:styleId="TableNormal"><w:name w:val="Normal Table"/><w:tblPr><w:tblCellMar><w:left w:w="108" w:type="dxa"/><w:right w:w="108" w:type="dxa"/></w:tblCellMar></w:tblPr></w:style>
 <w:style w:type="table" w:styleId="Base"><w:name w:val="Base"/><w:basedOn w:val="TableNormal"/><w:tblPr><w:jc w:val="center"/><w:tblInd w:w="-100" w:type="dxa"/>
@@ -96,7 +98,7 @@ def test_borders_edges_inside_direct_and_nil():
     b = eff(t, 1, 1)["bdr"]
     assert b["top"]["color"] == "445566" and b["bottom"]["color"] == "445566"  # inside H
     assert eff(t, 0, 1)["bdr"]["top"] == {"val": "single", "sz": 8, "color": "112233"}  # outer top from the style
-    assert "left" not in eff(t, 1, 1)["bdr"]  # the style has no vertical borders
+    assert eff(t, 1, 1)["bdr"]["left"] == {"val": "nil", "sz": 0}  # the style has no vertical borders: explicitly none, not "unset"
     direct = '<w:tblBorders><w:left w:val="dashed" w:sz="12" w:color="FF0000"/><w:insideV w:val="nil"/><w:insideH w:val="nil"/></w:tblBorders>'
     t2 = parse_tbl(tbl('w:firstRow="0" w:noHBand="1" w:noVBand="1"', style="Base", extra_pr=direct,
                        cell_pr={(1, 1): '<w:tcBorders><w:bottom w:val="single" w:sz="24" w:color="00FF00"/></w:tcBorders>'}))
@@ -176,6 +178,7 @@ def test_tab_stops_parsed_styles_and_written_back():
     out = D.export(pkg(body), doc, lambda i: None)[0]
     assert b'w:tab w:val="right" w:pos="9000"' in zipfile.ZipFile(io.BytesIO(out)).read("word/document.xml")
     lk = docx_style.look(pkg(body))
+    assert lk["flags"] == {"Keep": {"keepNext": True, "pageBreakBefore": True}, "Keep2": {"keepNext": True, "pageBreakBefore": True}}  # inherited
     assert lk["tabs"]["Footer"] == [{"pos": 4513, "val": "center"}, {"pos": 9026, "val": "right"}]  # inherited by header/footer text
 
 

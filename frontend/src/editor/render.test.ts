@@ -29,14 +29,14 @@ test("direct formatting: fmt mark, paragraph, cell, table, list, page break, ima
     { type: "table", attrs: { styleId: "TableGrid", grid: [2000, 1000], tfmt: { bdr: { top: { val: "single", sz: 12, color: "00FF00" } } } }, content: [
       { type: "tableRow", content: [{ type: "tableCell", attrs: { colspan: 1, rowspan: 1, cfmt: { shd: "D9E2F3", vAlign: "center" } }, content: [{ type: "paragraph" }] }] }] },
     { type: "image", attrs: { imageId: "i", width: 120, height: 40, align: "center" } }), styles);
-  expect(h).toContain("text-align:center;margin-left:36pt;margin-top:12pt;margin-bottom:6pt;text-indent:-18pt;line-height:1.8;background:#EEEEEE;border-bottom:1pt solid #FF0000");
+  expect(h).toContain("text-align:center;margin-left:36pt;margin-top:12pt;margin-bottom:6pt;text-indent:-18pt;line-height:1.725;background:#EEEEEE;border-bottom:1pt solid #FF0000");
   expect(h).toContain('class="cs-Strong" style="font-family:&#39;Courier New&#39;, &#39;Liberation Mono&#39;, &#39;Cousine&#39;, sans-serif;font-size:14pt;color:#00AA00;background:#FFFF00;text-decoration:line-through;vertical-align:super;font-size:smaller"');
   expect(h).toContain('<span class="pgbrk"></span>');
   expect(h).toContain('<ol style="list-style-type:lower-alpha"><li><p class="st-ListParagraph">i</p></li></ol>'); // the list owns the indent: the item's own left indent is dropped
   expect(h).toContain('<td style="background:#D9E2F3;vertical-align:middle">');
-  expect(h).toContain('class="tbl ts-TableGrid" style="--b-top:1.5pt solid #00FF00;width:150pt;table-layout:fixed;max-width:100%"');
+  expect(h).toContain('class="dtbl ts-TableGrid" style="--b-top:1.5pt solid #00FF00;width:150pt;table-layout:fixed"');
   expect(h).toContain('<col style="width:66.67%"><col style="width:33.33%">');
-  expect(h).toContain('style="width:120px;height:40px;align-self:center"');
+  expect(h).toContain('style="width:120px;height:40px;margin-left:auto;margin-right:auto"');
 });
 
 test("hostile formatting values never reach a style attribute", () => {

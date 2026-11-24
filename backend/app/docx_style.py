@@ -67,7 +67,7 @@ def rule(r: dict, p: dict) -> str:
         out.append(f"text-indent:{p['first'] / 20:g}pt")
     if "line" in p:
         rule_ = p.get("lineRule", "auto")
-        out.append(f"line-height:{p['line'] / 20:g}pt" if rule_ != "auto" else f"line-height:{round(p['line'] / 240 * 1.2, 3):g}")
+        out.append(f"line-height:{p['line'] / 20:g}pt" if rule_ != "auto" else "line-height:normal" if p["line"] == 240 else f"line-height:{round(p['line'] / 240 * 1.15, 3):g}")  # single = the font's own line height
     if p.get("shd"):
         out.append(f"background:#{p['shd']}")
     out += border_css(p.get("bdr") or {}, "border")
@@ -266,7 +266,11 @@ def fmt_r() -> str:
 def look(data: bytes) -> dict:
     lk = Look(data)
     tabs = {sid: t for sid in lk.styles if lk.styles[sid]["type"] == "paragraph" and (t := lk.effective(sid)[1].get("tabs"))}
-    return dict(css=lk.css(), page=lk.page(), tabs=tabs, **lk.parts(),
+    flags = {}  # paragraph styles that keep with the next paragraph / start a page: the pagination reads them
+    for sid, v in lk.styles.items():
+        if v["type"] == "paragraph" and (f := {k: True for k in ("keepNext", "keepLines", "pageBreakBefore") if lk.effective(sid)[1].get(k)}):
+            flags[sid] = f
+    return dict(css=lk.css(), page=lk.page(), tabs=tabs, flags=flags, **lk.parts(),
                 styles=[dict(s, id=s["style_id"], builtin=False) for s in parse_styles(lk.root)] if hasattr(lk, "root") else [])
 
 
@@ -282,4 +286,4 @@ def org_look(styles, skip=()) -> dict:
             b=True if s.bold else None, i=True if s.italic else None).items() if v is not None}
         css.append(f".docx .st-{s.style_id}{{{rule(r, dict(before=round(s.space_before * 20), after=round(s.space_after * 20)))}}}")
     return dict(css="\n".join(css), page=dict(w=595.3, h=841.9, top=70.9, right=70.9, bottom=70.9, left=70.9, header=35, footer=35),
-                header=None, footer=None, media={}, styles=None, sections=[], parts=[], even_odd=False, tabs={})
+                header=None, footer=None, media={}, styles=None, sections=[], parts=[], even_odd=False, tabs={}, flags={})
