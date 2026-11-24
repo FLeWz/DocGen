@@ -11,11 +11,12 @@ from pypdf import PdfReader
 from app import docx_vars
 from app.docx_rich import instr_of, seq_label, seq_numbers, toc_entries
 
+from .conftest import signup
 from .test_base_docs import make_docx, upload
 from .test_documents import put, ref
 from .test_export import P, T, fetch, run_export, ws  # noqa: F401  (ws is a fixture)
 from .test_git import commit, mk
-from .test_pdf import live
+from .test_pdf import gotenberg, live  # noqa: F401  (gotenberg is a fixture)
 
 CAPTION = lambda n, label, text: P(T(f"{label} "), {"type": "field", "attrs": {"code": "SEQ", "arg": f"{label} \\* ARABIC", "text": str(n)}}, T(f": {text}"), style="Caption")
 
@@ -107,3 +108,52 @@ def test_overflowing_header_column_is_dropped_but_fitting_tables_are_kept():
     cols = [[c.get(f"{{{W}}}w") for c in t.iter(f"{{{W}}}gridCol")] for t in root.iter(f"{{{W}}}tbl")]
     assert cols == [["4815", "4813"], ["4815", "4813"]] and len(warns) == 1
     assert "c2" not in etree.tostring(root).decode() and root.find(f".//{{{W}}}tblW").get(f"{{{W}}}w") == "9628"
+
+
+def test_pdf_preview_reuses_a_render_with_an_identical_spec(ws, gotenberg):
+    c, d = ws["c"], ws["doc"]
+    eid, st = run_export(c, d, "pdf")
+    assert st["status"] == "done" and len(gotenberg.seen) == 1
+    hit = c.get(f"/api/documents/{d}/export", params={"format": "pdf", "reuse": "true"})
+    assert hit.status_code == 202 and hit.json()["export_id"] == eid and hit.json()["reused"] and len(gotenberg.seen) == 1
+    put(c, d, [{"type": "heading", "text": "Changed", "level": 1, "numbered": False}])  # spec differs -> rendered again
+    miss = c.get(f"/api/documents/{d}/export", params={"format": "pdf", "reuse": "true"}).json()
+    assert miss["export_id"] != eid and "reused" not in miss
+    forced = c.get(f"/api/documents/{d}/export", params={"format": "pdf"}).json()  # no reuse flag: always a new job
+    assert forced["export_id"] not in (eid, miss["export_id"])
+    assert c.get(f"/api/documents/{d}/export", params={"format": "pdf", "reuse": "true"}).status_code == 202
+
+
+def test_dynamic_table_marked_in_an_import_becomes_a_base_list_variable_with_repeated_rows(client, outbox):
+    signup(client, "dyn@a.co", "Dyn Org")
+    from .test_import import imp
+    from .test_dynamic import CCELL, CHIP
+
+    def mod(d):
+        d.add_paragraph("Cover")
+        t = d.add_table(rows=2, cols=2)
+        for i, x in enumerate(("Name", "Email", "-", "-")):
+            t.cell(i // 2, i % 2).text = x
+        d.add_heading("Chapter", 1)
+    a = client
+    iid = imp(a, make_docx(mod, content=False)).json()["id"]
+    got = a.get(f"/api/imports/{iid}").json()
+    content = got["content"]
+    tbl = next(b for b in content["content"] if b["type"] == "table")
+    tbl["attrs"]["dynamicList"] = "team"  # what the ribbon's "Dynamic table" does ...
+    tbl["content"][-1]["content"] = [CCELL(CHIP("row.name")), CCELL(CHIP("row.email"))]  # ... with the row template chips
+    r = a.put(f"/api/imports/{iid}", json={"content": content})
+    assert r.status_code == 200, r.text
+    base = a.post(f"/api/imports/{iid}/base-document", json={"name": "Dyn base"})
+    assert base.status_code == 201, base.text
+    bid = base.json()["base_document_id"]
+    v = next(d for d in a.get(f"/api/base-documents/{bid}/versions").json()[0]["variables"] if d["name"] == "team")
+    assert v["type"] == "list" and v["columns"] == ["name", "email"]  # appears under the base document's variables
+    fo = a.post("/api/folders", json={"name": "F"}).json()["id"]
+    did = a.post("/api/documents", json={"folder_id": fo, "title": "D"}).json()["id"]
+    put(a, did, [{"type": "heading", "text": "Hi", "level": 1, "numbered": False}], base_document={"id": bid},
+        variables={"declarations": [], "values": {"team": [{"name": "ann", "email": "a@x"}, {"name": "bob", "email": "b@x"}, {"name": "cy", "email": "c@x"}]}})
+    eid, st = run_export(a, did)
+    assert st["status"] == "done", st
+    rows = [[c.text for c in r.cells] for t in Document(io.BytesIO(fetch(a, eid))).tables for r in t.rows]
+    assert rows == [["Name", "Email"], ["ann", "a@x"], ["bob", "b@x"], ["cy", "c@x"]], rows  # template row repeated, markers gone

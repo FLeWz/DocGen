@@ -12,7 +12,7 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from lxml import etree
 
-from . import docx_import as D
+from . import docx_import as D, docx_vars
 from .docx_export import Builder
 from .ooxml import stable_zip
 
@@ -43,7 +43,10 @@ def part_doc(data: bytes, path: str, store_image) -> tuple[dict, list[str]]:
         ps = D._Parser(z, store_image, data)
         ps.rels, ps.hf = _rels(z, path), True
         ps.rel_ids = set(ps.rels)
-        root = etree.fromstring(z.read(path), etree.XMLParser(resolve_entities=False, no_network=True, load_dtd=False))
+        parser = etree.XMLParser(resolve_entities=False, no_network=True, load_dtd=False)
+        root = etree.fromstring(z.read(path), parser)
+        body = etree.fromstring(z.read("word/document.xml"), parser)
+        docx_vars.clip_tables(root, docx_vars.text_width(body.iter(qn("w:sectPr"))))  # a pasted extra column would scroll the editor sideways
         blocks = ps.blocks(root)
     for b in blocks:
         for n in D.walk(b):

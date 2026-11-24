@@ -148,11 +148,15 @@ def revision_history(document_id: UUID, ctx: Ctx = V):
 # ---- export ----
 
 @router.get("/documents/{document_id}/export", status_code=202)
-def start_export(document_id: UUID, format: str = Query(default="docx", max_length=8), ctx: Ctx = V):
-    """Queues a background job (GET per the API spec); poll /api/exports/{id}, then /download."""
+def start_export(document_id: UUID, format: str = Query(default="docx", max_length=8), reuse: bool = False, ctx: Ctx = V):
+    """Queues a background job (GET per the API spec); poll /api/exports/{id}, then /download. `reuse` serves the latest finished
+    export with an identical spec (the preview's cache) instead of rendering again."""
     if format not in export.RENDERERS:
         raise HTTPException(400, f"unsupported format '{format}' (available: {', '.join(export.RENDERERS)})")
-    e = export.create(ctx, docs.get_document(ctx, document_id), format)
+    d = docs.get_document(ctx, document_id)
+    if reuse and (hit := export.cached(ctx, d, format)):
+        return dict(export_id=hit.id, status=hit.status, reused=True)
+    e = export.create(ctx, d, format)
     ctx.db.commit()
     export.submit(ctx.org_id, ctx.user.id, e.id)
     return dict(export_id=e.id, status=e.status)

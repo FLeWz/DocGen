@@ -1,6 +1,7 @@
 """Export pipeline: resolve pins into a self-contained spec (stored with the export record), then render.
 PDF = the rendered DOCX converted by the Gotenberg container (LibreOffice)."""
 import hashlib
+import json
 import re
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
@@ -106,6 +107,21 @@ def build_spec(ctx: Ctx, d: Document) -> dict:
 def pins_of(spec: dict) -> dict:
     return dict(base=spec["base"], document=spec["document"],
                 snippets=[dict(block_id=b["id"], **b["pin"], pin=b["version"]) for b in spec["blocks"] if "pin" in b])
+
+
+def spec_hash(spec: dict) -> str:
+    return hashlib.sha256(json.dumps(spec, sort_keys=True, default=str).encode()).hexdigest()
+
+
+def cached(ctx: Ctx, d: Document, fmt: str) -> Export | None:
+    """A finished export of this document whose frozen spec (pins, variables, base, blocks, built-ins) equals the current one: its file can be
+    served again instead of rendering the same thing. Looks at the latest 20 exports only."""
+    h = spec_hash(build_spec(ctx, d))
+    for e in sorted(ctx.repo(Export).list(Export.document_id == d.id, Export.format == fmt, Export.status == "done"),
+                    key=lambda e: e.created_at, reverse=True)[:20]:
+        if spec_hash(e.spec) == h and files.export_path(ctx.org_id, e.id, fmt).exists():
+            return e
+    return None
 
 
 def create(ctx: Ctx, d: Document, fmt: str) -> Export:
