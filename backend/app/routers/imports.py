@@ -245,6 +245,8 @@ def _units(ctx: Ctx, i: Import):
     blocks = i.content.get("content") or []
     back = []
     for b in blocks[:D.front_end(blocks)]:
+        if (b.get("attrs") or {}).get("sec") or b.get("type") == "toc":
+            continue  # marked sections and generated lists are structure, never per-document values
         if b.get("type") in ("paragraph", "heading") and D.block_text(b).strip():
             p = docx_vars.parse(('<w:p xmlns:w="%s"><w:pPr><w:pStyle w:val="%s"/></w:pPr><w:r><w:t/></w:r></w:p>'
                                  % (docx_vars.W_NS, re.sub(r"[^A-Za-z0-9_-]", "", (b.get("attrs") or {}).get("styleId") or "Normal"))).encode())

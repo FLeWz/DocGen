@@ -202,3 +202,21 @@ def test_list_formats_bullet_styles_start_continue_multilevel():
     ml = abstract[nums[num_of(f_)].find(qn("w:abstractNumId")).get(qn("w:val"))]
     assert ml.find(qn("w:multiLevelType")).get(qn("w:val")) == "multilevel"
     assert [l.find(qn("w:lvlText")).get(qn("w:val")) for l in ml.findall(qn("w:lvl"))][:3] == ["%1.", "%1.%2", "%1.%2.%3"]
+
+
+def test_snippet_with_a_toc_block_exports_through_a_document():
+    """A snippet can hold a generated list: Builder.nodes (snippet path of docx_export.build) writes the SDT/field structure too."""
+    from app import docx_export
+    from .test_base_docs import make_docx
+    spec = dict(title="T", blocks=[dict(type="snippet_ref", slot="CONTENT", pin=dict(snippet_id="s", sha="a" * 40, folder_id="f"))],
+                variables=dict(declarations=[], values={}), links=[], revision_history=[],
+                built_ins={"doc.title": "T", "doc.version": "1", "doc.date": "2026-01-01", "org.name": "O", "author": "A"})
+    content = {"type": "doc", "content": [{"type": "toc", "attrs": {"kind": "toc", "title": "Contents", "levels": "1-2"}}, H("One"), H("Two", 2),
+                                          P(T("Figure "), F("SEQ", "Figure"), T(": x"), styleId="Caption"), {"type": "toc", "attrs": {"kind": "tof", "label": "Figure"}}]}
+    out, warn = docx_export.build(spec, make_docx(), lambda pin: (content, "s"), lambda *a: None)
+    b = body(out)
+    assert b.find(qn("w:sdt")) is not None
+    assert 'TOC \\o "1-2" \\h \\z \\u' in instrs(b) and 'TOC \\h \\z \\c "Figure"' in instrs(b)
+    text = [("".join(t.text or "" for t in p.iter(qn("w:t")))) for p in b.find(qn("w:sdt")).iter(qn("w:p"))]
+    assert text == ["Contents", "One", "Two"]
+    assert not any("unsupported" in w for w in warn)

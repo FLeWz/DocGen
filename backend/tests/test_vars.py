@@ -276,3 +276,16 @@ def test_roles_and_isolation_of_variable_routes(client, outbox):
                     ("get", f"/api/base-documents/{bid}/find-variables", None), ("post", f"/api/base-documents/{bid}/find-variables", {"items": []}),
                     ("put", f"/api/base-documents/{bid}/variables", {"declarations": []})):
         assert getattr(other, m)(u, **({"json": b} if b is not None else {})).status_code == 404, u
+
+
+def test_marked_sections_and_generated_lists_never_become_variables(client):
+    c = team(client)
+    iid = imported(c)
+    cont = c.get(f"/api/imports/{iid}").json()["content"]
+    title = next(b for b in cont["content"] if b["type"] == "paragraph" and "Project Falcon" in "".join(t.get("text", "") for t in b.get("content", [])))
+    assert "Project Falcon" in {x["value"] for x in c.get(f"/api/imports/{iid}/variables").json()["candidates"]}  # a value before it is marked
+    title["attrs"]["sec"] = {"id": "1", "kind": "section", "title": "Cover"}
+    cont["content"].insert(0, {"type": "toc", "attrs": {"kind": "toc", "title": "Acme Spec contents", "levels": "1-3", "xml": None}})
+    assert c.put(f"/api/imports/{iid}", json={"content": cont}).status_code == 200
+    got = {x["value"] for x in c.get(f"/api/imports/{iid}/variables").json()["candidates"]}
+    assert "Project Falcon" not in got and "Acme Spec contents" not in got  # structural: marked section / generated list text
