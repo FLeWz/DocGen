@@ -7,7 +7,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel
 
-from .. import base_docs, docs, docx_export, docx_import as D, export, vcs
+from .. import base_docs, docs, docx_export, docx_hf, docx_import as D, export, vcs
 from ..deps import Ctx, require
 from ..files import image_path, import_path
 from ..git import repo as git
@@ -40,6 +40,7 @@ def render_pdf(body: RenderIn, ctx: Ctx = Depends(require(Role.viewer))):
                 raise HTTPException(404, "import not found")
             orig = import_path(ctx.org_id, imp.id).read_bytes()
             D.check_content(body.content, rel_ids(orig))
+            docx_hf.check(body.content.get("hf"), orig)
             docx, warnings = D.export(orig, body.content, asset, import_context(ctx, imp))
         else:
             base_vars = []
