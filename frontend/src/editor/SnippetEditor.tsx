@@ -111,7 +111,7 @@ export function RichEditor({ qkey, load, save, keyOf, me, idleSaved, notices = [
       const sel = e.state.selection;
       return { style: effectiveStyle({ type: p.type.name, attrs: p.attrs }, inList) ?? "Normal",
         bold: e.isActive("bold"), italic: e.isActive("italic"), underline: e.isActive("underline"), link: e.isActive("link"),
-        jc: (p.attrs.pfmt?.jc as string | undefined) ?? "left", bullet: e.isActive("bulletList"), ordered: e.isActive("orderedList"), table: e.isActive("table"),
+        jc: (p.attrs.pfmt?.jc as string | undefined) ?? "left", bullet: e.isActive("bulletList"), ordered: e.isActive("orderedList"), table: e.isActive("table"), headerRow: e.isActive("tableHeader"),
         dynamic: (e.getAttributes("table").dynamicList as string | null) ?? null,
         variable: sel instanceof NodeSelection && sel.node.type.name === "variable" };
     },
@@ -119,6 +119,15 @@ export function RichEditor({ qkey, load, save, keyOf, me, idleSaved, notices = [
 
   if (!editor) return null;
   const run = () => editor.chain().focus();
+  /** Direct cell formatting (cfmt) on the selected cells, merged into what they have: shading and/or borders. */
+  const cellFmt = (patch: Record<string, unknown>) => {
+    const { selection } = editor.state, cells: { pos: number; attrs: Record<string, unknown> }[] = [];
+    editor.state.doc.nodesBetween(selection.from, selection.to, (n, pos) => { if (n.type.name === "tableCell" || n.type.name === "tableHeader") { cells.push({ pos, attrs: n.attrs }); return false; } });
+    if (!cells.length) { const $f = selection.$from; for (let d = $f.depth; d > 0; d--) if (["tableCell", "tableHeader"].includes($f.node(d).type.name)) { cells.push({ pos: $f.before(d), attrs: $f.node(d).attrs }); break; } }
+    const tr = editor.state.tr;
+    for (const c of cells) tr.setNodeMarkup(c.pos, undefined, { ...c.attrs, cfmt: { ...((c.attrs.cfmt as object) ?? {}), ...patch } });
+    editor.view.dispatch(tr); editor.view.focus();
+  };
   const applyStyle = (sid: string) => {
     const s = styles.find((x) => x.style_id === sid);
     if (!s) return;
@@ -208,10 +217,15 @@ export function RichEditor({ qkey, load, save, keyOf, me, idleSaved, notices = [
           <B i="image" t="Insert image" fn={() => document.getElementById("img-in")?.click()} />
           <input id="img-in" type="file" accept="image/png,image/jpeg,image/gif,image/webp" hidden aria-label="Image file" onChange={(e) => { upload(e.target.files?.[0]); e.target.value = ""; }} />
           <B i="table" t="Insert table" fn={() => run().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()} />
+          <select className="tb-sel" aria-label="Insert table with size" value="" onChange={(e) => { const [r, c] = e.target.value.split("x").map(Number); if (r) run().insertTable({ rows: r, cols: c, withHeaderRow: true }).run(); }}>
+            <option value="">Rows×cols</option>{["2x2", "3x2", "3x3", "4x3", "5x4", "6x5", "8x6", "10x4"].map((v) => <option key={v} value={v}>{v.replace("x", " × ")}</option>)}</select>
         </div>
         {st?.table && <div className="tgroup" role="group" aria-label="Table">
           <B i="rowAdd" t="Add row below" fn={() => run().addRowAfter().run()} /><B i="colAdd" t="Add column right" fn={() => run().addColumnAfter().run()} />
           <B i="rowDel" t="Delete row" fn={() => run().deleteRow().run()} /><B i="colDel" t="Delete column" fn={() => run().deleteColumn().run()} />
+          <B i="rowAdd" t="Toggle header row" label="Header row" on={st?.headerRow} fn={() => run().toggleHeaderRow().run()} />
+          <input type="color" className="tb-color" aria-label="Cell shading" title="Cell shading" defaultValue="#d9e2f3" onChange={(e) => cellFmt({ shd: e.target.value.slice(1).toUpperCase() })} />
+          <B i="table" t="Borders on selected cells" label="Borders" fn={() => cellFmt({ bdr: BORDERS_ON })} /><B i="table" t="Remove borders of selected cells" label="No borders" fn={() => cellFmt({ bdr: BORDERS_OFF })} />
           <B i="merge" t="Merge cells" fn={() => run().mergeCells().run()} /><B i="split" t="Split cell" fn={() => run().splitCell().run()} />
           <B i="trash" t="Delete table" fn={() => run().deleteTable().run()} />
           <B i="refresh" t="Mark table dynamic" label={st.dynamic ? `Dynamic: ${st.dynamic}` : "Dynamic table"} on={!!st.dynamic} fn={() => setDyn(st.dynamic ?? "")} />
@@ -265,6 +279,10 @@ export function RichEditor({ qkey, load, save, keyOf, me, idleSaved, notices = [
     </div>
   );
 }
+
+const side = (val: string) => ({ val, sz: 4, color: "000000" });
+const BORDERS_ON = Object.fromEntries(["top", "left", "bottom", "right"].map((k) => [k, side("single")]));
+const BORDERS_OFF = Object.fromEntries(["top", "left", "bottom", "right"].map((k) => [k, { val: "nil", sz: 0 }]));
 
 function Btn({ i, t, label, on, fn, ro }: { i: string; t: string; label?: string; on?: boolean; fn: () => void; ro?: boolean }) {
   return (

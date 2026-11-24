@@ -129,7 +129,7 @@ def test_merged_cell_reaching_last_row_is_bottom_edge_and_row_height():
          '<w:tr><w:tc><w:tcPr><w:vMerge/></w:tcPr><w:p/></w:tc><w:tc><w:p/></w:tc></w:tr></w:tbl>')
     t = parse_tbl(x)
     assert t["content"][0]["content"][0]["attrs"]["rowspan"] == 2
-    assert "bottom" not in eff(t, 0, 0).get("bdr", {})  # spans to the last row = outer bottom edge (the style has none), not insideH
+    assert eff(t, 0, 0)["bdr"]["bottom"] == {"val": "nil", "sz": 0}  # spans to the last row = outer bottom edge (the style has none), not insideH
     assert t["content"][0]["attrs"]["rfmt"] == {"h": {"val": 600, "rule": "exact"}}
 
 

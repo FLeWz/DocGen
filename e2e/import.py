@@ -93,6 +93,21 @@ with sync_playwright() as pw:
         assert 'w:styleId="Callout"' in part(exp, "word/styles.xml")
         assert "HEADER-MARKER" in part(exp, "word/header1.xml") and "FOOTER-MARKER" in part(exp, "word/footer1.xml")
 
+        # separate pages: grow the document past one page (blank paragraphs) -> page gaps appear, each page has header + footer
+        ed.get_by_text("The end.").click()
+        page.keyboard.press("End")
+        for _ in range(70):
+            page.keyboard.press("Enter")
+        expect(ed.locator(".pgsep").first).to_be_attached(timeout=10_000)
+        assert page.locator(".pgsep .docx-hdr").count() >= 1 and page.locator(".pgsep .docx-ftr").count() >= 1, "page gap lacks header/footer"
+        expect(page.get_by_test_id("page-count")).to_contain_text("pages")
+        page.keyboard.type(" STILL-TYPING")  # editing keeps working across the page gap
+        expect(ed.get_by_text("STILL-TYPING")).to_be_visible()
+        page.get_by_label("Zoom").select_option("0.4")  # preview: separate paper cards, each with header and footer
+        cards = page.get_by_test_id("preview").locator(".docx-page")
+        assert cards.count() >= 2, "preview is one continuous page"
+        assert page.get_by_test_id("preview").locator(".docx-hdr").count() >= 2 and page.get_by_test_id("preview").locator(".docx-ftr").count() >= 2
+
         # commit the new snippet, use it in a document built on the imported base document
         open_folder(page, "Imported")
         open_item(page, "Callout")
