@@ -71,7 +71,7 @@ export type Block = { id: string; slot: string } & (
 export type LinkedDoc = { title: string; doc_id: string | null; version: string | null; url: string | null };
 export type VarDecl = { name: string; type: "text" | "date" | "number" | "list"; default: unknown; columns?: string[] };
 export type Variables = { declarations: VarDecl[]; values: Record<string, unknown> };
-export type RevRow = { version: string; date: string; author: string; message: string };
+export type RevRow = { version: string; date: string; author: string; message: string; sections?: string; commit?: string };
 export type DocBody = { title: string; slug: string; base_document: { id: string; version: string | null } | null; blocks: Block[];
   variables: Variables; links: LinkedDoc[]; revision_history: RevRow[] | null };
 export type DocFull = DocBody & { id: string; folder_id: string; head_sha: string | null; has_draft: boolean; dirty?: boolean; conflict?: boolean };

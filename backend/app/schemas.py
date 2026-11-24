@@ -376,6 +376,8 @@ class RevRow(BaseModel):
     date: str = Field(default="", max_length=32)
     author: str = Field(default="", max_length=120)
     message: str = Field(default="", max_length=500)
+    sections: str = Field(default="", max_length=1000)  # what the revision changed (round 9)
+    commit: str = Field(default="", max_length=500)  # commit subject
 
 
 class LinkedDoc(BaseModel):

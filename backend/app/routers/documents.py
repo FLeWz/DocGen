@@ -142,7 +142,9 @@ def bump_apply(document_id: UUID, block_id: str, ctx: Ctx = E):
 def revision_history(document_id: UUID, ctx: Ctx = V):
     """The auto-built rows (git log of the document and its pinned snippets) for the builder's editable preview."""
     d = docs.get_document(ctx, document_id)
-    return export.revision_rows(ctx, d, docs.working(ctx, d)["blocks"])
+    w = docs.working(ctx, d)
+    br = w["base_document"]
+    return export.revision_rows(ctx, d, w["blocks"], br and dict(id=br["id"], sha=br["version"]))
 
 
 # ---- export ----

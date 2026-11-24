@@ -9,6 +9,7 @@ import { api, Style } from "../api";
 import { Field, Icon, Modal, useUI } from "../ui";
 import { clearFormatting, indent, insertBlock, setFmt, setList, setPfmt } from "./commands";
 import { effectiveStyle, NAME_RE } from "./doc";
+import { revisionTableJSON } from "./revisionTable";
 import { findAll, replaceMatches, countWords, type Query } from "./find";
 import { captionLabel, entryText } from "./outline";
 import { blockRange } from "./blockrange";
@@ -316,6 +317,7 @@ export function Ribbon({ editor, ro, styles, mode = "body", onErr, structure, on
         <option value="">Rows × cols</option>{["2x2", "3x2", "3x3", "4x3", "5x4", "6x5", "8x6", "10x4"].map((v) => <option key={v} value={v}>{v.replace("x", " × ")}</option>)}</select>
       <I i="table" t="Convert the selected paragraphs to a table (columns split at tabs)" label="Text to table" fn={() => { if (!tableActions(editor, ui).r(textToTable)) onErr("Select some paragraphs outside a table first"); }} />
       {dynBtn}
+      <I i="table" t="Insert the revision table: one row per revision (date, revision, author, sections changed, commit), filled from the document's history" label="Revision table" off={off || hf} fn={() => run().insertContent(revisionTableJSON()).run()} />
     </G>
     <G label="Illustrations">
       <I i="image" t="Insert image from file" fn={() => document.getElementById(hf ? "img-in-hf" : "img-in")?.click()} />

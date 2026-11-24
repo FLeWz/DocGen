@@ -61,15 +61,15 @@ export function VariablesForm({ vars, ro, onChange, fixed = false }: { vars: Var
 }
 
 export function RevisionTable({ rows, auto, ro, onChange }: { rows: RevRow[]; auto: boolean; ro: boolean; onChange: (r: RevRow[] | null) => void }) {
-  const keys = ["version", "date", "author", "message"] as const;
+  const keys = ["version", "date", "author", "message", "sections", "commit"] as const;
   return (
     <div data-testid="revision-history">
-      <p className="muted small">{auto ? "Built automatically from the git log of the document and its pinned snippets." : "Edited by hand (stored in the document)."}</p>
+      <p className="muted small">{auto ? "Built automatically from the git log of the document, its pinned snippets and its base document (with the sections each commit changed)." : "Edited by hand (stored in the document)."}</p>
       {rows.map((r, i) => (
-        <div key={i} className="revrow">{keys.map((k) => <input key={k} className={`r-${k}`} aria-label={`Revision ${i + 1} ${k}`} placeholder={k} value={r[k]} disabled={ro} onChange={(e) => onChange(rows.map((x, j) => (j === i ? { ...x, [k]: e.target.value } : x)))} />)}
+        <div key={i} className="revrow">{keys.map((k) => <input key={k} className={`r-${k}`} aria-label={`Revision ${i + 1} ${k}`} placeholder={k === "message" ? "description" : k === "sections" ? "sections changed" : k === "commit" ? "commit name" : k} value={r[k] ?? ""} disabled={ro} onChange={(e) => onChange(rows.map((x, j) => (j === i ? { ...x, [k]: e.target.value } : x)))} />)}
           {!ro && <button className="btn ghost icon" aria-label={`Remove revision ${i + 1}`} onClick={() => onChange(rows.filter((_, j) => j !== i))}><Icon n="x" size={14} /></button>}</div>))}
       {rows.length === 0 && <p className="muted small">No commits yet.</p>}
-      {!ro && <div className="vact"><button className="btn sm" onClick={() => onChange([...rows, { version: "", date: new Date().toISOString().slice(0, 10), author: "", message: "" }])}><Icon n="plus" size={14} />Row</button>
+      {!ro && <div className="vact"><button className="btn sm" onClick={() => onChange([...rows, { version: "", date: new Date().toISOString().slice(0, 10), author: "", message: "", sections: "", commit: "" }])}><Icon n="plus" size={14} />Row</button>
         {!auto && <button className="btn sm ghost" onClick={() => onChange(null)}>Reset to auto</button>}</div>}
     </div>
   );
