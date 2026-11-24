@@ -44,24 +44,38 @@ def csrf(request: Request, response: Response):
     return {"csrf_token": tok}
 
 
-@router.post("/signup", status_code=201, response_model=MeOut)
-def signup(body: SignupIn, response: Response, db: Session = Depends(get_db)):
-    email = body.email.lower()
+def register(db: Session, email: str, name: str, password: str, org_name: str,
+             resp: Response | None = None) -> tuple[User, UUID]:
+    """New user + their own org (owner). Shared by signup (when allowed) and `app.manage create-user`."""
     org_id = uuid4()
-    user = User(email=email, name=body.name, password_hash=hash_pw(body.password))
+    user = User(email=email.lower(), name=name, password_hash=hash_pw(password))
     try:
         db.add(user)
         db.flush()
         set_ctx(db, user_id=user.id, org_id=org_id)
-        db.add(Organization(id=org_id, name=body.org_name))
+        db.add(Organization(id=org_id, name=org_name))
         db.flush()
         OrgRepo(db, Membership, org_id).add(user_id=user.id, role=Role.owner.value)
         styles.seed(OrgRepo(db, Style, org_id))
-        start_session(db, response, user, org_id)
+        if resp is not None:
+            start_session(db, resp, user, org_id)
         db.commit()
     except IntegrityError:
         db.rollback()
         raise HTTPException(409, "email already registered")
+    return user, org_id
+
+
+@router.get("/me/config")
+def me_config():
+    return {"allow_signup": config.ALLOW_SIGNUP}
+
+
+@router.post("/signup", status_code=201, response_model=MeOut)
+def signup(body: SignupIn, response: Response, db: Session = Depends(get_db)):
+    if not config.ALLOW_SIGNUP:
+        raise HTTPException(404, "sign-up is disabled; ask for an invite")
+    user, org_id = register(db, body.email, body.name, body.password, body.org_name, response)
     ctx = Ctx(db, user, None, org_id, Role.owner)
     return me_out(ctx)
 

@@ -66,9 +66,12 @@ PW = "correct-horse-battery"
 
 
 def signup(c, email, org="Org", name="Test"):
-    r = c.post("/api/auth/signup", json={"email": email, "password": PW, "name": name, "org_name": org})
-    assert r.status_code == 201, r.text
-    return r.json()
+    """Create user+org like the bootstrap CLI (public sign-up is closed) and log `c` in."""
+    from app.db import SessionLocal
+    from app.routers.auth import register
+    with SessionLocal() as db:
+        register(db, email, name, PW, org)
+    return login(c, email)
 
 
 def login(c, email):

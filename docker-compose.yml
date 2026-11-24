@@ -31,6 +31,7 @@ services:
       SMTP_FROM: ${SMTP_FROM:-DocGen <noreply@docgen.local>}
       PDF_URL: http://pdf:3000
       SEED_DEMO: ${SEED_DEMO:-0}
+      ALLOW_SIGNUP: ${ALLOW_SIGNUP:-0}
     volumes: [repos:/repos, files:/files]
     depends_on:
       db: {condition: service_healthy}
@@ -59,6 +60,8 @@ services:
       E2E_BASE_URL: http://web
       MAIL_URL: http://mail:8025
       E2E_ARTIFACTS: /artifacts
+      E2E_TAG: ${E2E_TAG:-}
+      E2E_PASSWORD: ${E2E_PASSWORD:-}
     volumes: ["./e2e-artifacts:/artifacts"]
     depends_on:
       web: {condition: service_healthy}

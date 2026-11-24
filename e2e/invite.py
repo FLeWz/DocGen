@@ -1,5 +1,5 @@
 """Invite flow e2e against a running stack (E2E_BASE_URL, MAIL_URL = Mailpit UI, default http://localhost:8025):
-sign up -> invite a second user -> invite mail visible in Mailpit -> accept (new account) -> create + switch orgs."""
+log in -> invite a second user -> invite mail visible in Mailpit -> accept (new account) -> create + switch orgs."""
 import json
 import os
 import re
@@ -12,8 +12,8 @@ from playwright.sync_api import expect, sync_playwright
 BASE = os.environ.get("E2E_BASE_URL", "http://localhost:8080")
 MAIL = os.environ.get("MAIL_URL", "http://localhost:8025")
 ART = os.environ.get("E2E_ARTIFACTS", "e2e-artifacts")
-tag = secrets.token_hex(4)
-owner, guest, pwd = f"e2e-{tag}@example.com", f"guest-{tag}@example.com", secrets.token_urlsafe(16)
+tag = (os.environ.get("E2E_TAG") or secrets.token_hex(4)) + "-invite"  # user+org come from `make test-e2e-docker` (sign-up is closed)
+owner, guest, pwd = f"e2e-{tag}@example.com", f"guest-{tag}@example.com", os.environ["E2E_PASSWORD"]
 
 
 def mail_to(addr):
@@ -31,12 +31,9 @@ with sync_playwright() as pw:
     a, b = browser.new_context().new_page(), browser.new_context().new_page()  # two browsers = two sessions
     try:
         a.goto(BASE)
-        a.get_by_role("button", name="Need an account?").click()
-        a.get_by_placeholder("Your name").fill("Owner")
-        a.get_by_placeholder("Organization name").fill(f"E2E {tag}")
         a.get_by_placeholder("Email").fill(owner)
         a.get_by_placeholder("Password (min 10)").fill(pwd)
-        a.get_by_role("button", name="Create account").click()
+        a.get_by_role("button", name="Log in").click()
         expect(a.get_by_role("heading", name=f"E2E {tag}")).to_be_visible()
 
         a.get_by_placeholder("Email").last.fill(guest)

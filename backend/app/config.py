@@ -13,6 +13,7 @@ MIGRATE_DATABASE_URL = _e("MIGRATE_DATABASE_URL", "")
 APP_DB_PASSWORD = _e("APP_DB_PASSWORD", "")
 SECRET_KEY = _e("SECRET_KEY")
 PUBLIC_URL = _e("PUBLIC_URL", "http://localhost:8080").rstrip("/")
+ALLOW_SIGNUP = _e("ALLOW_SIGNUP", "0") == "1"  # invite-only unless explicitly opened
 COOKIE_SECURE = _e("COOKIE_SECURE", "false").lower() == "true"
 SMTP_HOST = _e("SMTP_HOST", "mail")
 SMTP_PORT = int(_e("SMTP_PORT", "1025"))

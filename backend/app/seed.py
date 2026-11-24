@@ -3,9 +3,12 @@ Goes through the real API (in-process TestClient), so RLS, git and validation be
 Uses tests.fixtures.sample for the imported DOCX (python-docx + Pillow, both runtime deps)."""
 import sys
 
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from . import mail
+from .db import SessionLocal
+from .routers.auth import register
 from .main import app
 
 ORG, PW = "Demo Org", "demo-password-123"
@@ -90,11 +93,12 @@ def seed() -> str:
         owner = client()
         if seeded(owner):
             return "demo data already present"
-        r = owner.post("/api/auth/signup", json={"email": USERS["owner"], "password": PW, "name": "Olivia Owner", "org_name": ORG})
-        if r.status_code == 409:  # user left over from a failed run: login already done in seeded(); add a fresh org
+        try:  # public sign-up is closed: create the owner directly
+            with SessionLocal() as db:
+                register(db, USERS["owner"], "Olivia Owner", PW, ORG)
+            ok(owner.post("/api/auth/login", json={"email": USERS["owner"], "password": PW}))
+        except HTTPException:  # user left over from a failed run: login already done in seeded(); add a fresh org
             ok(owner.post("/api/orgs", json={"name": ORG}))
-        else:
-            ok(r)
         admin, editor = join(owner, "admin", outbox), join(owner, "editor", outbox)
         join(owner, "viewer", outbox)
 

@@ -18,7 +18,9 @@ function useMe() {
 
 function AuthForm({ onDone }: { onDone?: () => void }) {
   const qc = useQueryClient();
-  const [signup, setSignup] = useState(false);
+  const [wantSignup, setSignup] = useState(false);
+  const cfg = useQuery({ queryKey: ["auth-config"], queryFn: () => api<{ allow_signup: boolean }>("/auth/me/config") });
+  const signup = wantSignup && !!cfg.data?.allow_signup;
   const m = useMutation({
     mutationFn: (d: FormData) =>
       api(signup ? "/auth/signup" : "/auth/login", "POST", Object.fromEntries(d)),
@@ -32,7 +34,10 @@ function AuthForm({ onDone }: { onDone?: () => void }) {
       <p><input name="email" type="email" placeholder="Email" required /></p>
       <p><input name="password" type="password" placeholder="Password (min 10)" minLength={10} required /></p>
       <button>{signup ? "Create account" : "Log in"}</button>{" "}
-      <button type="button" onClick={() => setSignup(!signup)}>{signup ? "I have an account" : "Need an account?"}</button>
+      {cfg.data?.allow_signup && (
+        <button type="button" onClick={() => setSignup(!signup)}>{signup ? "I have an account" : "Need an account?"}</button>
+      )}
+      {!cfg.data?.allow_signup && <p><small>Accounts are by invitation only.</small></p>}
       <Err e={m.error} />
     </form>
   );

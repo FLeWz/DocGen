@@ -1,6 +1,6 @@
 """Editor smoke test against a running stack.
   PLAYWRIGHT_BROWSERS_PATH=$PWD/.playwright .venv/bin/python e2e/smoke.py   (E2E_BASE_URL, default http://localhost:8080)
-Signs up a throwaway user with a random password; leaves its org behind in the dev DB."""
+Logs in as a throwaway user from scripts/e2e-users.sh (E2E_TAG, E2E_PASSWORD); leaves its org in the dev DB."""
 import os
 import secrets
 import sys
@@ -8,8 +8,8 @@ import sys
 from playwright.sync_api import expect, sync_playwright
 
 BASE = os.environ.get("E2E_BASE_URL", "http://localhost:8080")
-tag = secrets.token_hex(4)
-email, password = f"e2e-{tag}@example.com", secrets.token_urlsafe(16)
+tag = (os.environ.get("E2E_TAG") or secrets.token_hex(4)) + "-smoke"  # user+org come from `make test-e2e-docker` (sign-up is closed)
+email, password = f"e2e-{tag}@example.com", os.environ["E2E_PASSWORD"]
 ART = os.environ.get("E2E_ARTIFACTS", "e2e-artifacts")
 
 with sync_playwright() as pw:
@@ -17,12 +17,9 @@ with sync_playwright() as pw:
     page = browser.new_page(viewport={"width": 1500, "height": 1000})
     try:
         page.goto(BASE)
-        page.get_by_role("button", name="Need an account?").click()
-        page.get_by_placeholder("Your name").fill("E2E User")
-        page.get_by_placeholder("Organization name").fill(f"E2E {tag}")
         page.get_by_placeholder("Email").fill(email)
         page.get_by_placeholder("Password (min 10)").fill(password)
-        page.get_by_role("button", name="Create account").click()
+        page.get_by_role("button", name="Log in").click()
 
         page.once("dialog", lambda d: d.accept("Docs"))
         page.get_by_role("button", name="+ Folder").click()

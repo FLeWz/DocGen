@@ -20,6 +20,20 @@ Open <http://localhost:8080> (`WEB_PORT`). Migrations run on api start; with `SE
 <http://localhost:8025> (`MAIL_UI_PORT`). If a port is taken, change `WEB_PORT`/`MAIL_UI_PORT` **and** `PUBLIC_URL`
 (invite links use it).
 
+### Invite-only: first user
+
+Public sign-up is **closed** (`ALLOW_SIGNUP=0`: `POST /api/auth/signup` answers 404, the login form hides the sign-up
+button). New people join only by accepting an invite (a new user is created there). Create the first user + org on an
+empty install with the CLI; the password comes from stdin (piped, or prompted on a terminal), never from argv:
+
+```sh
+printf '%s\n' 'a-long-password' | docker compose exec -T api python -m app.manage create-user \
+    --email you@example.com --name "You" --org "My Org" --password-stdin
+docker compose exec api python -m app.manage create-user --email you@example.com --name You --org "My Org"  # prompts
+```
+
+Set `ALLOW_SIGNUP=1` only on a throwaway dev instance.
+
 ### Demo data (dev only)
 
 `SEED_DEMO=1` creates (idempotently; skipped if present) the org **Demo Org** with these users, all with password
@@ -54,6 +68,7 @@ Set in `.env` (read by `docker-compose.yml`). No secrets are committed; `.env` i
 | `APP_DB_PASSWORD` | – (required) | Password of `docgen_app`, the unprivileged runtime role that RLS applies to |
 | `SECRET_KEY` | – (required) | HMAC key for CSRF tokens; long and random |
 | `COOKIE_SECURE` | `false` | `true` behind HTTPS (cookies get the `Secure` flag) |
+| `ALLOW_SIGNUP` | `0` | `1` opens `POST /api/auth/signup` (anyone can create an org). Default: invite-only |
 | `SEED_DEMO` | `1` in `.env.example` (`0` if unset) | Create demo data on api start |
 | `SMTP_HOST` / `SMTP_PORT` | `mail` / `1025` | SMTP server (Mailpit by default) |
 | `SMTP_USER` / `SMTP_PASSWORD` | empty | SMTP credentials |
@@ -145,7 +160,7 @@ make test-e2e           # same scripts from the host (.venv with playwright, PLA
 scripts/clean-start.sh  # fresh clone + separate compose project + backup/restore round trip
 ```
 
-The e2e scripts sign up throwaway users and leave their orgs in the dev database. The Playwright image tag in
+The e2e scripts log in as throwaway users created through the CLI (`scripts/e2e-users.sh`) and leave their orgs in the dev database. The Playwright image tag in
 `e2e/Dockerfile` must match the pinned `playwright` version.
 
 ## Security model
@@ -171,7 +186,7 @@ The e2e scripts sign up throwaway users and leave their orgs in the dev database
 
 * Not opened in real Microsoft Word by the developers: DOCX output is checked with python-docx, structural tests and
   LibreOffice (PDF conversion). Word will ask to update fields (TOC, page numbers) on open.
-* Sign-up reveals whether an email is registered (409); login is throttled but sign-up is not. The throttle is
+* Sign-up is off by default; when enabled it reveals whether an email is registered (409); login is throttled but sign-up is not. The throttle is
   in-process memory (single api worker; resets on restart). CSRF tokens are signed but not tied to the session.
 * Export jobs run in the api process; a restart strands queued jobs (reported as error after 10 min). PDFs are not
   byte-reproducible (LibreOffice embeds timestamps); DOCX is.
