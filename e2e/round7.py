@@ -36,6 +36,8 @@ with sync_playwright() as pw:
         page.get_by_role("tab", name="Insert").click()
         dyn = page.get_by_role("button", name=re.compile("Make dynamic table"))
         ed.get_by_text("plain table text").first.click()
+        expect(page.get_by_role("tab", name="Table")).to_have_attribute("aria-selected", "true")  # round 8: the Table tab follows the cursor
+        page.get_by_role("tab", name="Insert").click()
         expect(dyn).to_be_enabled()
         ed.get_by_text("This body text stays editable content.").click()
         expect(dyn).to_be_disabled()
@@ -80,6 +82,7 @@ with sync_playwright() as pw:
         page.get_by_label("Insert table with size").select_option("3x2")
         tbl = page.locator(".ProseMirror table")
         expect(tbl).to_have_count(1)
+        page.get_by_role("tab", name="Insert").click()  # (the cursor is in the new table: the Table tab was selected)
         page.get_by_role("button", name=re.compile("Make dynamic table")).click()
         page.get_by_role("textbox", name="List variable").fill("team")
         page.get_by_role("textbox", name="Row fields (optional)").fill("name, email")

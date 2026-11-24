@@ -128,7 +128,7 @@ export function Ribbon({ editor, ro, styles, mode = "body", onErr, structure, on
   const openDynamic = () => {
     const c = ctxOf(editor.state), plan = c && !c.table.attrs.dynamicList ? analyzeTable(c.table) : null;
     setDynName(st.dynamic ?? ""); setDynFields("");
-    setDynCols(plan?.ok ? { names: columnNames(plan.headers), rows: plan.rows, convert: true, refused: "" } : plan ? { names: [], rows: [], convert: false, refused: plan.reason } : null);
+    setDynCols(plan?.ok ? { names: columnNames(plan.headers), rows: plan.rows, convert: plan.headers.some(Boolean) || plan.rows.some((r) => r.some(Boolean)), refused: "" } : plan ? { names: [], rows: [], convert: false, refused: plan.reason } : null);
     setDlg("dyn");
   };
   const makeDynamic = () => {
