@@ -1,8 +1,3 @@
-.ed-wrap { display: flex; gap: 16px; align-items: flex-start; }
-.ed-wrap > div { flex: 1; min-width: 0; }
-.ed-tb { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; align-items: center; }
-.ed-tb button.on { background: #cfe3ff; }
-.word-pdf { width: 100%; height: 78vh; border: 1px solid #bbb; background: #fff; }
 
 /* ---- Word page ("paper"): <PageFrame>, shared by editor and previews. Page size/margins come from the DOCX (custom props set inline) ---- */
 .docx { --zoom: 1; }

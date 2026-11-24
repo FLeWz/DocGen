@@ -4,6 +4,7 @@ import { NodeSelection } from "@tiptap/pm/state";
 import { EditorContent, useEditor, useEditorState } from "@tiptap/react";
 import { ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, apiBlob, BaseDoc, Doc, Draft, Me, Style } from "../api";
+import { Banner, ErrorBanner, Field, Icon, Modal, Spinner, useUI } from "../ui";
 import { effectiveStyle, extractStyles, extractVariables, NAME_RE, PMNode } from "./doc";
 import "./editor.css";
 import { extensions, headingNumbering } from "./extensions";
@@ -39,7 +40,7 @@ export function RichEditor({ qkey, load, save, keyOf, me, idleSaved, banner, act
   const d = useQuery({ queryKey: qkey, queryFn: load, gcTime: 0 }); // no stale cache on reopen: its refetch would reload (wipe) the editor after typing started
   const [pick, setPick] = useState(() => localStorage.getItem(`docgen.look.${me.org?.id}`) ?? "");
   const [pv, setPv] = useState<"live" | "word" | "off">("live");
-  const [zoom, setZoom] = useState(0.6), [guides, setGuides] = useState(false);
+  const [zoom, setZoom] = useState(innerWidth >= 1600 ? 0.6 : 0.45), [guides, setGuides] = useState(false);
   const [pdf, setPdf] = useState<{ url: string; busy: boolean; err: string }>({ url: "", busy: false, err: "" });
   const bases = useQuery({ queryKey: ["base-docs", me.org?.id], queryFn: () => api<BaseDoc[]>("/base-documents"), enabled: !lookSrc });
   const src: LookSrc = lookSrc ?? (pick && bases.data?.some((b) => b.id === pick) ? { base_doc: pick } : {});
@@ -53,6 +54,7 @@ export function RichEditor({ qkey, load, save, keyOf, me, idleSaved, banner, act
   const [status, setStatus] = useState<Status>("idle");
   const [err, setErr] = useState("");
   const [vf, setVf] = useState<VForm | null>(null);
+  const [dyn, setDyn] = useState<string | null>(null), [lnk, setLnk] = useState<string | null>(null);
   const titleRef = useRef(""), timer = useRef<number>(), pending = useRef(false), chain = useRef<Promise<unknown>>(Promise.resolve());
   const editorRef = useRef<Editor | null>(null);
 
@@ -148,16 +150,15 @@ export function RichEditor({ qkey, load, save, keyOf, me, idleSaved, banner, act
     else run().insertContent({ type: "variable", attrs }).run();
     setVf(null);
   };
-  const markDynamic = () => {
-    const v = prompt("List variable that supplies the rows (empty = make static).\nThe last row is the row template; use {{ row.field }} chips in it.", st?.dynamic ?? "");
-    if (v === null) return;
+  const saveDynamic = () => {
+    const v = (dyn ?? "").trim();
     if (v && !/^[A-Za-z_][A-Za-z0-9_]*$/.test(v)) { setErr("List variable name: letters, digits, _"); return; }
-    setErr(""); run().updateAttributes("table", { dynamicList: v || null }).run();
+    setErr(""); run().updateAttributes("table", { dynamicList: v || null }).run(); setDyn(null);
   };
-  const setLink = () => {
-    const href = prompt("Link URL (empty removes)", editor.getAttributes("link").href ?? "https://");
-    if (href === null) return;
+  const saveLink = () => {
+    const href = (lnk ?? "").trim();
     if (!href) run().extendMarkRange("link").unsetLink().run(); else run().extendMarkRange("link").setLink({ href }).run();
+    setLnk(null);
   };
   const upload = async (f?: File) => {
     if (!f) return;
@@ -167,102 +168,124 @@ export function RichEditor({ qkey, load, save, keyOf, me, idleSaved, banner, act
       setErr(""); run().insertContent({ type: "image", attrs: { imageId: img.id, alt: f.name, width: null } }).run();
     } catch (e) { setErr((e as Error).message); }
   };
-  const Btn = ({ l, on, fn, dis, t }: { l: string; on?: boolean; fn: () => void; dis?: boolean; t?: string }) =>
-    <button type="button" className={on ? "on" : ""} disabled={ro || dis} title={t ?? l} aria-label={t ?? l} aria-pressed={on}
-      onMouseDown={(e) => e.preventDefault()} onClick={fn}>{l}</button>;
-  const label = { idle: "no changes", saving: "saving…", saved: "draft saved", error: "save failed" }[status];
+  const label = { idle: "No changes", saving: "Saving…", saved: "Draft saved", error: "Save failed" }[status];
+  const B = (p: Omit<React.ComponentProps<typeof Btn>, "ro">) => <Btn ro={ro} {...p} />;
 
   return (
-    <section>
-      <p>
-        <input value={title} disabled={ro} aria-label="Title" onChange={(e) => { setTitle(e.target.value); titleRef.current = e.target.value; touch(); }} />{" "}
-        <span data-testid="save-status" data-status={status} role="status" style={{ color: status === "error" ? "crimson" : undefined }}>
-          {status === "idle" && idleSaved ? "draft saved" : label}</span>
-        {status === "error" && <> <button onClick={() => flush()}>Retry</button></>}{" "}
-        {actions?.({ editor, flush })}
-      </p>
-      {banner}
-      <div className="ed-tb">
-        <select aria-label="Paragraph style" disabled={ro} value={st?.style ?? "Normal"} onChange={(e) => applyStyle(e.target.value)}>
-          {styles.filter((s) => s.kind === "paragraph" || s.kind === "heading").map((s) => <option key={s.style_id} value={s.style_id}>{s.name}</option>)}
-        </select>
-        <Btn l="B" t="Bold" on={st?.bold} fn={() => run().toggleBold().run()} />
-        <Btn l="I" t="Italic" on={st?.italic} fn={() => run().toggleItalic().run()} />
-        <Btn l="U" t="Underline" on={st?.underline} fn={() => run().toggleUnderline().run()} />
-        <Btn l="• List" t="Bullet list" on={st?.bullet} fn={() => run().toggleBulletList().run()} />
-        <Btn l="1. List" t="Ordered list" on={st?.ordered} fn={() => run().toggleOrderedList().run()} />
-        {([["⯇", "left", "Align left"], ["≡", "center", "Align center"], ["⯈", "right", "Align right"], ["☰", "both", "Justify"]] as const).map(([l, jc, t]) =>
-          <Btn key={jc} l={l} t={t} on={st?.jc === jc} fn={() => setAlign(jc)} />)}
-        <Btn l="Link" on={st?.link} fn={setLink} />
-        <Btn l="Image" fn={() => document.getElementById("img-in")?.click()} />
-        <input id="img-in" type="file" accept="image/png,image/jpeg,image/gif,image/webp" hidden aria-label="Image file"
-          onChange={(e) => { upload(e.target.files?.[0]); e.target.value = ""; }} />
-        <Btn l="Table" t="Insert table" fn={() => run().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()} />
-        {st?.table && <>
-          <Btn l="+Row" fn={() => run().addRowAfter().run()} /><Btn l="+Col" fn={() => run().addColumnAfter().run()} />
-          <Btn l="−Row" fn={() => run().deleteRow().run()} /><Btn l="−Col" fn={() => run().deleteColumn().run()} />
-          <Btn l="Merge" t="Merge cells" fn={() => run().mergeCells().run()} /><Btn l="Split" t="Split cell" fn={() => run().splitCell().run()} />
-          <Btn l="Delete table" fn={() => run().deleteTable().run()} />
-          <Btn l={st.dynamic ? `Dynamic: ${st.dynamic}` : "Mark table dynamic"} t="Mark table dynamic" on={!!st.dynamic} fn={markDynamic} />
-        </>}
-        <Btn l={st?.variable ? "Edit variable" : "Make variable"} t="Make variable" on={st?.variable} fn={openVariable} />
+    <div className="editorpage">
+      <div className="edhead">
+        <input className="titleinput" value={title} disabled={ro} aria-label="Title" placeholder="Untitled" onChange={(e) => { setTitle(e.target.value); titleRef.current = e.target.value; touch(); }} />
+        <span className={`savestatus ${status}`} data-testid="save-status" data-status={status} role="status">
+          {status === "saving" ? <Spinner /> : <Icon n={status === "error" ? "alert" : "check"} size={14} />}{status === "idle" && idleSaved ? "Draft saved" : label}</span>
+        {status === "error" && <button className="btn sm" onClick={() => flush()}>Retry</button>}
+        <div className="actions">{actions?.({ editor, flush })}</div>
       </div>
-      {vf && (
-        <form className="ed-tb" onSubmit={(e) => { e.preventDefault(); saveVariable(); }}>
-          <input aria-label="Variable name" placeholder="name" value={vf.name} onChange={(e) => setVf({ ...vf, name: e.target.value })} autoFocus />
-          <input aria-label="Variable default" placeholder="default" value={vf.default} onChange={(e) => setVf({ ...vf, default: e.target.value })} />
-          <select aria-label="Variable filter" value={vf.kind} onChange={(e) => setVf({ ...vf, kind: e.target.value as VForm["kind"] })}>
-            <option value="">no filter</option><option value="upper">upper</option><option value="date">date format</option>
+      {banner}
+      <div className="tbar" role="toolbar" aria-label="Formatting">
+        <div className="tgroup">
+          <select aria-label="Paragraph style" title="Paragraph style" disabled={ro} value={st?.style ?? "Normal"} onChange={(e) => applyStyle(e.target.value)}>
+            {styles.filter((s) => s.kind === "paragraph" || s.kind === "heading").map((s) => <option key={s.style_id} value={s.style_id}>{s.name}</option>)}
           </select>
-          {vf.kind === "date" && <input aria-label="Date format" value={vf.format} onChange={(e) => setVf({ ...vf, format: e.target.value })} size={12} />}
-          <button>{vf.existing ? "Update" : "Create"} variable</button>
-          <button type="button" onClick={() => setVf(null)}>Cancel</button>
-        </form>
-      )}
-      {err && <p role="alert" style={{ color: "crimson" }}>{err}</p>}
-      <div className="ed-tb" aria-label="View options">
+        </div>
+        <div className="tgroup">
+          <B i="bold" t="Bold" on={st?.bold} fn={() => run().toggleBold().run()} /><B i="italic" t="Italic" on={st?.italic} fn={() => run().toggleItalic().run()} /><B i="underline" t="Underline" on={st?.underline} fn={() => run().toggleUnderline().run()} />
+        </div>
+        <div className="tgroup">
+          <B i="ul" t="Bullet list" on={st?.bullet} fn={() => run().toggleBulletList().run()} /><B i="ol" t="Ordered list" on={st?.ordered} fn={() => run().toggleOrderedList().run()} />
+        </div>
+        <div className="tgroup">
+          {([["left", "left", "Align left"], ["center", "center", "Align center"], ["right", "right", "Align right"], ["both", "justify", "Justify"]] as const).map(([jc, i, t]) =>
+            <B key={jc} i={i} t={t} on={st?.jc === jc} fn={() => setAlign(jc)} />)}
+        </div>
+        <div className="tgroup">
+          <B i="link" t="Link" on={st?.link} fn={() => setLnk(editor.getAttributes("link").href ?? "https://")} />
+          <B i="image" t="Insert image" fn={() => document.getElementById("img-in")?.click()} />
+          <input id="img-in" type="file" accept="image/png,image/jpeg,image/gif,image/webp" hidden aria-label="Image file" onChange={(e) => { upload(e.target.files?.[0]); e.target.value = ""; }} />
+          <B i="table" t="Insert table" fn={() => run().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()} />
+        </div>
+        {st?.table && <div className="tgroup" role="group" aria-label="Table">
+          <B i="rowAdd" t="Add row below" fn={() => run().addRowAfter().run()} /><B i="colAdd" t="Add column right" fn={() => run().addColumnAfter().run()} />
+          <B i="rowDel" t="Delete row" fn={() => run().deleteRow().run()} /><B i="colDel" t="Delete column" fn={() => run().deleteColumn().run()} />
+          <B i="merge" t="Merge cells" fn={() => run().mergeCells().run()} /><B i="split" t="Split cell" fn={() => run().splitCell().run()} />
+          <B i="trash" t="Delete table" fn={() => run().deleteTable().run()} />
+          <B i="refresh" t="Mark table dynamic" label={st.dynamic ? `Dynamic: ${st.dynamic}` : "Dynamic table"} on={!!st.dynamic} fn={() => setDyn(st.dynamic ?? "")} />
+        </div>}
+        <div className="tgroup"><B i="var" t="Make variable" label={st?.variable ? "Edit variable" : "Variable"} on={st?.variable} fn={openVariable} /></div>
+      </div>
+      <ErrorBanner e={err ? new Error(err) : null} />
+      <div className="viewbar" role="group" aria-label="View options">
         {!lookSrc && <label>Look <select aria-label="Look" value={src.base_doc ?? ""} onChange={(e) => { setPick(e.target.value); localStorage.setItem(`docgen.look.${me.org?.id}`, e.target.value); }}>
           <option value="">Organization styles</option>{bases.data?.map((b) => <option key={b.id} value={b.id}>Base: {b.name}</option>)}</select></label>}
         <label>Preview <select aria-label="Preview mode" value={pv} onChange={(e) => setPv(e.target.value as typeof pv)}>
           <option value="live">Live (HTML)</option><option value="word">Render as Word does (PDF)</option><option value="off">Off</option></select></label>
         <label>Zoom <select aria-label="Zoom" value={zoom} onChange={(e) => setZoom(+e.target.value)}>
-          {[0.4, 0.5, 0.6, 0.75, 1].map((z) => <option key={z} value={z}>{z * 100}%</option>)}</select></label>
-        <button type="button" className={guides ? "on" : ""} aria-pressed={guides} onClick={() => setGuides(!guides)}>Page guides</button>
-        {pv === "word" && <button type="button" disabled={pdf.busy} onClick={renderWord}>{pdf.busy ? "Rendering…" : "Re-render PDF"}</button>}
+          {[0.4, 0.45, 0.5, 0.6, 0.75, 1].map((z) => <option key={z} value={z}>{z * 100}%</option>)}</select></label>
+        <button type="button" className={`btn sm ${guides ? "on" : ""}`} aria-pressed={guides} onClick={() => setGuides(!guides)}>Page guides</button>
+        {pv === "word" && <button type="button" className="btn sm" disabled={pdf.busy} onClick={renderWord}>{pdf.busy ? "Rendering…" : "Re-render PDF"}</button>}
+        <span className="spacer" />
+        <span className="muted small">Styles: {extractStyles(doc).join(", ") || "—"} · Variables: {extractVariables(doc).join(", ") || "—"}</span>
       </div>
-      <div className="ed-wrap">
-        <div className="docx-stage"><PageFrame look={look} zoom={zoom} guides={guides}><EditorContent editor={editor} aria-label="Editor" /></PageFrame></div>
-        {pv === "live" && <div><Preview doc={doc} styles={styles} look={look} zoom={zoom} guides={guides} /></div>}
-        {pv === "word" && <div>{pdf.err && <p role="alert" style={{ color: "crimson" }}>{pdf.err}</p>}
-          {pdf.url ? <iframe className="word-pdf" title="Word rendering (PDF)" src={pdf.url} data-testid="word-pdf" /> : <p>{pdf.busy ? "Rendering with LibreOffice…" : ""}</p>}</div>}
+      <div className="panes">
+        <section className="pane" aria-label="Editor pane"><div className="pane-h">Editor</div>
+          <div className="docx-stage"><PageFrame look={look} zoom={zoom} guides={guides}><EditorContent editor={editor} aria-label="Editor" /></PageFrame></div></section>
+        {pv === "live" && <section className="pane" aria-label="Preview pane"><div className="pane-h">Preview</div><Preview doc={doc} styles={styles} look={look} zoom={zoom} guides={guides} /></section>}
+        {pv === "word" && <section className="pane" aria-label="Word rendering pane"><div className="pane-h">Rendered as Word does</div>
+          {pdf.err && <ErrorBanner e={new Error(pdf.err)} />}
+          {pdf.url ? <iframe className="word-pdf" title="Word rendering (PDF)" src={pdf.url} data-testid="word-pdf" /> : <div className="pane-msg">{pdf.busy ? <><Spinner /> Rendering with LibreOffice…</> : ""}</div>}</section>}
       </div>
-      <p><small>Styles: {extractStyles(doc).join(", ") || "—"} · Variables: {extractVariables(doc).join(", ") || "—"}</small></p>
-    </section>
+      {vf && (
+        <Modal title={vf.existing ? "Edit variable" : "Make variable"} onClose={() => setVf(null)} actions={<><button className="btn" type="button" onClick={() => setVf(null)}>Cancel</button><button className="btn primary" form="var-form">{vf.existing ? "Update" : "Create"} variable</button></>}>
+          <form id="var-form" className="stack" onSubmit={(e) => { e.preventDefault(); saveVariable(); }}>
+            <Field label="Variable name" hint="Letters, digits and _ (e.g. client_name)">{(id) => <input id={id} value={vf.name} onChange={(e) => setVf({ ...vf, name: e.target.value })} autoFocus />}</Field>
+            <Field label="Variable default" hint="Shown in the preview when the document gives no value">{(id) => <input id={id} value={vf.default} onChange={(e) => setVf({ ...vf, default: e.target.value })} />}</Field>
+            <Field label="Variable filter">{(id) => <select id={id} value={vf.kind} onChange={(e) => setVf({ ...vf, kind: e.target.value as VForm["kind"] })}><option value="">No filter</option><option value="upper">UPPERCASE</option><option value="date">Date format</option></select>}</Field>
+            {vf.kind === "date" && <Field label="Date format" hint="e.g. YYYY-MM-DD">{(id) => <input id={id} value={vf.format} onChange={(e) => setVf({ ...vf, format: e.target.value })} />}</Field>}
+            <ErrorBanner e={err ? new Error(err) : null} />
+          </form>
+        </Modal>)}
+      {lnk !== null && (
+        <Modal title="Link" onClose={() => setLnk(null)} actions={<><button className="btn" type="button" onClick={() => setLnk(null)}>Cancel</button><button className="btn primary" form="link-form">{lnk.trim() ? "Apply link" : "Remove link"}</button></>}>
+          <form id="link-form" onSubmit={(e) => { e.preventDefault(); saveLink(); }}><Field label="Link URL" hint="http, https or mailto. Empty removes the link.">{(id) => <input id={id} value={lnk} onChange={(e) => setLnk(e.target.value)} autoFocus />}</Field></form>
+        </Modal>)}
+      {dyn !== null && (
+        <Modal title="Dynamic table" onClose={() => setDyn(null)} actions={<><button className="btn" type="button" onClick={() => setDyn(null)}>Cancel</button><button className="btn primary" form="dyn-form">{dyn.trim() ? "Make dynamic" : "Make static"}</button></>}>
+          <form id="dyn-form" className="stack" onSubmit={(e) => { e.preventDefault(); saveDynamic(); }}>
+            <p className="muted">The rows of a dynamic table come from a list variable. The last row is the row template; use <code>{"{{ row.field }}"}</code> variable chips in it.</p>
+            <Field label="List variable" hint="Empty makes the table static again.">{(id) => <input id={id} value={dyn} onChange={(e) => setDyn(e.target.value)} autoFocus />}</Field>
+            <ErrorBanner e={err ? new Error(err) : null} />
+          </form>
+        </Modal>)}
+    </div>
   );
 }
 
-export function SnippetEditor({ id, me, epoch, onCommit }: { id: string; me: Me; epoch: number; onCommit: () => void }) {
-  const qc = useQueryClient();
+function Btn({ i, t, label, on, fn, ro }: { i: string; t: string; label?: string; on?: boolean; fn: () => void; ro?: boolean }) {
+  return (
+    <button type="button" className={`tb ${on ? "on" : ""} ${label ? "wide" : ""}`} disabled={ro} title={t} aria-label={t} aria-pressed={on}
+      onMouseDown={(e) => e.preventDefault()} onClick={fn}><Icon n={i} />{label && <span>{label}</span>}</button>
+  );
+}
+
+export function SnippetEditor({ id, me, epoch, onCommit, onDiscarded }: { id: string; me: Me; epoch: number; onCommit: () => void; onDiscarded?: () => void }) {
+  const qc = useQueryClient(), ui = useUI();
   const [bump, setBump] = useState(0); // forces a reload after discarding the draft
   const qkey = useMemo(() => ["draft", id], [id]);
   const d = useQuery({ queryKey: qkey, queryFn: () => api<Draft>(`/snippets/${id}/draft`), gcTime: 0 }).data;
   const discard = useMutation({
     mutationFn: () => api(`/snippets/${id}/draft`, "DELETE"),
-    onSuccess: async () => { await qc.invalidateQueries(); setBump((b) => b + 1); },
+    onSuccess: async () => { await qc.invalidateQueries(); setBump((b) => b + 1); ui.toast("Draft discarded"); onDiscarded?.(); },
+    onError: (e: Error) => ui.toast(e.message, "err"),
   });
   return (
-    <>
-      <RichEditor qkey={qkey} me={me} idleSaved={d?.dirty}
-        load={() => api<Draft>(`/snippets/${id}/draft`)}
-        save={(b) => api<Draft>(`/snippets/${id}/draft`, "PUT", b)}
-        keyOf={(x) => { const y = x as Draft; return [id, epoch, bump, y.base_sha, y.conflict, y.head_sha].join(); }}
-        onSaved={() => qc.invalidateQueries({ queryKey: ["changes"] })}
-        banner={d?.conflict && <p role="alert" style={{ color: "darkorange" }}>HEAD moved since your draft started — resolve it on the commit tab.</p>}
-        actions={({ flush }) => <>
-          <button onClick={async () => { await flush(); onCommit(); }}>Commit…</button>{" "}
-          {me.org?.role !== "viewer" && <button onClick={() => confirm("Discard your draft?") && discard.mutate()}>Discard draft</button>}
-        </>} />
-      {discard.error && <p role="alert" style={{ color: "crimson" }}>{(discard.error as Error).message}</p>}
-    </>
+    <RichEditor qkey={qkey} me={me} idleSaved={d?.dirty}
+      load={() => api<Draft>(`/snippets/${id}/draft`)}
+      save={(b) => api<Draft>(`/snippets/${id}/draft`, "PUT", b)}
+      keyOf={(x) => { const y = x as Draft; return [id, epoch, bump, y.base_sha, y.conflict, y.head_sha].join(); }}
+      onSaved={() => qc.invalidateQueries({ queryKey: ["changes"] })}
+      banner={d?.conflict && <Banner kind="warn">HEAD moved since your draft started — resolve it on the commit screen.</Banner>}
+      actions={({ flush }) => <>
+        {me.org?.role !== "viewer" && <button className="btn" onClick={async () => { if (await ui.confirm({ title: "Discard your draft?", danger: true, ok: "Discard draft", body: "Your uncommitted changes to this snippet are lost; the last committed version is restored." })) discard.mutate(); }}><Icon n="trash" />Discard draft</button>}
+        <button className="btn primary" onClick={async () => { await flush(); onCommit(); }}><Icon n="commit" />Commit…</button>
+      </>} />
   );
 }

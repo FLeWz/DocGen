@@ -1,6 +1,6 @@
 import { Editor } from "@tiptap/core";
 import { expect, test } from "vitest";
-import { blockRange } from "../Import";
+import { blockRange } from "./blockrange";
 import { extensions } from "./extensions";
 
 const mk = () => new Editor({ extensions, content: { type: "doc", content: [
