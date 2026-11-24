@@ -49,7 +49,7 @@ export function ImportPage({ me }: { me: Me }) {
   const q = useQuery({ queryKey: qkey, queryFn: () => api<ImportDoc>(`/imports/${id}`) });
   const folders = useFolders(me);
   const [panel, setPanel] = useState<"sel" | "split" | "base" | "vars" | null>(null);
-  const [sel2, setSel2] = useState<{ picks: Pick[]; error: string }>({ picks: [], error: "" }), edRef = useRef<Editor | null>(null);
+  const [rev, setRev] = useState(0), [sel2, setSel2] = useState<{ picks: Pick[]; error: string }>({ picks: [], error: "" }), edRef = useRef<Editor | null>(null);
   const [range, setRange] = useState<[number, number]>([0, 1]);
   const [folder, setFolder] = useState(""), [title, setTitle] = useState(""), [level, setLevel] = useState(1), [name, setName] = useState("");
   const f = folder || folders.data?.[0]?.id || "";
@@ -58,8 +58,8 @@ export function ImportPage({ me }: { me: Me }) {
   const done = (t: string) => { ui.toast(t); setPanel(null); qc.invalidateQueries(); };
   const sel = useMutation({ mutationFn: () => api<Created>(`/imports/${id}/selection-snippet`, "POST", { folder_id: f, title, start: range[0], end: range[1] }), onSuccess: (r) => done(`Created snippet draft "${r.title}"${r.warnings.length ? ` (${r.warnings[0]})` : ""}`) });
   const split = useMutation({ mutationFn: () => api<Created[]>(`/imports/${id}/split`, "POST", { folder_id: f, level }), onSuccess: (r) => done(`Created ${r.length} snippet drafts`) });
-  // the editor holds the old text after the server replaced values: reload it
-  const applyVars = () => api(`/imports/${id}/variables`, "POST", { items: sel2.picks }).then(() => { if (!sel2.picks.length) return; setTimeout(() => location.reload(), 900); });
+  // the editor holds the old text after the server replaced values: a new key makes it load the stored content again
+  const applyVars = () => api(`/imports/${id}/variables`, "POST", { items: sel2.picks }).then(() => { if (sel2.picks.length) { setRev((r) => r + 1); return qc.invalidateQueries({ queryKey: qkey }); } });
   const base = useMutation({ mutationFn: async () => { if (sel2.picks.length) await applyVars(); return api<{ name: string }>(`/imports/${id}/base-document`, "POST", { name }); }, onSuccess: (r) => done(`Saved as base document "${r.name}"`) });
   const vars = useMutation({ mutationFn: applyVars, onSuccess: () => done(`Replaced ${sel2.picks.length} value${sel2.picks.length === 1 ? "" : "s"} by variables`) });
   const insertSlot = async (named: boolean) => {
@@ -84,7 +84,7 @@ export function ImportPage({ me }: { me: Me }) {
   return (
     <div className="page fill">
       <PageHead crumbs={[{ label: "Dashboard", to: "/" }, { label: "Imports", to: "/imports" }, { label: q.data?.title ?? "Import" }]} />
-      <RichEditor qkey={qkey} me={me} notices={warnings.length ? [{ id: "warn", kind: "warn", text: `${warnings.length} element${warnings.length === 1 ? "" : "s"} not editable`, items: warnings }] : []} noticeBar={`import:${id}`} noticeTestId="import-warnings" keyOf={() => id} lookSrc={{ import: id }}
+      <RichEditor qkey={qkey} me={me} notices={warnings.length ? [{ id: "warn", kind: "warn", text: `${warnings.length} element${warnings.length === 1 ? "" : "s"} not editable`, items: warnings }] : []} noticeBar={`import:${id}`} noticeTestId="import-warnings" keyOf={() => `${id}:${rev}`} lookSrc={{ import: id }}
         load={() => api<ImportDoc>(`/imports/${id}`)} save={(b) => api<ImportDoc>(`/imports/${id}`, "PUT", { title: b.title, content: b.content })}
         actions={({ editor: ed, flush }) => { edRef.current = ed; const slot = hasContentSlot(ed.state.doc.textContent); return <>
           <span data-testid="slot-badge" title={slot ? "The main body is replaced where this paragraph is" : "Without a {{ CONTENT }} paragraph, the body from the first Heading 1 on is replaced"}>{slot ? <Badge kind="green">{"{{ CONTENT }}"} set</Badge> : <Badge kind="amber">no {"{{ CONTENT }}"}</Badge>}</span>

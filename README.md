@@ -164,7 +164,7 @@ Orphaned uploads can be pruned with `POST /api/maintenance/cleanup` (admin; `?dr
 make test               # pytest (in the api image) + Vitest (frontend image) + Playwright e2e (e2e image), all in Docker
 make test-backend       # 120 backend tests against a separate docgen_test database
 make test-frontend      # Vitest unit tests
-make test-e2e-docker    # starts the stack, runs e2e/{smoke,docbuilder,import,invite,fidelity}.py in the `e2e` compose service
+make test-e2e-docker    # starts the stack, runs e2e/{smoke,docbuilder,import,invite,fidelity,basedoc}.py in the `e2e` compose service
 make test-e2e           # same scripts from the host (.venv with playwright, PLAYWRIGHT_BROWSERS_PATH=$PWD/.playwright,
                         #   E2E_BASE_URL=http://localhost:$WEB_PORT, MAIL_URL=http://localhost:$MAIL_UI_PORT)
 scripts/clean-start.sh  # fresh clone + separate compose project + backup/restore round trip

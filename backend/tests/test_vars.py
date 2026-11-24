@@ -16,68 +16,7 @@ from .test_documents import put, ref
 from .test_git import commit, mk, save
 from .test_import import imp, zread
 from .test_tables_sections import NS, pkg
-
-PNG = (b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\rIDATx\x9cc\xf8\xff\xff?"
-       b"\x00\x05\xfe\x02\xfe\xa7\x9a\xa0\xa0\x00\x00\x00\x00IEND\xaeB`\x82")
-HEAD_STYLES = f'''<w:styles {NS}><w:docDefaults><w:rPrDefault><w:rPr><w:sz w:val="22"/></w:rPr></w:rPrDefault></w:docDefaults>
-<w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style>
-<w:style w:type="paragraph" w:styleId="Title"><w:name w:val="Title"/><w:basedOn w:val="Normal"/></w:style>
-<w:style w:type="paragraph" w:styleId="Subtitle"><w:name w:val="Subtitle"/><w:basedOn w:val="Normal"/></w:style>
-<w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:basedOn w:val="Normal"/><w:pPr><w:keepNext/><w:numPr><w:numId w:val="3"/></w:numPr><w:spacing w:before="360"/><w:ind w:left="567" w:hanging="567"/><w:outlineLvl w:val="0"/></w:pPr></w:style>
-<w:style w:type="paragraph" w:styleId="Heading2"><w:name w:val="heading 2"/><w:basedOn w:val="Normal"/><w:pPr><w:keepNext/><w:numPr><w:ilvl w:val="1"/><w:numId w:val="3"/></w:numPr><w:ind w:left="578" w:hanging="578"/><w:outlineLvl w:val="1"/></w:pPr></w:style>
-</w:styles>'''
-NUMBERING = (f'<w:numbering {NS}><w:abstractNum w:abstractNumId="1"><w:multiLevelType w:val="multilevel"/>'
-             '<w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:pStyle w:val="Heading1"/><w:lvlText w:val="%1"/></w:lvl>'
-             '<w:lvl w:ilvl="1"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:pStyle w:val="Heading2"/><w:lvlText w:val="%1.%2"/></w:lvl>'
-             '</w:abstractNum><w:num w:numId="3"><w:abstractNumId w:val="1"/></w:num></w:numbering>')
-
-
-def fld(instr, shown, rpr=""):
-    r = lambda inner: f"<w:r>{rpr}{inner}</w:r>"
-    return (r('<w:fldChar w:fldCharType="begin"/>') + r(f"<w:instrText> {instr} </w:instrText>") + r('<w:fldChar w:fldCharType="separate"/>')
-            + r(f"<w:t>{shown}</w:t>") + r('<w:fldChar w:fldCharType="end"/>'))
-
-
-def p(inner, style=None, ppr=""):
-    st = f'<w:pStyle w:val="{style}"/>' if style else ""
-    return f"<w:p><w:pPr>{st}{ppr}</w:pPr>{inner}</w:p>"
-
-
-def tx(s):
-    return f"<w:r><w:t>{s}</w:t></w:r>"
-
-
-SECT = ('<w:sectPr><w:headerReference w:type="default" r:id="rId_header1"/><w:headerReference w:type="first" r:id="rId_header2"/>'
-        '<w:footerReference w:type="default" r:id="rId_footer1"/><w:pgSz w:w="11906" w:h="16838"/>'
-        '<w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1134" w:header="425" w:footer="329"/><w:titlePg/></w:sectPr>')
-BODY = (
-    p('<w:bookmarkStart w:id="1" w:name="DocTitle"/>' + fld("FORMTEXT", "Acme Spec") + '<w:bookmarkEnd w:id="1"/>', "Title")
-    + p(tx("Project Falcon"), "Subtitle")
-    + '<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="2000"/><w:gridCol w:w="2000"/></w:tblGrid><w:tr>'
-      f'<w:tc><w:p>{tx("Document revision:")}</w:p></w:tc><w:tc><w:p>{fld("FORMTEXT", "1.2")}</w:p></w:tc></w:tr>'
-      f'<w:tr><w:tc><w:p>{tx("Notes")}</w:p></w:tc><w:tc><w:p>{tx("plain table text")}</w:p></w:tc></w:tr></w:tbl>'
-    + p("", ppr=SECT)  # section break (cover section)
-    + '<w:sdt><w:sdtPr><w:docPartObj><w:docPartGallery w:val="Table of Contents"/></w:docPartObj></w:sdtPr><w:sdtContent>'
-    + p(fld('TOC \\o "1-3"', "Introduction 1"), "Normal") + "</w:sdtContent></w:sdt>"
-    + p(tx("Intro"), "Heading1") + p(tx("This body text stays editable content."))
-    + p(tx("Scope"), "Heading2") + p(tx("More body.")))
-HEADERS = {
-    "header1": p(fld("REF DocTitle \\h", "Acme Spec") + tx(" | ") + fld("PAGE", "1")),
-    "header2": p(fld("REF Gone_Bookmark \\h", "Old Title") + '<w:r><w:drawing><wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" '
-                 'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><wp:extent cx="9525" cy="9525"/>'
-                 '<wp:docPr id="1" name="logo"/><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic><pic:nvPicPr><pic:cNvPr id="1" name="l"/><pic:cNvPicPr/></pic:nvPicPr>'
-                 '<pic:blipFill><a:blip r:embed="rIdImg"/></pic:blipFill><pic:spPr/></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>'),
-    "footer1": p(tx("Confidential ") + fld("TITLE", "Stale Title") + tx(" page ") + fld("PAGE", "1") + tx(" of ") + fld("NUMPAGES", "9"), "Normal"),
-}
-
-
-def source() -> bytes:
-    d = pkg(BODY, headers=HEADERS, tail_sect=SECT)
-    rels = ('<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rIdImg" '
-            'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/logo.png"/></Relationships>')
-    ct = zread(d, "[Content_Types].xml").replace(b"<Default ", b'<Default Extension="png" ContentType="image/png"/><Default ', 1)
-    return rezip(d, {"word/styles.xml": HEAD_STYLES, "word/numbering.xml": NUMBERING, "[Content_Types].xml": ct},
-                 {"word/_rels/header2.xml.rels": rels, "word/media/logo.png": PNG})
+from .fixtures.cover import HEADERS, PNG, build as source, p, tx
 
 
 def root(data, name):
@@ -152,6 +91,8 @@ def test_apply_import_keeps_formatting_and_declares_defaults(client):
                                     {"name": "gone", "type": "text", "default": "Old Title"}]  # built-ins are not declared
     assert c.post(f"/api/imports/{iid}/variables", json={"items": [{"value": "nope", "name": "x"}]}).status_code == 422
     assert c.post(f"/api/imports/{iid}/variables", json={"items": [{"value": "a", "name": "bad name"}]}).status_code == 422
+    again = {x["value"] for x in c.get(f"/api/imports/{iid}/variables").json()["candidates"]}
+    assert not {"Acme Spec", "Project Falcon", "Old Title"} & again and not any("{{" in v for v in again)  # placeholders are not values
     out = c.get(f"/api/imports/{iid}/export").content  # the import's own export fills the placeholders
     body = plain(out, "word/document.xml")
     assert body.startswith("cover") and "{{" not in body and "Project Falcon" in body and "Acme Spec" not in body  # doc.title = import title

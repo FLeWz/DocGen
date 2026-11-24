@@ -137,7 +137,14 @@ def _label(p) -> str:
 
 
 def walk(root, where: str, plain: bool, marks: set):
-    """Yield (kind, value, hint, strong, where, apply(name)) for each replaceable value below `root`."""
+    """Yield (kind, value, hint, strong, where, apply(name)) for each replaceable value below `root`
+    (text that already holds `{{ }}` / `{% %}` is a variable, not a value)."""
+    for item in _walk(root, where, plain, marks):
+        if "{{" not in item[1] and "{%" not in item[1]:
+            yield item
+
+
+def _walk(root, where: str, plain: bool, marks: set):
     done: set = set()
     for sdt in list(root.iter(W + "sdt")):
         pr, c = sdt.find(W + "sdtPr"), sdt.find(W + "sdtContent")
