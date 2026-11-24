@@ -3,33 +3,35 @@
 .docx { --zoom: 1; }
 .docx .docx-stage, .docx-stage { background: #e8e8e8; padding: 12px; overflow: auto; max-height: 80vh; }
 .docx-page { display: flex; flex-direction: column; box-sizing: border-box; width: var(--pw); min-height: var(--ph); background: #fff;
-  box-shadow: 0 1px 6px #0004; margin: 0 auto; zoom: var(--zoom); font-family: Calibri, Carlito, sans-serif; font-size: 11pt; color: #000; }
-.docx-hdr, .docx-ftr { box-sizing: border-box; padding-left: var(--pl); padding-right: var(--pr); color: #000; opacity: .85; pointer-events: none; }
+  box-shadow: 0 1px 6px #0004; margin: 0 auto; zoom: var(--zoom); overflow-x: clip; font-family: Calibri, Carlito, sans-serif; font-size: 11pt; color: #000; }
+.docx-hdr, .docx-ftr { clip-path: inset(0 calc(var(--pr) - 10pt) 0 calc(var(--pl) - 10pt)); box-sizing: border-box; padding-left: var(--pl); padding-right: var(--pr); color: #000; opacity: .85; pointer-events: none; }
 .docx-hdr { padding-top: var(--hd); min-height: var(--pt); }
 .docx-ftr { padding-bottom: var(--ft); min-height: var(--pb); display: flex; flex-direction: column; justify-content: flex-end; }
 .docx-body { box-sizing: border-box; flex: 1; padding: 0 var(--pr) 0 var(--pl); min-width: 0; }
 /* optional page-break guides: a rule every body-height (header/footer assumed to fit the margins) */
 .docx.guides .docx-body { background-image: repeating-linear-gradient(to bottom, transparent 0, transparent calc(var(--bh) - 1px), #e5534b88 calc(var(--bh) - 1px), #e5534b88 var(--bh));
   background-size: 100% var(--bh); background-clip: content-box; }
-/* Word paragraph spacing adds up; flex children don't collapse margins like HTML blocks do */
-.docx .ProseMirror, .docx .pv { display: flex; flex-direction: column; outline: none; white-space: pre-wrap; tab-size: 36pt; min-height: 120px; }
-.docx .ProseMirror > *, .docx .pv > * { flex: none; }
+/* block layout: adjacent paragraph margins collapse (the larger of space-after / space-before wins), as LibreOffice and Word lay out */
+.docx .ProseMirror, .docx .pv { outline: none; white-space: pre-wrap; overflow-wrap: break-word; tab-size: 36pt; min-height: 120px; }
 /* zero-specificity resets: the look CSS (classes, :where defaults) and inline direct formats win */
 :where(.docx) :is(p, h1, h2, h3, h4, h5, h6) { margin: 0; font-size: inherit; font-weight: inherit; }
+/* the app's own heading rules (app.css) must not leak into the document: beat them with real specificity, style classes still win */
+.docx :is(h1, h2, h3, h4, h5, h6) { font-size: inherit; font-weight: inherit; line-height: inherit; }
 .docx ul, .docx ol { margin: 0 0 8pt; padding-left: 36pt; }
 .docx li > p { margin-left: 0 !important; text-indent: 0 !important; }
-.docx img { max-width: 100%; align-self: flex-start; }
+.docx img { max-width: 100%; }
 .docx .img { display: block; }
 .docx .num { margin-right: .4em; }
 .docx .dyn-badge { font-size: 9pt; color: #7a5af8; }
 .docx tr.tpl { background: #f4f0ff; }
-.docx .pgbrk { display: block; height: 0; margin: 6pt 0; border-top: 1px dashed #c33; position: relative; user-select: none; }
+.docx .pgbrk { display: inline-block; width: 100%; height: 0; margin: 0; vertical-align: middle; border-top: 1px dashed #c33; position: relative; user-select: none; }
 .docx .pgbrk::after { content: "page break"; position: absolute; right: 0; top: -.9em; font: 8pt monospace; color: #c33; background: #fff; padding: 0 4px; }
 .docx .fnref { font-size: 8pt; vertical-align: super; }
 
 /* tables: borders come from custom properties set per table (direct tblBorders or the table style, see look CSS) */
-.docx table { border-collapse: collapse; margin-bottom: 8pt; --b-def: 1px solid #888; }
-.docx table.tbl { width: auto; }
+.docx table { border-collapse: collapse; --b-def: 1px solid #888; }  /* no margin below: Word adds none */
+.docx table.dtbl { width: auto; }
+.docx table.ox { --b-def: none; } /* header/footer/opaque tables: no style = no borders (the grid default is for tables made in the editor) */
 .docx td, .docx th { padding: 0 5.4pt; vertical-align: top; min-width: 1em; font-weight: inherit; text-align: inherit;
   border-top: var(--b-insideH, var(--b-def)); border-bottom: var(--b-insideH, var(--b-def)); border-left: var(--b-insideV, var(--b-def)); border-right: var(--b-insideV, var(--b-def)); }
 .docx tr:first-child > :is(td, th) { border-top: var(--b-top, var(--b-insideH, var(--b-def))); }
@@ -45,8 +47,36 @@
 .opaque-view { position: relative; cursor: default; }
 .opaque-view:hover { outline: 1px dashed #aaa; }
 .ProseMirror .opaque-view.ProseMirror-selectednode { outline: 2px solid #555; }
-.docx .txbx { display: inline-block; vertical-align: top; box-sizing: border-box; border: 1px solid #999; padding: 3pt 5pt; max-width: 100%; }
-.docx .tabbed { display: flex; align-items: baseline; }
-.docx .tabbed .lead { flex: 1; border-bottom: 1px dotted #000; margin: 0 .25em; min-width: 1em; }
+.docx .txbx { display: inline-block; vertical-align: top; box-sizing: border-box; padding: 3pt 5pt; max-width: 100%; }
+/* tab stops (tabs.ts): "abs" pins segments to their stop, "flex" is the leader layout (TOC) */
+.docx .tabrow.abs { display: block; position: relative; }
+.docx .tabrow.abs > .tab-abs { position: absolute; top: 0; white-space: pre; }
+.docx .tabrow.flex { display: flex; align-items: baseline; }
+.docx .tabrow.flex > .tab-seg { flex: none; }
+.docx .tabrow.flex > .tab-fill { flex: 1; min-width: .5em; }
+.docx .tabrow.flex > .tab-fill.lead { border-bottom: 1px dotted #000; margin: 0 .25em; align-self: flex-end; height: .9em; }
 .opaque-chip { display: block; width: fit-content; margin: 4px 0; padding: 2px 10px; background: #e3e3e3; color: #555; border: 1px dashed #999; border-radius: 12px; font: .85em monospace; user-select: none; }
 .ProseMirror .opaque-chip.ProseMirror-selectednode { outline: 2px solid #555; }
+
+/* ---- discrete pages: preview cards and editor page gaps ---- */
+.docx-pages { display: flex; flex-direction: column; align-items: center; gap: 14px; }
+.docx-pages .docx-page { margin: 0; flex: none; }
+.docx-pages .docx-page.paged { min-height: var(--ph); }
+.docx-measure { position: absolute; left: -99999px; top: 0; visibility: hidden; pointer-events: none; width: var(--pw); }
+.docx-measure .docx-page { zoom: 1; min-height: 0; box-shadow: none; }
+.docx-measure .docx-body { flex: none; }
+.docx { position: relative; }
+.docx.guides .docx-pages .docx-body, .docx.guides .docx-page:not(.paged) .docx-body .ProseMirror { outline: 1px dashed #e5534b88; outline-offset: 0; }
+/* editor gap widgets: rest of the page, its footer, grey gap, header of the next page (full paper width, escaping the body padding) */
+.docx .pgsep { align-self: stretch; margin: 0 calc(-1 * var(--pr)) 0 calc(-1 * var(--pl)); user-select: none; pointer-events: none; background: #fff; }
+.docx .pgsep-fill { background: #fff; }
+.docx .pgsep-ftr, .docx .pgsep-hdr { opacity: .85; }
+.docx .pgsep-gap { height: 14px; background: #e8e8e8; box-shadow: inset 0 5px 5px -5px #0006, inset 0 -5px 5px -5px #0006; }
+.docx .pgsep-end { background: #fff; }
+.docx .pgsep-row > td { padding: 0 !important; border: 0 !important; background: none !important; }
+.docx .ProseMirror tr.rep > :is(td, th) { opacity: .6; }
+.docx .ProseMirror .pgsep-row .pgsep { margin: 0 calc(-1 * var(--pr)) 0 calc(-1 * var(--pl)); }
+.docx .tabch { display: inline-block; white-space: pre; tab-size: 1; overflow: visible; }
+.docx .ProseMirror .pgbrk ~ br.ProseMirror-trailingBreak { display: none; } /* the placeholder line PM adds after a trailing page break is no line in Word */
+/* spacing before is not drawn at the top of a page (LibreOffice; Word does the same after automatic page breaks) */
+.docx-pages .docx-page:not(:first-child) .pv > :first-child, .docx .ProseMirror > .pgtop { margin-top: 0 !important; }

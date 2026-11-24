@@ -7,20 +7,23 @@ import { api, apiBlob, BaseDoc, Doc, Draft, Me, Style } from "../api";
 import { ErrorBanner, Field, Icon, Modal, Notice, NoticeBar, Spinner, useUI } from "../ui";
 import { effectiveStyle, extractStyles, extractVariables, NAME_RE, PMNode } from "./doc";
 import "./editor.css";
-import { extensions, headingNumbering } from "./extensions";
+import { headingNumbering, pagedExtensions } from "./extensions";
 import { Look, LookSrc, PageFrame, useLook } from "./look";
-import { contentToHtml } from "./render";
+import { EditorLayout, pageState } from "./pageplugin";
+import { pageParts } from "./pagelayout";
+import { PagedView } from "./pages";
+import { contentBlocks } from "./render";
 
 /** Style set for the dropdown/numbering: org styles, overridden by a base document's (?base_doc=). */
 export const useStyles = (me: Me, baseDoc?: string | null) =>
   useQuery({ queryKey: ["styles", me.org?.id, baseDoc ?? null], queryFn: () => api<Style[]>(`/styles${baseDoc ? `?base_doc=${baseDoc}` : ""}`), staleTime: 60_000 });
 
 /** Live HTML preview on the Word page of `look` (default: the org styles). */
-export function Preview({ doc, styles, small, look, zoom, guides }: { doc: PMNode | null | undefined; styles: Style[]; small?: boolean; look?: Look; zoom?: number; guides?: boolean }) {
+export function Preview({ doc, styles, small, look, zoom, guides, onPages }: { doc: PMNode | null | undefined; styles: Style[]; small?: boolean; look?: Look; zoom?: number; guides?: boolean; onPages?: (n: number) => void }) {
   const own = useLook({}).data;
   const l = look ?? own;
-  const html = useMemo(() => contentToHtml(doc, styles, l?.media), [doc, styles, l]);
-  return <div className="docx-stage"><PageFrame look={l} zoom={zoom ?? (small ? 0.35 : 0.55)} guides={guides} bodyTestId="preview"><div className="pv" dangerouslySetInnerHTML={{ __html: html }} /></PageFrame></div>;
+  const blocks = useMemo(() => contentBlocks(doc, styles, l?.media, l?.tabs), [doc, styles, l]);
+  return <div className="docx-stage"><PagedView blocks={blocks} look={l} zoom={zoom ?? (small ? 0.35 : 0.55)} guides={guides} testid="preview" onPages={onPages} /></div>;
 }
 
 type VForm = { name: string; default: string; kind: "" | "upper" | "date"; format: string; existing: boolean };
@@ -50,6 +53,7 @@ export function RichEditor({ qkey, load, save, keyOf, me, idleSaved, notices = [
   const styles = (src.import ? look?.styles : orgStyles) ?? orgStyles ?? [];
   headingNumbering.styles = new Map(styles.filter((s) => s.numbering === "decimal" && s.kind === "heading").map((s) => [s.style_id, { level: s.level }]));
   const [doc, setDoc] = useState<PMNode>({ type: "doc" });
+  const [lay, setLay] = useState<EditorLayout | null>(null);
   const [title, setTitle] = useState("");
   const [status, setStatus] = useState<Status>("idle");
   const [err, setErr] = useState("");
@@ -74,7 +78,7 @@ export function RichEditor({ qkey, load, save, keyOf, me, idleSaved, notices = [
   const touch = useCallback(() => { pending.current = true; setStatus("saving"); window.clearTimeout(timer.current); timer.current = window.setTimeout(flush, 800); }, [flush]);
 
   const editor = useEditor({
-    extensions, content: { type: "doc", content: [] }, editable: false,
+    extensions: pagedExtensions, content: { type: "doc", content: [] }, editable: false,
     onUpdate: ({ editor }) => { setDoc(editor.getJSON() as PMNode); touch(); },
   });
   editorRef.current = editor;
@@ -83,6 +87,9 @@ export function RichEditor({ qkey, load, save, keyOf, me, idleSaved, notices = [
   // emitUpdate=false: the update event would autosave an unchanged draft just for opening it
   useEffect(() => { editor?.setEditable(!ro && ready, false); }, [editor, ro, ready]);
   useEffect(() => { editor?.view.dispatch(editor.state.tr); }, [editor, orgStyles, look]); // redraw heading numbers when the style set arrives
+  // page gaps: the plugin measures the editor DOM and reports the layout back (header of page 1 and footer of the last page live in the frame)
+  pageState.look = look; pageState.zoom = zoom; pageState.onLayout = setLay;
+  useEffect(() => { pageState.tick++; editor?.view.dispatch(editor.state.tr); }, [editor, look, zoom]);
 
   // Reload the editor only when the server draft changes identity (restore/discard/resolve), not per autosave.
   const loaded = useRef("");
@@ -221,12 +228,13 @@ export function RichEditor({ qkey, load, save, keyOf, me, idleSaved, notices = [
           {[0.4, 0.45, 0.5, 0.6, 0.75, 1].map((z) => <option key={z} value={z}>{z * 100}%</option>)}</select></label>
         <button type="button" className={`btn sm ${guides ? "on" : ""}`} aria-pressed={guides} onClick={() => setGuides(!guides)}>Page guides</button>
         {pv === "word" && <button type="button" className="btn sm" disabled={pdf.busy} onClick={renderWord}>{pdf.busy ? "Rendering…" : "Re-render PDF"}</button>}
+        <span className="muted small" data-testid="page-count" title="Estimated page count (browser layout; Word/LibreOffice may differ)">{lay ? `${lay.total} page${lay.total === 1 ? "" : "s"} (est.)` : ""}</span>
         <span className="spacer" />
         <span className="muted small">Styles: {extractStyles(doc).join(", ") || "—"} · Variables: {extractVariables(doc).join(", ") || "—"}</span>
       </div>
       <div className="panes">
         <section className="pane" aria-label="Editor pane"><div className="pane-h">Editor</div>
-          <div className="docx-stage"><PageFrame look={look} zoom={zoom} guides={guides}><EditorContent editor={editor} aria-label="Editor" /></PageFrame></div></section>
+          <div className="docx-stage"><PageFrame look={look} zoom={zoom} guides={guides} hdrHtml={lay ? pageParts(look, lay.pages[0], lay.total).hdr : undefined} ftrHtml={lay ? pageParts(look, lay.pages[lay.total - 1], lay.total).ftr : undefined}><EditorContent editor={editor} aria-label="Editor" /></PageFrame></div></section>
         {pv === "live" && <section className="pane" aria-label="Preview pane"><div className="pane-h">Preview</div><Preview doc={doc} styles={styles} look={look} zoom={zoom} guides={guides} /></section>}
         {pv === "word" && <section className="pane" aria-label="Word rendering pane"><div className="pane-h">Rendered as Word does</div>
           {pdf.err && <ErrorBanner e={new Error(pdf.err)} />}

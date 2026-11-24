@@ -9,8 +9,9 @@ import Heading from "@tiptap/extension-heading";
 import Paragraph from "@tiptap/extension-paragraph";
 import { Table, TableCell, TableHeader, TableRow } from "@tiptap/extension-table";
 import StarterKit from "@tiptap/starter-kit";
-import { cellCss, imgCss, listCss, pfmtCss, runCss, safeId, tableCss } from "./fmt";
+import { cellCss, imgCss, listCss, pflags, pfmtCss, rowCss, runCss, safeId, tableCss } from "./fmt";
 import { ooxmlToHtml, getMedia } from "./ooxml";
+import { Pages } from "./pageplugin";
 
 const attr = (name: string, data: string, def: unknown = null) => ({
   default: def,
@@ -104,9 +105,11 @@ export const ImportAttrs = Extension.create({
       { types: ["bulletList", "orderedList"], attributes: { numId: hidden(), listStyle: { default: null, parseHTML: (el: HTMLElement) => el.style.listStyleType || null,
         renderHTML: (a: Record<string, any>) => st(listCss(a.listStyle)) } } },
       { types: ["table"], attributes: { tblPr: hidden(), grid: hidden(),
-        styleId: { default: null, renderHTML: (a: Record<string, any>) => ({ class: `tbl${safeId(a.styleId) ? ` ts-${safeId(a.styleId)}` : ""}` }) },
+        styleId: { default: null, renderHTML: (a: Record<string, any>) => ({ class: `dtbl${safeId(a.styleId) ? ` ts-${safeId(a.styleId)}` : ""}` }) },
         tfmt: json("tfmt", (a) => st(tableCss(a.tfmt, a.grid))) } },
-      { types: ["tableCell", "tableHeader"], attributes: { cfmt: json("cfmt", (a) => st(cellCss(a.cfmt))) } },
+      // eff = derived from the table style (never written back), cfmt = direct formatting (exported); eff first so cfmt wins
+      { types: ["tableCell", "tableHeader"], attributes: { eff: json("eff", (a) => st(cellCss(a.eff))), cfmt: json("cfmt", (a) => st(cellCss(a.cfmt))) } },
+      { types: ["tableRow"], attributes: { rfmt: json("rfmt", (a) => st(rowCss(a.rfmt))) } },
     ];
   },
 });
@@ -136,10 +139,10 @@ export const HeadingNumbers = Extension.create({
 export const extensions = [
   StarterKit.configure({ paragraph: false, heading: false, blockquote: false, codeBlock: false, code: false, strike: false,
     horizontalRule: false, hardBreak: false, link: { openOnClick: false } }),
-  Paragraph.extend({ addAttributes() { return { ...styleAttrs, pfmt: json("pfmt", (a) => st(pfmtCss(a.pfmt))) }; },
+  Paragraph.extend({ addAttributes() { return { ...styleAttrs, pfmt: json("pfmt", (a) => ({ ...st(pfmtCss(a.pfmt)), ...pflags(a.pfmt) })) }; },
     renderHTML({ node, HTMLAttributes }) { return ["p", mergeAttributes(HTMLAttributes, cls(node.attrs, "Normal")), 0]; } }),
   Heading.configure({ levels: [1, 2, 3, 4] }).extend({
-    addAttributes() { return { ...this.parent?.(), ...styleAttrs, pfmt: json("pfmt", (a) => st(pfmtCss(a.pfmt))) }; },
+    addAttributes() { return { ...this.parent?.(), ...styleAttrs, pfmt: json("pfmt", (a) => ({ ...st(pfmtCss(a.pfmt)), ...pflags(a.pfmt) })) }; },
     renderHTML({ node, HTMLAttributes }) {
       return [`h${node.attrs.level}`, mergeAttributes(HTMLAttributes, cls(node.attrs, `Heading${node.attrs.level}`)), 0];
     },
@@ -148,3 +151,6 @@ export const extensions = [
     .configure({ resizable: false }),
   TableRow, TableHeader, TableCell, Variable, ImageNode, Fmt, HardBreak, Opaque, ImportAttrs, HeadingNumbers,
 ];
+
+/** The editor of the page view: the schema above plus page-gap decorations (the conflict resolver edits without them). */
+export const pagedExtensions = [...extensions, Pages];
