@@ -79,6 +79,15 @@ Fixed inside the api container (not in `.env`): `DATABASE_URL`, `MIGRATE_DATABAS
 `REPOS_ROOT=/repos`, `FILES_ROOT=/files`. Optional app tuning: `PDF_TIMEOUT_S` (120), `PDF_MAX_BYTES` (100 MiB).
 For production remove the `mail` service and point `SMTP_*` at a real server.
 
+## Looks like Word
+
+The editor and every preview sit on a "page" with the page size, margins, header/footer, fonts, colours and paragraph
+styles of the DOCX they belong to: an imported document uses its own package, a snippet uses the base document chosen
+under **Look** (else the organization styles). Preview modes: **Live (HTML)**, **Render as Word does (PDF)** (same
+exporter, converted by Gotenberg/LibreOffice; slower, but real pagination) or off; zoom and optional page-break guides.
+API: `GET /api/styles/css?import=<id>|base_doc=<id>`, `POST /api/render/pdf`. Scripted check on any DOCX:
+`E2E_FIDELITY_DOCX=file.docx E2E_FIDELITY_PAGES=<n> python e2e/fidelity.py` (needs a user from `scripts/e2e-users.sh`).
+
 ## Architecture
 
 ```
@@ -154,7 +163,7 @@ Orphaned uploads can be pruned with `POST /api/maintenance/cleanup` (admin; `?dr
 make test               # pytest (in the api image) + Vitest (frontend image) + Playwright e2e (e2e image), all in Docker
 make test-backend       # 120 backend tests against a separate docgen_test database
 make test-frontend      # 15 Vitest tests
-make test-e2e-docker    # starts the stack, runs e2e/{smoke,docbuilder,import,invite}.py in the `e2e` compose service
+make test-e2e-docker    # starts the stack, runs e2e/{smoke,docbuilder,import,invite,fidelity}.py in the `e2e` compose service
 make test-e2e           # same scripts from the host (.venv with playwright, PLAYWRIGHT_BROWSERS_PATH=$PWD/.playwright,
                         #   E2E_BASE_URL=http://localhost:$WEB_PORT, MAIL_URL=http://localhost:$MAIL_UI_PORT)
 scripts/clean-start.sh  # fresh clone + separate compose project + backup/restore round trip
@@ -192,8 +201,11 @@ The e2e scripts log in as throwaway users created through the CLI (`scripts/e2e-
   byte-reproducible (LibreOffice embeds timestamps); DOCX is.
 * No 3-way merge for documents (a moved head means discard and redo); commits made outside the app have no snippet
   history. A crash between git commit and DB commit can leave a stale head sha (no repair job).
-* Import keeps unsupported Word features as opaque blocks (listed in warnings) but drops direct run/paragraph
-  formatting, bookmarks and cell shading. No nested tables in snippets.
+* Import keeps direct run/paragraph/cell/table formatting, styles, theme colours/fonts, page setup and header/footer and
+  draws opaque blocks (text boxes, fields, TOC, content controls) from their OOXML, but the HTML view is an
+  approximation of Word, not Word: see "Fidelity limits" in `docs/DECISIONS.md` (floating objects, first-page headers,
+  real pagination, bookmarks, tab stops, list restarts...). "Render as Word does" shows the LibreOffice PDF of the same
+  export. No nested tables in snippets.
 * Org deletion removes its repos/files; folder deletion removes its history. Uploaded images are only removed by the
   admin cleanup endpoint (24 h grace; images that ever entered a commit are kept).
 * Base documents cannot be deleted; no password reset or email verification; Mailpit is dev only.
