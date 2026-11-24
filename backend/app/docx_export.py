@@ -22,6 +22,7 @@ from PIL import Image as PILImage
 
 from . import fmt
 from .base_docs import CONTENT_RE, SLOT_RE
+from .docx_vars import fix_fields
 from .ooxml import add_field, opaque_element, stable_zip
 
 MAX_W = 5_486_400  # 6 in; images wider than the text area are scaled down
@@ -166,7 +167,8 @@ def _clean(row: dict, **extra) -> dict:  # None would render as the text "None"
 def context(spec: dict) -> dict:
     v = spec["variables"]
     ctx: dict = {}
-    for k, val in {**{d["name"]: d.get("default") for d in v.get("declarations", []) if d.get("default") is not None},
+    for k, val in {**{d["name"]: d.get("default") for d in [*spec.get("base_variables", []), *v.get("declarations", [])]
+                      if d.get("default") is not None},
                    **v.get("values", {})}.items():
         a, _, b = k.partition(".")
         if b:
@@ -468,12 +470,28 @@ class Builder:
         dp.set("descr", str(a.get("alt") or "")[:200])
 
     # ---- block-level items of a document ----
+    def style_numbered(self, sid: str | None) -> bool:
+        """The style (or one it is based on) carries a numbering of its own, e.g. Word's multilevel list linked to Heading 1-9."""
+        by_id = {s.get(qn("w:styleId")): s for s in self.doc.styles.element.findall(qn("w:style"))}
+        for _ in range(10):
+            st = by_id.get(sid)
+            if st is None:
+                return False
+            n = st.find(qn("w:pPr") + "/" + qn("w:numPr") + "/" + qn("w:numId"))
+            if n is not None:
+                return n.get(qn("w:val")) != "0"
+            b = st.find(qn("w:basedOn"))
+            sid = b.get(qn("w:val")) if b is not None else None
+        return False
+
     def heading_block(self, b) -> None:
         p = self.doc.add_paragraph(b["text"])
         self.apply_style(p, b.get("styleId"), f"Heading{b['level']}")
+        sid = self.style(b.get("styleId"), f"Heading{b['level']}")
         if b.get("numbered"):
-            _numpr(p, self.num.headings(), b["level"] - 1)
-        elif self.style(f"Heading{b['level']}"):
+            if not self.style_numbered(sid):  # the base's own heading numbering must not be overridden by ours
+                _numpr(p, self.num.headings(), b["level"] - 1)
+        elif sid:
             _numpr(p, 0, 0)  # numId 0 switches off numbering the style may carry
 
     def toc_block(self) -> None:
@@ -555,6 +573,7 @@ def build(spec: dict, base: bytes, load_content, load_asset) -> tuple[bytes, lis
 
     roots = [body] + [r.target_part.element for r in doc.part.rels.values() if r.reltype in (RT.HEADER, RT.FOOTER)]
     missing: set = set()
+    fix_fields(roots, spec["built_ins"], warnings)
     ctx, done = context(spec), set()
     for r in roots:
         expand_rows(r, ctx, missing, warnings, done)
