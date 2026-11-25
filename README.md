@@ -20,19 +20,62 @@ Open <http://localhost:8080> (`WEB_PORT`). Migrations run on api start; with `SE
 <http://localhost:8025> (`MAIL_UI_PORT`). If a port is taken, change `WEB_PORT`/`MAIL_UI_PORT` **and** `PUBLIC_URL`
 (invite links use it).
 
-### Invite-only: first user
+### Invite-only: first user (create accounts)
 
 Public sign-up is **closed** (`ALLOW_SIGNUP=0`: `POST /api/auth/signup` answers 404, the login form hides the sign-up
-button). New people join only by accepting an invite (a new user is created there). Create the first user + org on an
-empty install with the CLI; the password comes from stdin (piped, or prompted on a terminal), never from argv:
+button). New people join by accepting an invite. Create the first user + org on an empty install with the CLI. The
+password comes from stdin or a prompt, never from argv. Email is trimmed and lowercased; the password is used exactly as
+typed except that a trailing CR/LF (Windows shells, `echo`) is dropped; 10 to 128 characters. Success prints the
+login URL; every failure exits non-zero with `error: ...`.
+
+Linux / macOS:
 
 ```sh
+# prompt (asks twice)
+docker compose exec api python -m app.manage create-user --email you@example.com --name "You" --org "My Org"
+# piped (note -T: without it Docker says "the input device is not a TTY")
 printf '%s\n' 'a-long-password' | docker compose exec -T api python -m app.manage create-user \
     --email you@example.com --name "You" --org "My Org" --password-stdin
-docker compose exec api python -m app.manage create-user --email you@example.com --name You --org "My Org"  # prompts
 ```
 
-Set `ALLOW_SIGNUP=1` only on a throwaway dev instance.
+Windows PowerShell (Docker Desktop):
+
+```powershell
+# prompt (asks twice; the safest way, also for non-ASCII passwords)
+docker compose exec api python -m app.manage create-user --email you@example.com --name "You" --org "My Org"
+# piped here-string (CRLF is fine; PowerShell 5.1 sends non-ASCII as '?', so use the prompt for those)
+@'
+a-long-password
+'@ | docker compose exec -T api python -m app.manage create-user --email you@example.com --name "You" --org "My Org" --password-stdin
+```
+
+cmd.exe: `echo a-long-password| docker compose exec -T api ...` (no space before `|`, otherwise the space becomes part of the
+password; the CLI warns when a password ends with whitespace).
+
+Other commands (same `docker compose exec api python -m app.manage ...`):
+
+| Command | What it does |
+|---|---|
+| `reset-password --email you@example.com [--password-stdin]` | new password (prompt twice, or stdin), same rules; use it when someone cannot log in |
+| `list-users` | email, name, number of orgs (`SSO only` for users without password); never prints hashes |
+| `test-mail --to you@example.com` | send a test email with the current SMTP settings and print the exact error |
+
+Set `ALLOW_SIGNUP=1` only on a throwaway dev instance. With `AUTH_MODE=oidc` see [docs/OIDC.md](docs/OIDC.md): `create-user` then makes a password-less user.
+
+#### Troubleshooting: "I created an account but cannot log in"
+
+Found by reproducing the documented commands (round 15, `docs/DECISIONS.md`):
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| Login says "invalid email or password" for a user made from PowerShell/cmd | The CRLF the shell appends was stored as part of the password. Fixed: the CLI and login drop a trailing CR/LF | `reset-password --email ...` for accounts made before the fix |
+| Same, password with a trailing space | cmd.exe `echo pw \| ...` includes the space. Kept on purpose (spaces are legal), the CLI now warns | `echo pw\| ...` or the prompt |
+| Email with a space/capital letter at creation | stored unnormalised, login looked up the trimmed lowercase address. Fixed: trim + lowercase everywhere | `list-users`; recreate or `reset-password` |
+| 129+ character password accepted by the CLI, rejected at login (422) | different limits. Fixed: one policy (10 to 128) for CLI, API, invite accept, UI | `reset-password` |
+| `the input device is not a TTY` | piped stdin without `-T` | add `-T`, or drop the pipe and use the prompt |
+| "too many failed login attempts ... try again in N min" | login throttle (5 failures per client IP and email per 10 min) - not a wrong password | wait N minutes (shown) |
+| Typo while typing the password at the prompt | used to be unconfirmed | the prompt now asks twice |
+| Nothing works but the user exists | check `list-users`; `SEED_DEMO=1` users have the public password `demo-password-123` | `reset-password` |
 
 ### Demo data (dev only)
 
@@ -70,14 +113,79 @@ Set in `.env` (read by `docker-compose.yml`). No secrets are committed; `.env` i
 | `COOKIE_SECURE` | `false` | `true` behind HTTPS (cookies get the `Secure` flag) |
 | `ALLOW_SIGNUP` | `0` | `1` opens `POST /api/auth/signup` (anyone can create an org). Default: invite-only |
 | `SEED_DEMO` | `1` in `.env.example` (`0` if unset) | Create demo data on api start |
-| `SMTP_HOST` / `SMTP_PORT` | `mail` / `1025` | SMTP server (Mailpit by default) |
-| `SMTP_USER` / `SMTP_PASSWORD` | empty | SMTP credentials |
-| `SMTP_STARTTLS` | `false` | Use STARTTLS |
-| `SMTP_FROM` | `DocGen <noreply@docgen.local>` | Sender |
+| `AUTH_MODE` | `local` | `local` = email + password; `oidc` = OpenID Connect only (see [docs/OIDC.md](docs/OIDC.md) for all `OIDC_*` variables) |
+| `SMTP_*` | Mailpit | Outgoing mail, see [Mail (SMTP)](#mail-smtp) |
 
 Fixed inside the api container (not in `.env`): `DATABASE_URL`, `MIGRATE_DATABASE_URL`, `PDF_URL=http://pdf:3000`,
 `REPOS_ROOT=/repos`, `FILES_ROOT=/files`. Optional app tuning: `PDF_TIMEOUT_S` (120), `PDF_MAX_BYTES` (100 MiB).
-For production remove the `mail` service and point `SMTP_*` at a real server.
+For production remove the `mail` service and point `SMTP_*` at a real server. Empty values in `.env` mean "unset" (default applies). `./certs/` is mounted read-only at `/certs` in the api container for private CA bundles.
+
+## Sign-in with OpenID Connect
+
+`AUTH_MODE=oidc` replaces the built-in passwords with your company's identity provider (Authorization Code + PKCE). Setup, every
+`OIDC_*` variable, the callback URL to register (`<PUBLIC_URL>/api/auth/oidc/callback`), provisioning rules, Keycloak / Entra ID / Okta /
+Authentik / ADFS examples and troubleshooting: **[docs/OIDC.md](docs/OIDC.md)**. Default stays `AUTH_MODE=local`.
+
+## Mail (SMTP)
+
+Invites are mailed through `SMTP_*` (default: the Mailpit container, no auth, no TLS). Mail is sent in a background
+thread (invite creation waits at most 5 s; the invite exists either way, a failure is logged and shows as a toast).
+**Settings > Invites > Send test email** (admins) or `python -m app.manage test-mail --to you@example.com` sends a
+message now and reports the exact SMTP error (refused, timeout, `535 5.7.139` with a hint, untrusted certificate, ...).
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `SMTP_PRESET` | empty | `microsoft365` = `smtp.office365.com`:587, `starttls`, auth `login`; every other variable overrides it |
+| `SMTP_HOST` / `SMTP_PORT` | `mail` / `1025` | server |
+| `SMTP_SECURITY` | `none` | `none`, `starttls` (587) or `ssl` (implicit TLS, 465). Legacy `SMTP_STARTTLS=true` still means `starttls` |
+| `SMTP_USERNAME` (`SMTP_USER`) | empty | login; empty = no authentication |
+| `SMTP_PASSWORD` / `SMTP_PASSWORD_FILE` | empty | password, or a file in the container holding it (Docker secret) |
+| `SMTP_AUTH` | `auto` | `auto` (smtplib picks what the server offers), `login`, `plain`, `xoauth2`, `none` |
+| `SMTP_FROM` / `SMTP_FROM_NAME` | `DocGen <noreply@docgen.local>` / empty | sender address (+ display name). Microsoft 365: the mailbox itself or an alias with *Send As* |
+| `SMTP_REPLY_TO` | empty | Reply-To header |
+| `SMTP_TIMEOUT` | `15` | seconds, for connect and every reply |
+| `SMTP_VERIFY_TLS` / `SMTP_CA_BUNDLE` | `true` / empty | certificate check; PEM bundle for a private CA (path inside the container, e.g. `/certs/ca.pem`) |
+| `SMTP_EHLO_HOSTNAME` | system | name announced in EHLO |
+| `SMTP_OAUTH_TENANT_ID` / `_CLIENT_ID` / `_CLIENT_SECRET` | empty | for `SMTP_AUTH=xoauth2` |
+
+Microsoft 365 / Exchange Online with a mailbox password (basic auth):
+
+```sh
+SMTP_PRESET=microsoft365
+SMTP_USERNAME=docgen@skylabs.si
+SMTP_PASSWORD=<app password>
+SMTP_FROM=docgen@skylabs.si
+```
+
+* SMTP AUTH must be enabled for the mailbox: `Set-CASMailbox -Identity docgen@skylabs.si -SmtpClientAuthenticationDisabled $false`
+  (and not blocked tenant-wide, Exchange admin center > Settings > Mail flow).
+* Security Defaults / MFA / Conditional Access block password SMTP: use an app password or exempt the account.
+* Microsoft is retiring basic-auth SMTP AUTH for Exchange Online (the dates have moved more than once; check the Microsoft 365
+  message center for the current one). Plan for OAuth2 below.
+
+Microsoft 365 with OAuth2 (client credentials, `SMTP_AUTH=xoauth2`) - **implemented, not verified against a real tenant**:
+
+1. Entra admin center > App registrations > New registration (single tenant). Note *Directory (tenant) ID* and *Application (client) ID*; add a client secret.
+2. Exchange Online PowerShell: register the app as a service principal and give it the mailbox
+   (use the **Enterprise application Object ID**, not the app registration's):
+   `New-ServicePrincipal -AppId <client-id> -ServiceId <enterprise-app-object-id>` then
+   `Add-MailboxPermission -Identity docgen@skylabs.si -User <enterprise-app-object-id> -AccessRights FullAccess`.
+3. Permission `SMTP.SendAsApp` (Office 365 Exchange Online > Application permissions) with admin consent. Enable SMTP AUTH on the mailbox as above.
+4. `.env`:
+
+```sh
+SMTP_PRESET=microsoft365
+SMTP_AUTH=xoauth2
+SMTP_USERNAME=docgen@skylabs.si
+SMTP_FROM=docgen@skylabs.si
+SMTP_OAUTH_TENANT_ID=<tenant id>
+SMTP_OAUTH_CLIENT_ID=<client id>
+SMTP_OAUTH_CLIENT_SECRET=<secret>
+```
+
+DocGen requests a token for scope `https://outlook.office365.com/.default` at `login.microsoftonline.com/<tenant>/oauth2/v2.0/token`,
+caches it until one minute before it expires and authenticates with SASL XOAUTH2. Typical errors: `535 5.7.3 Authentication
+unsuccessful` = missing mailbox permission or SMTP AUTH disabled; `AADSTS7000215` = wrong client secret.
 
 ## Looks like Word
 

@@ -81,3 +81,8 @@ Stable `data-testid`s are used by `e2e/*.py`: `preview`, `word-pdf`, `save-statu
 - **Split by headings**: each row (`split-row`) shows a badge *new* / *exists*, for existing ones a select (Update existing, default / Create new (suffix) / Skip); `split-summary` = "N new · N updated (as drafts, not committed) · N skipped"; the button reads "Apply (N new, M updated)".
 - **Update snippets from this import…** (import page) / **Update from import…** (snippet page): `UpdateFromImport.tsx` (`update-dialog`, `update-row`, `update-summary`): import picker (any import, e.g. a newer upload), folder, Level 1/1-2/1-3, per heading a checkbox, target snippet select (auto-match, "Create new", "Skip"), badge with the change count or "no changes" (unticked by default). *Apply to drafts (N)* writes drafts only; the toast links to the draft and to the folder's Commit screen (`?select=` accepts a comma list). On the snippet page the rows are radios: one heading replaces that snippet's draft.
 - Testids: `snippet-conflict`, `split-row`, `split-summary`, `update-dialog`, `update-row`, `update-summary`. Toasts accept links (`ui.toast(msg, kind, [{label, to}])`).
+
+## Round 15
+
+- Login (`/login`): in `AUTH_MODE=oidc` only a "Sign in with <provider>" link (errors from the callback arrive as `?error=`); accept-invite shows the same link. Login 429 text: "too many failed login attempts ... try again in N min".
+- Settings > Invites: "Send test email" next to "Send invite" (admins), shows the exact SMTP error in the banner.

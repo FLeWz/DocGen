@@ -40,6 +40,9 @@ def read_password(from_stdin: bool, stdin=None, prompt=getpass.getpass) -> str:
     if from_stdin or not stdin.isatty():
         raw = (stdin.buffer.read().decode("utf-8-sig") if hasattr(stdin, "buffer") else stdin.read())
         pw = normalize_password(raw.split("\n", 1)[0])  # first line only
+        if pw != pw.rstrip():
+            print("warning: the password ends with whitespace and is stored exactly like that (cmd.exe `echo pw | ...` adds a "
+                  "space: write `echo pw| ...`, or use the interactive prompt)", file=sys.stderr)
     else:
         pw = normalize_password(prompt("Password: "))
         if pw != normalize_password(prompt("Repeat password: ")):

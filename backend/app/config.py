@@ -2,7 +2,7 @@ import os
 
 
 def _e(key: str, default: str | None = None) -> str:
-    v = os.environ.get(key, default)
+    v = os.environ.get(key) or default  # empty (e.g. `X: ${X:-}` in compose) counts as unset
     if v is None:
         raise RuntimeError(f"missing env var {key}")
     return v

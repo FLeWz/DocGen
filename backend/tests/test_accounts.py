@@ -56,6 +56,13 @@ def test_cli_password_logs_in_exactly_as_typed(client, raw, typed):
     assert login(new_client(), "ann@example.com", typed + "x").status_code == 401
 
 
+def test_cli_warns_about_trailing_whitespace(capsys):
+    assert manage.read_password(True, Stdin(b"correct-horse-1 \r\n")) == "correct-horse-1 "
+    assert "ends with whitespace" in capsys.readouterr().err
+    manage.read_password(True, Stdin(b"correct-horse-1\r\n"))
+    assert capsys.readouterr().err == ""
+
+
 def test_cli_rejects_short_long_mismatch_and_prompts_twice(capsys):
     for raw in (b"012345678\n", b"x" * 129 + b"\n", b"\n"):
         with pytest.raises(SystemExit) as e:

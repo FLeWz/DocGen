@@ -43,10 +43,31 @@ services:
       SMTP_OAUTH_TENANT_ID: ${SMTP_OAUTH_TENANT_ID:-}
       SMTP_OAUTH_CLIENT_ID: ${SMTP_OAUTH_CLIENT_ID:-}
       SMTP_OAUTH_CLIENT_SECRET: ${SMTP_OAUTH_CLIENT_SECRET:-}
+      AUTH_MODE: ${AUTH_MODE:-}
+      OIDC_PROVIDER_NAME: ${OIDC_PROVIDER_NAME:-}
+      OIDC_ISSUER: ${OIDC_ISSUER:-}
+      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
+      OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-}
+      OIDC_REDIRECT_URI: ${OIDC_REDIRECT_URI:-}
+      OIDC_SCOPES: ${OIDC_SCOPES:-}
+      OIDC_EMAIL_CLAIM: ${OIDC_EMAIL_CLAIM:-}
+      OIDC_NAME_CLAIM: ${OIDC_NAME_CLAIM:-}
+      OIDC_USERNAME_CLAIM: ${OIDC_USERNAME_CLAIM:-}
+      OIDC_GROUPS_CLAIM: ${OIDC_GROUPS_CLAIM:-}
+      OIDC_ROLE_MAP: ${OIDC_ROLE_MAP:-}
+      OIDC_ALLOWED_EMAIL_DOMAINS: ${OIDC_ALLOWED_EMAIL_DOMAINS:-}
+      OIDC_VERIFY_TLS: ${OIDC_VERIFY_TLS:-}
+      OIDC_CA_BUNDLE: ${OIDC_CA_BUNDLE:-}
+      OIDC_END_SESSION: ${OIDC_END_SESSION:-}
+      OIDC_AUTO_PROVISION: ${OIDC_AUTO_PROVISION:-}
+      OIDC_LINK_BY_EMAIL: ${OIDC_LINK_BY_EMAIL:-}
+      OIDC_DEFAULT_ORG: ${OIDC_DEFAULT_ORG:-}
+      OIDC_DEFAULT_ROLE: ${OIDC_DEFAULT_ROLE:-}
       PDF_URL: http://pdf:3000
       SEED_DEMO: ${SEED_DEMO:-0}
       ALLOW_SIGNUP: ${ALLOW_SIGNUP:-0}
-    volumes: [repos:/repos, files:/files]
+    # ./certs (gitignored) holds private CA bundles: OIDC_CA_BUNDLE=/certs/company-ca.pem, SMTP_CA_BUNDLE likewise
+    volumes: [repos:/repos, files:/files, "./certs:/certs:ro"]
     depends_on:
       db: {condition: service_healthy}
       mail: {condition: service_started}
@@ -76,10 +97,24 @@ services:
       E2E_ARTIFACTS: /artifacts
       E2E_TAG: ${E2E_TAG:-}
       E2E_PASSWORD: ${E2E_PASSWORD:-}
+      IDP_URL: http://idp:9000
     volumes: ["./e2e-artifacts:/artifacts"]
     depends_on:
       web: {condition: service_healthy}
-    command: ["sh", "-c", "for t in smoke docbuilder import invite fidelity basedoc editor round7 tables round9 round12 round13 round14; do python $$t.py || exit 1; done"]
+    command: ["sh", "-c", "for t in smoke docbuilder import invite fidelity basedoc editor round7 tables round9 round12 round13 round14 round15; do python $$t.py || exit 1; done"]
+
+  # `make test-e2e-oidc`: test OpenID Provider (tests/mock_idp.py), never part of a normal `up`.
+  idp:
+    profiles: [oidc-test]
+    build: ./backend
+    command: ["python", "-m", "tests.mock_idp", "--port", "9000", "--issuer", "http://idp:9000"]
+    environment:
+      OIDC_CLIENT_ID: docgen
+      OIDC_CLIENT_SECRET: mock-secret
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://localhost:9000/.well-known/openid-configuration')"]
+      interval: 2s
+      retries: 20
 
   pdf:
     image: gotenberg/gotenberg:8
