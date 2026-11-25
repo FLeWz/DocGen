@@ -172,6 +172,12 @@ COVERED = {  # every API route must be listed: a new endpoint forces a new isola
     # round 14: test_commit_names.py (roles, validation, cross-org 404, cleanup)
     "PATCH /api/folders/{folder_id}/commits/{sha}", "DELETE /api/folders/{folder_id}/commits/{sha}",
     "PATCH /api/base-documents/{id}/versions/{sha}", "DELETE /api/base-documents/{id}/versions/{sha}",
+    # round 16: test_locks.py (roles, cross-org 404)
+    "GET /api/locks", "GET /api/locks/{kind}/{entity_id}", "POST /api/locks/{kind}/{entity_id}",
+    "POST /api/locks/{kind}/{entity_id}/heartbeat", "POST /api/locks/{kind}/{entity_id}/release",
+    "POST /api/locks/{kind}/{entity_id}/request", "POST /api/locks/{kind}/{entity_id}/takeover",
+    "POST /api/lock-requests/{request_id}/grant", "POST /api/lock-requests/{request_id}/deny",
+    "GET /api/notifications", "POST /api/notifications/read",
 }
 
 

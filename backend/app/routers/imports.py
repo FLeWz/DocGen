@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Respon
 
 from datetime import datetime, timezone
 
-from .. import base_docs, docx_export, docx_hf, docx_import as D, docx_vars, vcs
+from .. import base_docs, docx_export, docx_hf, docx_import as D, docx_vars, locks, vcs
 from ..deps import Ctx, require
 from ..files import image_path, import_path
 from ..git import repo as git
@@ -292,6 +292,15 @@ def _update(ctx: Ctx, s: Snippet, blocks: list, orig: bytes | None, source: dict
 
 
 def _guard_drafts(ctx: Ctx, snippets: list[Snippet], overwrite: bool) -> None:
+    busy = []  # snippets someone else is editing: listed together so the client can offer "request edit rights" per item
+    for s in snippets:
+        lk = locks.live(ctx.db, ctx.org_id, "snippet", s.id)
+        if lk and lk.holder_id != ctx.user.id:
+            busy.append(dict(snippet_id=str(s.id), title=s.title, slug=s.slug, holder=locks.holder(ctx.db, lk),
+                             message=f"locked by {locks.holder(ctx.db, lk)['name']}"))
+    if busy:
+        raise HTTPException(409, detail=dict(error="locked", message="locked by " + ", ".join(sorted({b["holder"]["name"] for b in busy})),
+                                             snippets=busy))
     held = [s for s in snippets if not overwrite and _my_draft(ctx, s)]
     if held:
         raise HTTPException(409, detail=dict(error="draft_exists", message="you have an unsaved draft on this snippet",

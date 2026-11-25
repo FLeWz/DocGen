@@ -121,10 +121,14 @@ class Snippet(OrgScoped, Base):
 
 class Draft(OrgScoped, Base):
     __tablename__ = "drafts"
-    __table_args__ = (UniqueConstraint("snippet_id", "user_id"),)
+    """ONE shared draft per snippet (round 16); `user_id` = last editor, `contributors` = [{id,name,email,at}] since the
+    last commit, `transfers` = lock hand-overs since then [{from,to,kind,at}]."""
+    __table_args__ = (UniqueConstraint("snippet_id"),)
     id: Mapped[uuid.UUID] = _id()
     snippet_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("snippets.id", ondelete="CASCADE"), index=True)
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    contributors: Mapped[list] = mapped_column(JSONB, default=list)
+    transfers: Mapped[list] = mapped_column(JSONB, default=list)
     title: Mapped[str] = mapped_column(String(200))
     slug: Mapped[str] = mapped_column(String(64))
     content: Mapped[dict] = mapped_column(JSONB)
@@ -207,10 +211,13 @@ class Document(OrgScoped, Base):
 
 class DocDraft(OrgScoped, Base):
     __tablename__ = "document_drafts"
-    __table_args__ = (UniqueConstraint("document_id", "user_id"),)
+    """Shared per document, like Draft."""
+    __table_args__ = (UniqueConstraint("document_id"),)
     id: Mapped[uuid.UUID] = _id()
     document_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("documents.id", ondelete="CASCADE"), index=True)
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    contributors: Mapped[list] = mapped_column(JSONB, default=list)
+    transfers: Mapped[list] = mapped_column(JSONB, default=list)
     title: Mapped[str] = mapped_column(String(200))
     slug: Mapped[str] = mapped_column(String(64))
     body: Mapped[dict] = mapped_column(JSONB)  # base_document, blocks, variables, links
@@ -279,3 +286,51 @@ class CommitName(OrgScoped, Base):
     name: Mapped[str] = mapped_column(String(200))
     renamed_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     renamed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class EditLock(OrgScoped, Base):
+    """Exclusive edit lock of a snippet or document; a row whose heartbeat is older than LOCK_HEARTBEAT_TTL_S is free."""
+    __tablename__ = "edit_locks"
+    __table_args__ = (UniqueConstraint("org_id", "entity_type", "entity_id"),)
+    id: Mapped[uuid.UUID] = _id()
+    entity_type: Mapped[str] = mapped_column(String(8))  # snippet | document
+    entity_id: Mapped[uuid.UUID] = mapped_column()
+    holder_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    since: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    heartbeat_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class LockRequest(OrgScoped, Base):
+    """status: pending | granted | denied | timed_out | cancelled. At most one pending per entity (partial unique index)."""
+    __tablename__ = "lock_requests"
+    id: Mapped[uuid.UUID] = _id()
+    entity_type: Mapped[str] = mapped_column(String(8))
+    entity_id: Mapped[uuid.UUID] = mapped_column()
+    requester_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    holder_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    status: Mapped[str] = mapped_column(String(10), default="pending")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class Notification(OrgScoped, Base):
+    __tablename__ = "notifications"
+    id: Mapped[uuid.UUID] = _id()
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    kind: Mapped[str] = mapped_column(String(24))  # lock_request | lock_granted | lock_denied | lock_timeout | lock_taken
+    payload: Mapped[dict] = mapped_column(JSONB)
+    read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = _now()
+
+
+class DraftBackup(OrgScoped, Base):
+    """Drafts that lost the round-16 merge to one shared draft per entity (kept so nothing is lost)."""
+    __tablename__ = "draft_backups"
+    id: Mapped[uuid.UUID] = _id()
+    entity_type: Mapped[str] = mapped_column(String(8))
+    entity_id: Mapped[uuid.UUID] = mapped_column(index=True)
+    user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    payload: Mapped[dict] = mapped_column(JSONB)
+    draft_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = _now()

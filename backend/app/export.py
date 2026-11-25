@@ -150,7 +150,7 @@ def revision_rows(ctx: Ctx, d: Document, blocks: list[dict], base: dict | None =
                 continue
             c = vcs.commit_out(c, tm, nm)
             subject = c["message"].split("\n")[0]
-            rows[c["sha"]] = dict(version=(c["tags"] or [c["sha"][:7]])[0], date=dmy(c["date"][:10]), author=c["author_name"], message=subject,
+            rows[c["sha"]] = dict(version=(c["tags"] or [c["sha"][:7]])[0], date=dmy(c["date"][:10]), author=", ".join(dict.fromkeys([c["author_name"], *(x["name"] for x in c["co_authors"])])), message=subject,
                                   sections=sec, commit=subject, status="Tagged" if c["tags"] else "Committed", _k=(c["date"], -len(rows)))  # same-second commits: git log is newest first
 
     repo = vcs.repo_of(ctx, d.folder_id)

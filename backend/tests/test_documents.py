@@ -164,14 +164,17 @@ def test_library_search_groups_by_folder_and_tags(ws):
     assert [g["folder_name"] for g in c.get(f"/api/library/snippets?folder_id={fb}").json()] == ["Product"]
 
 
-def test_stale_draft_conflicts(ws, outbox):
+def test_stale_draft_conflicts(ws, outbox, owner_engine):
     c, d, fb = ws["c"], ws["doc"], ws["fb"]
     ed = add_member(c, outbox, "ed@a.co", "editor")
     put(c, d, [])
-    c.post(f"/api/folders/{fb}/commit", json={"message": "init", "document_ids": [d]})
-    put(ed, d, [], title="Editor title")  # editor's draft starts from the current head
+    sha0 = c.post(f"/api/folders/{fb}/commit", json={"message": "init", "document_ids": [d]}).json()["sha"]
     put(c, d, [], title="Owner title")
     assert c.post(f"/api/folders/{fb}/commit", json={"message": "o", "document_ids": [d]}).status_code == 201
+    c.post(f"/api/locks/documents/{d}/release")
+    put(ed, d, [], title="Editor title")  # shared drafts: a stale one only exists from old data, rewound by hand
+    with owner_engine.begin() as cn:
+        cn.execute(__import__("sqlalchemy").text("update document_drafts set base_sha=:s where document_id=:i"), {"s": sha0, "i": d})
     r = ed.post(f"/api/folders/{fb}/commit", json={"message": "e", "document_ids": [d]})
     assert r.status_code == 409 and r.json()["detail"]["conflicts"][0]["document_id"] == d
     assert ed.delete(f"/api/documents/{d}/draft").status_code == 204

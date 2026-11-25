@@ -7,7 +7,7 @@ from sqlalchemy.exc import IntegrityError
 
 import difflib
 
-from .. import docs, vcs
+from .. import docs, locks, vcs
 from ..deps import Ctx, require
 from ..git import content as C, repo as git
 from ..files import image_path
@@ -50,7 +50,7 @@ def changes(folder_id: UUID, ctx: Ctx = Depends(require(Role.viewer))):
 def commit(folder_id: UUID, body: CommitIn, ctx: Ctx = Depends(require(Role.editor))):
     f = vcs.get_folder(ctx, folder_id)
     ctx.db.scalar(ctx.repo(Folder).query().where(Folder.id == f.id).with_for_update())  # serialize commits
-    picked = []
+    picked, taken = [], []  # taken: (type, id, lock was taken just for this commit)
     for sid in dict.fromkeys(body.snippet_ids):
         s = ctx.repo(Snippet).get(sid)
         if not s or s.folder_id != f.id:
@@ -58,6 +58,7 @@ def commit(folder_id: UUID, body: CommitIn, ctx: Ctx = Depends(require(Role.edit
         d = vcs.current_draft(ctx, s)
         if not d or not vcs.dirty(ctx, s, d):
             raise HTTPException(400, f"no changes to commit for snippet {sid}")
+        taken.append(("snippet", s.id, locks.require(ctx.db, ctx.org_id, ctx.user, "snippet", s.id)))
         picked.append((s, d))
     pdocs = []
     for did in dict.fromkeys(body.document_ids):
@@ -67,6 +68,7 @@ def commit(folder_id: UUID, body: CommitIn, ctx: Ctx = Depends(require(Role.edit
         dr = docs.draft_of(ctx, d)
         if not dr or not docs.dirty(ctx, d, dr):
             raise HTTPException(400, f"no changes to commit for document {did}")
+        taken.append(("document", d.id, locks.require(ctx.db, ctx.org_id, ctx.user, "document", d.id)))
         pdocs.append((d, dr))
     conflicts = [vcs.conflict_info(ctx, s, d) for s, d in picked if d.base_sha != s.head_sha]
     # documents have no 3-way merge: someone else committed first -> discard the draft and redo
@@ -98,6 +100,7 @@ def commit(folder_id: UUID, body: CommitIn, ctx: Ctx = Depends(require(Role.edit
     if not msg:
         raise HTTPException(422, "empty message")
     msg += "\n\n" + "".join(f"Snippet-Id: {s.id}\n" for s, _ in picked) + "".join(f"Document-Id: {d.id}\n" for d, _ in pdocs)
+    msg += vcs.trailers(ctx.user, [x for _, x in picked + pdocs])  # who contributed, who handed the lock over
     try:  # DB first (slug uniqueness), git second, DB commit last: a git failure rolls the index back
         for s, d in picked:
             s.slug, s.title = d.slug, d.title
@@ -124,6 +127,9 @@ def commit(folder_id: UUID, body: CommitIn, ctx: Ctx = Depends(require(Role.edit
                                      folder_id=UUID(b["folder_id"]), pin_type=b["version"]["type"],
                                      pin_value=b["version"]["value"])
         ctx.repo(DocDraft).delete(dr)
+    for et, eid, implicit in taken:
+        if implicit:  # nobody had the editor open: don't keep others out for the heartbeat TTL
+            locks.release(ctx.db, ctx.org_id, ctx.user, et, eid)
     ctx.db.commit()
     return dict(sha=sha, snippet_ids=[s.id for s, _ in picked], document_ids=[d.id for d, _ in pdocs])
 

@@ -128,15 +128,23 @@ def test_commit_only_picked_and_nothing_to_commit(ws):
     assert c.get(f"/api/snippets/{b}/draft").json()["exists"] is False
 
 
-def test_conflict_three_way_and_resolve(ws):
+def rewind(owner_engine, sid, sha):
+    """Round 16: drafts are shared, so a stale draft can only come from old data: put its base back by hand."""
+    with owner_engine.begin() as c:
+        c.execute(__import__("sqlalchemy").text("update drafts set base_sha=:s where snippet_id=:i"), {"s": sha, "i": sid})
+
+
+def test_conflict_three_way_and_resolve(ws, owner_engine):
     alice, fo = ws["c"], ws["folder"]
     bob = add_member(alice, ws["outbox"], "bob@a.co", "editor")
     sid = mk(alice, fo)
     save(alice, sid, "base")
-    commit(alice, fo, [sid])
-    save(bob, sid, "bob edit")                      # bob starts a draft at base
+    sha0 = commit(alice, fo, [sid]).json()["sha"]
     save(alice, sid, "alice edit")
     sha_a = commit(alice, fo, [sid], "alice").json()["sha"]
+    alice.post(f"/api/locks/snippets/{sid}/release")
+    save(bob, sid, "bob edit")                      # a draft that started at base (rewound by hand)
+    rewind(owner_engine, sid, sha0)
     r = commit(bob, fo, [sid], "bob")
     assert r.status_code == 409
     cf = r.json()["detail"]["conflicts"][0]
@@ -151,13 +159,15 @@ def test_conflict_three_way_and_resolve(ws):
     assert alice.get(f"/api/snippets/{sid}").json()["content"] == doc("merged")
 
 
-def test_untouched_stale_draft_follows_head(ws):
+def test_untouched_stale_draft_follows_head(ws, owner_engine):
     alice, fo = ws["c"], ws["folder"]
     bob = add_member(alice, ws["outbox"], "bob@a.co", "editor")
     sid = mk(alice, fo)
-    save(alice, sid, "v1"); commit(alice, fo, [sid])
-    save(bob, sid, "v1")  # same as base -> not dirty
+    save(alice, sid, "v1"); sha0 = commit(alice, fo, [sid]).json()["sha"]
     save(alice, sid, "v2"); commit(alice, fo, [sid])
+    alice.post(f"/api/locks/snippets/{sid}/release")
+    save(bob, sid, "v1")  # same as its (old, rewound by hand) base -> not dirty
+    rewind(owner_engine, sid, sha0)
     d = bob.get(f"/api/snippets/{sid}/draft").json()
     assert d["content"] == doc("v2") and not d["conflict"]
     assert bob.get(f"/api/folders/{fo}/changes").json() == []

@@ -5,7 +5,7 @@ from uuid import UUID, uuid4
 import yaml
 from fastapi import HTTPException
 
-from . import vcs
+from . import locks, vcs
 from .deps import Ctx
 from .git import content as C, repo as git
 from .models import BaseDocument, BaseDocVersion, DocDraft, Document, Folder, Snippet
@@ -58,7 +58,7 @@ def dver(dr: DocDraft) -> dict:
 
 
 def draft_of(ctx: Ctx, d: Document) -> DocDraft | None:
-    return ctx.repo(DocDraft).first(DocDraft.document_id == d.id, DocDraft.user_id == ctx.user.id)
+    return ctx.repo(DocDraft).first(DocDraft.document_id == d.id)
 
 
 def dirty(ctx: Ctx, d: Document, dr: DocDraft) -> bool:
@@ -82,6 +82,7 @@ def doc_out(ctx: Ctx, d: Document, version: str | None = None) -> dict:
         return dict(id=d.id, folder_id=d.folder_id, head_sha=d.head_sha, has_draft=bool(dr), **v)
     w = dver(dr) if dr else head_version(ctx, d) or dict(title=d.title, slug=d.slug, **empty_body())
     return dict(id=d.id, folder_id=d.folder_id, head_sha=d.head_sha, has_draft=bool(dr),
+                contributors=dr.contributors if dr else [], last_editor=vcs.editor(ctx, dr) if dr else None,
                 base_sha=dr.base_sha if dr else d.head_sha, conflict=bool(dr and dr.base_sha != d.head_sha),
                 dirty=bool(dr and dirty(ctx, d, dr)), **w)
 
@@ -140,6 +141,7 @@ def normalize(ctx: Ctx, body) -> dict:
 
 def save_draft(ctx: Ctx, d: Document, body) -> DocDraft:
     data = normalize(ctx, body)
+    locks.require(ctx.db, ctx.org_id, ctx.user, "document", d.id)
     cur = working(ctx, d)
     title, slug = body.title or cur["title"], body.slug or cur["slug"]
     if slug != d.slug and ctx.repo(Document).first(Document.folder_id == d.folder_id, Document.slug == slug,
@@ -147,9 +149,10 @@ def save_draft(ctx: Ctx, d: Document, body) -> DocDraft:
         raise HTTPException(409, "slug already used in this folder")
     dr = draft_of(ctx, d)
     if not dr:
-        return ctx.repo(DocDraft).add(document_id=d.id, user_id=ctx.user.id, title=title, slug=slug, body=data,
-                                      base_sha=d.head_sha)
+        dr = ctx.repo(DocDraft).add(document_id=d.id, user_id=ctx.user.id, title=title, slug=slug, body=data,
+                                    base_sha=d.head_sha)
     dr.title, dr.slug, dr.body = title, slug, data
+    vcs.touch(dr, ctx.user)
     return dr
 
 

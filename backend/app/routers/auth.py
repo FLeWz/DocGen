@@ -7,7 +7,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from .. import config, oidc, throttle
+from .. import config, locks, oidc, throttle
 from ..db import get_db, set_ctx
 from ..deps import SESSION_COOKIE, Ctx, optional_ctx, user_ctx
 from .. import styles
@@ -117,6 +117,9 @@ def logout(request: Request, db: Session = Depends(get_db)):
     if tok:
         s = db.scalar(select(AuthSession).where(AuthSession.token_hash == sha(tok)))
         id_token = s.id_token if s else None
+        if s and s.active_org_id:  # a logged-out user holds no edit locks
+            set_ctx(db, user_id=s.user_id, org_id=s.active_org_id)
+            locks.release_all(db, s.active_org_id, db.get(User, s.user_id))
         db.execute(delete(AuthSession).where(AuthSession.token_hash == sha(tok)))
         db.commit()
     resp = (JSONResponse({"redirect": oidc.end_session_url(id_token)}) if config.AUTH_MODE == "oidc"

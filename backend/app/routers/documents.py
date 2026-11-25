@@ -4,7 +4,7 @@ from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Response
 
-from .. import docs, export, files, vcs
+from .. import docs, export, files, locks, vcs
 from ..deps import Ctx, require
 from ..git import content as C, repo as git
 from ..models import DocDraft, DocRef, Document, Export, Folder, Role, Snippet
@@ -22,7 +22,7 @@ def _row(d: Document, mine: set) -> DocOut:
 @router.get("/documents", response_model=list[DocOut])
 def list_documents(folder_id: UUID | None = None, ctx: Ctx = V):
     rows = ctx.repo(Document).list(*([Document.folder_id == folder_id] if folder_id else []))
-    mine = {r.document_id for r in ctx.repo(DocDraft).list(DocDraft.user_id == ctx.user.id)}
+    mine = {r.document_id for r in ctx.repo(DocDraft).list()}
     return [_row(d, mine) for d in sorted(rows, key=lambda d: d.title.lower())]
 
 
@@ -40,8 +40,8 @@ def create_document(body: DocCreateIn, ctx: Ctx = E):
         while slug in taken:
             slug, n = f"{base}-{n}", n + 1
     d = ctx.repo(Document).add(folder_id=f.id, slug=slug, title=body.title)
-    ctx.repo(DocDraft).add(document_id=d.id, user_id=ctx.user.id, title=d.title, slug=slug, body=docs.empty_body(),
-                           base_sha=None)
+    vcs.touch(ctx.repo(DocDraft).add(document_id=d.id, user_id=ctx.user.id, title=d.title, slug=slug,
+                                     body=docs.empty_body(), base_sha=None), ctx.user)
     ctx.db.commit()
     return _row(d, {d.id})
 
@@ -63,7 +63,9 @@ def put_draft(document_id: UUID, body: DocDraftIn, ctx: Ctx = E):
 
 @router.delete("/documents/{document_id}/draft", status_code=204)
 def discard_draft(document_id: UUID, ctx: Ctx = E):
-    dr = docs.draft_of(ctx, docs.get_document(ctx, document_id))
+    d = docs.get_document(ctx, document_id)
+    locks.require(ctx.db, ctx.org_id, ctx.user, "document", d.id)
+    dr = docs.draft_of(ctx, d)
     if dr:
         ctx.repo(DocDraft).delete(dr)
         ctx.db.commit()
@@ -74,6 +76,7 @@ def discard_draft(document_id: UUID, ctx: Ctx = E):
 def delete_document(document_id: UUID, ctx: Ctx = E):
     """Removes the document from the index and (if committed) deletes its file in a final commit."""
     d = docs.get_document(ctx, document_id)
+    locks.require(ctx.db, ctx.org_id, ctx.user, "document", d.id)
     ctx.db.scalar(ctx.repo(Folder).query().where(Folder.id == d.folder_id).with_for_update())
     paths = [files.export_path(ctx.org_id, e.id, e.format) for e in ctx.repo(Export).list(Export.document_id == d.id)]
     repo = vcs.repo_of(ctx, d.folder_id)

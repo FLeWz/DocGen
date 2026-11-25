@@ -1,12 +1,14 @@
 """Shared folder/snippet/draft logic for the git-backed routers."""
 import json
 import re
+from datetime import datetime, timezone
 import unicodedata
 from uuid import UUID
 
 from fastapi import HTTPException
 from sqlalchemy import func
 
+from . import locks
 from .deps import Ctx
 from .git import content as C, repo as git
 from .models import CommitName, Draft, Folder, Snippet, User
@@ -45,8 +47,9 @@ def new_snippet(ctx: Ctx, f: Folder, title: str, slug: str | None = None, conten
         while slug in taken:
             slug, n = f"{base}-{n}", n + 1
     s = ctx.repo(Snippet).add(folder_id=f.id, slug=slug, title=title, source=source)
-    ctx.repo(Draft).add(snippet_id=s.id, user_id=ctx.user.id, title=title, slug=slug,
-                        content=content or C.EMPTY_DOC, styles=styles or [], variables=[], base_sha=None)
+    d = ctx.repo(Draft).add(snippet_id=s.id, user_id=ctx.user.id, title=title, slug=slug,
+                            content=content or C.EMPTY_DOC, styles=styles or [], variables=[], base_sha=None)
+    touch(d, ctx.user)
     return s
 
 
@@ -69,13 +72,20 @@ def head_version(ctx: Ctx, s: Snippet) -> dict | None:
     return C.version_at(repo_of(ctx, s.folder_id), s.head_sha, s.id) if s.head_sha else None
 
 
+def touch(d, user) -> None:
+    """`user` is now the draft's last editor and (latest) contributor; reassigned so JSONB change is seen."""
+    d.user_id = user.id
+    d.contributors = [c for c in d.contributors or [] if c["id"] != str(user.id)] + [
+        dict(id=str(user.id), name=user.name, email=user.email, at=datetime.now(timezone.utc).isoformat())]
+
+
 def dver(d: Draft) -> dict:
     return dict(slug=d.slug, title=d.title, styles=d.styles, variables=d.variables, content=d.content)
 
 
 def current_draft(ctx: Ctx, s: Snippet) -> Draft | None:
-    """The user's draft. A draft that was never edited past its base silently follows HEAD."""
-    d = ctx.repo(Draft).first(Draft.snippet_id == s.id, Draft.user_id == ctx.user.id)
+    """The snippet's shared draft. A draft that was never edited past its base silently follows HEAD."""
+    d = ctx.repo(Draft).first(Draft.snippet_id == s.id)
     if d and d.base_sha != s.head_sha and not dirty(ctx, s, d):
         h = head_version(ctx, s)
         d.title, d.slug, d.content, d.styles, d.variables = (h[k] for k in ("title", "slug", "content", "styles", "variables"))
@@ -97,10 +107,11 @@ def conflict_info(ctx: Ctx, s: Snippet, d: Draft) -> dict:
 
 
 def save_draft(ctx: Ctx, s: Snippet, body, *, rebase: bool = False) -> Draft:
-    """Upsert the user's draft; omitted optional fields keep their current value."""
+    """Upsert the shared draft (caller must hold the edit lock); omitted optional fields keep their current value."""
     if len(json.dumps(body.content)) > MAX_DOC:
         raise HTTPException(413, "document too large")
-    d = ctx.repo(Draft).first(Draft.snippet_id == s.id, Draft.user_id == ctx.user.id)
+    locks.require(ctx.db, ctx.org_id, ctx.user, "snippet", s.id)
+    d = ctx.repo(Draft).first(Draft.snippet_id == s.id)
     h = None if d else head_version(ctx, s)
     cur = dver(d) if d else dict(title=s.title, slug=s.slug, styles=(h or {}).get("styles", []),
                                  variables=(h or {}).get("variables", []))
@@ -113,22 +124,47 @@ def save_draft(ctx: Ctx, s: Snippet, body, *, rebase: bool = False) -> Draft:
             setattr(d, k, v)
         if rebase:
             d.base_sha = s.head_sha
+    touch(d, ctx.user)
     return d
+
+
+def editor(ctx: Ctx, d) -> dict | None:
+    u = ctx.db.get(User, d.user_id)
+    return u and dict(id=str(u.id), name=u.name, at=d.updated_at)
 
 
 def draft_out(ctx: Ctx, s: Snippet, d: Draft | None) -> dict:
     if d:
         return dict(**dver(d), snippet_id=s.id, folder_id=s.folder_id, exists=True, base_sha=d.base_sha,
+                    contributors=d.contributors, last_editor=editor(ctx, d),
                     head_sha=s.head_sha, conflict=d.base_sha != s.head_sha, dirty=dirty(ctx, s, d))
     h = head_version(ctx, s) or dict(title=s.title, slug=s.slug, styles=[], variables=[], content=C.EMPTY_DOC)
     return dict(**{k: h[k] for k in ("title", "slug", "styles", "variables", "content")}, snippet_id=s.id,
                 folder_id=s.folder_id, exists=False, base_sha=s.head_sha, head_sha=s.head_sha,
-                conflict=False, dirty=False)
+                conflict=False, dirty=False, contributors=[], last_editor=None)
 
 
 TRAILER = re.compile(r"^Snippet-Id: ([0-9a-f-]{36})$", re.M)
 DOC_TRAILER = re.compile(r"^Document-Id: ([0-9a-f-]{36})$", re.M)
-ANY_TRAILER = re.compile(r"^(?:Snippet|Document)-Id:.*$", re.M)  # server-written only: stripped from user text
+COAUTHOR = re.compile(r"^Co-authored-by: (.+?) <([^>]*)>$", re.M)
+TRANSFER = re.compile(r"^Lock-transferred: (.+)$", re.M)
+ANY_TRAILER = re.compile(r"^(?:Snippet-Id|Document-Id|Co-authored-by|Lock-transferred):.*$", re.M)  # server-written only: stripped from user text
+
+
+def trailers(committer, drafts) -> str:
+    """Co-authored-by for every contributor of the drafts but the committer, Lock-transferred for every hand-over."""
+    clean = lambda t: re.sub(r"[<>\n]", "", t or "").strip()
+    seen, out = {str(committer.id)}, []
+    for d in drafts:
+        for c in d.contributors or []:
+            if c["id"] not in seen:
+                seen.add(c["id"])
+                out.append(f"Co-authored-by: {clean(c['name']) or 'user'} <{clean(c['email'])}>")
+        for t in d.transfers or []:
+            line = f"Lock-transferred: {clean(t['from'])} -> {clean(t['to'])} ({t['kind']})"
+            if line not in out:
+                out.append(line)
+    return "".join(x + "\n" for x in out)
 
 
 BASE_SCOPE = "base"
@@ -151,7 +187,8 @@ def name_fields(n: dict | None, original: str) -> dict:
 
 def commit_out(row: dict, tagmap: dict, nm: dict | None = None) -> dict:
     body = row.pop("body")
-    return dict(**row, **name_fields((nm or {}).get(row["sha"]), ANY_TRAILER.sub("", body).strip()), snippet_ids=TRAILER.findall(body),
+    return dict(**row, **name_fields((nm or {}).get(row["sha"]), ANY_TRAILER.sub("", body).strip()), snippet_ids=TRAILER.findall(body), co_authors=[dict(name=n, email=e) for n, e in COAUTHOR.findall(body)],
+                lock_transfers=TRANSFER.findall(body),
                 document_ids=DOC_TRAILER.findall(body), tags=tagmap.get(row["sha"], []))
 
 
