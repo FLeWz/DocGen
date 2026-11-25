@@ -5,7 +5,9 @@ from uuid import UUID
 
 from typing import Annotated, Any, Literal, Union
 
-from pydantic import BaseModel as _B, ConfigDict, EmailStr, Field, field_validator, model_validator
+from pydantic import BaseModel as _B, BeforeValidator, ConfigDict, EmailStr, Field, field_validator, model_validator
+
+from .passwords import MAX_LEN, check_policy, normalize_email, normalize_password
 
 from .dates import parse_date
 
@@ -16,20 +18,24 @@ class BaseModel(_B):
 
 from .models import Role
 
-Password = Field(min_length=10, max_length=128)
 Name = Field(min_length=1, max_length=100)
+Email = Annotated[EmailStr, BeforeValidator(lambda v: normalize_email(v) if isinstance(v, str) else v)]
+# new passwords: normalised + policy; login passwords: normalised only (the policy may have changed since)
+NewPassword = Annotated[str, BeforeValidator(lambda v: check_policy(normalize_password(v)) if isinstance(v, str) else v)]
+LoginPassword = Annotated[str, BeforeValidator(lambda v: normalize_password(v) if isinstance(v, str) else v),
+                          Field(max_length=MAX_LEN)]
 
 
 class SignupIn(BaseModel):
-    email: EmailStr
-    password: str = Password
+    email: Email
+    password: NewPassword
     name: str = Name
     org_name: str = Name
 
 
 class LoginIn(BaseModel):
-    email: EmailStr
-    password: str = Field(max_length=128)
+    email: Email
+    password: LoginPassword
 
 
 class UserOut(BaseModel):
@@ -70,8 +76,12 @@ class RoleIn(BaseModel):
 
 
 class InviteCreateIn(BaseModel):
-    email: EmailStr
+    email: Email
     role: Role
+
+
+class TestMailIn(BaseModel):
+    to: Email | None = None
 
 
 class InviteOut(BaseModel):
@@ -98,7 +108,7 @@ class InviteLookupOut(BaseModel):
 
 class AcceptIn(TokenIn):
     name: str | None = Field(default=None, min_length=1, max_length=100)
-    password: str | None = Field(default=None, min_length=10, max_length=128)
+    password: NewPassword | None = None
 
 
 SLUG = r"^[a-z0-9][a-z0-9-]{0,63}$"

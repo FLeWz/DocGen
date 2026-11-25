@@ -21,9 +21,12 @@ def _recent(key: tuple) -> list[float]:
 def check(ip: str, email: str) -> None:
     if len(_fails) > 10_000:  # bound memory under a spray of random emails
         _fails.clear()
-    if len(_recent((ip, email))) >= MAX_PER_IP or len(_recent((email,))) >= MAX_PER_EMAIL:
-        raise HTTPException(429, "too many failed logins, try again in a few minutes",
-                            headers={"Retry-After": str(WINDOW_S)})
+    for key, limit in (((ip, email), MAX_PER_IP), ((email,), MAX_PER_EMAIL)):
+        v = _recent(key)
+        if len(v) >= limit:  # blocked until enough old failures leave the window
+            wait = max(1, int(v[len(v) - limit] + WINDOW_S - time.monotonic()))
+            raise HTTPException(429, f"too many failed login attempts (not a wrong-password error): try again in "
+                                     f"{-(-wait // 60)} min", headers={"Retry-After": str(wait)})
 
 
 def failed(ip: str, email: str) -> None:

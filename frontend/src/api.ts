@@ -17,7 +17,7 @@ export async function api<T = unknown>(path: string, method = "GET", body?: unkn
   const r = await fetch("/api" + path, { method, headers, body: body === undefined ? undefined : form ? body : JSON.stringify(body) });
   if (!r.ok) {
     const d = (await r.json().catch(() => ({}))).detail;
-    throw new ApiError(r.status, typeof d === "string" ? d : Array.isArray(d) ? d.map((e) => e.msg).join("; ") : d?.message ?? r.statusText, d);
+    throw new ApiError(r.status, typeof d === "string" ? d : Array.isArray(d) ? d.map((e) => String(e.msg).replace(/^Value error, /, "")).join("; ") : d?.message ?? r.statusText, d);
   }
   return (r.status === 204 ? undefined : await r.json()) as T;
 }

@@ -13,6 +13,7 @@ from .. import styles
 from ..models import AuthSession, Membership, Organization, Role, Style, User
 from ..schemas import LoginIn, MeOut, OrgOut, SignupIn
 from ..scoping import OrgRepo
+from ..passwords import check_policy, normalize_email, normalize_password
 from ..security import DUMMY_HASH, hash_pw, make_csrf, new_token, sha, valid_csrf, verify_pw
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -48,7 +49,7 @@ def register(db: Session, email: str, name: str, password: str, org_name: str,
              resp: Response | None = None) -> tuple[User, UUID]:
     """New user + their own org (owner). Shared by signup (when allowed) and `app.manage create-user`."""
     org_id = uuid4()
-    user = User(email=email.lower(), name=name, password_hash=hash_pw(password))
+    user = User(email=normalize_email(email), name=name, password_hash=hash_pw(check_policy(normalize_password(password))))
     try:
         db.add(user)
         db.flush()

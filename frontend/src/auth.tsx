@@ -22,7 +22,7 @@ function LoginForm({ onDone }: { onDone: () => void }) {
       {up && <Field label="Your name">{(id) => <input id={id} name="name" autoComplete="name" required />}</Field>}
       {up && <Field label="Organization name">{(id) => <input id={id} name="org_name" required />}</Field>}
       <Field label="Email">{(id) => <input id={id} name="email" type="email" autoComplete="username" required autoFocus />}</Field>
-      <Field label="Password" hint={up ? "At least 10 characters" : undefined}>{(id) => <input id={id} name="password" type="password" autoComplete={up ? "new-password" : "current-password"} minLength={10} required />}</Field>
+      <Field label="Password" hint={up ? "10 to 128 characters" : undefined}>{(id) => <input id={id} name="password" type="password" autoComplete={up ? "new-password" : "current-password"} minLength={up ? 10 : undefined} required />}</Field>
       <ErrorBanner e={m.error} />
       <button className="btn primary block" disabled={m.isPending}>{m.isPending ? "Please wait…" : up ? "Create account" : "Log in"}</button>
       {cfg.data?.allow_signup
@@ -56,7 +56,7 @@ export function AcceptInvite({ me }: { me?: Me }) {
       {!me && !i.user_exists && (
         <form className="stack" onSubmit={form((d) => accept.mutate(d))}>
           <Field label="Your name">{(id) => <input id={id} name="name" autoComplete="name" required autoFocus />}</Field>
-          <Field label="Password" hint="At least 10 characters">{(id) => <input id={id} name="password" type="password" autoComplete="new-password" minLength={10} required />}</Field>
+          <Field label="Password" hint="10 to 128 characters">{(id) => <input id={id} name="password" type="password" autoComplete="new-password" minLength={10} required />}</Field>
           <button className="btn primary block" disabled={accept.isPending}>Create account &amp; join</button>
         </form>)}
       <ErrorBanner e={accept.error} />
