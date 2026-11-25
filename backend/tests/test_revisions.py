@@ -39,11 +39,11 @@ def test_sections_and_commit_per_revision(ws):
     assert c.post(f"/api/folders/{fb}/commit", json={"message": "Release R9", "document_ids": [ws["doc"]]}).status_code == 201
     rows = c.get(f"/api/documents/{ws['doc']}/revision-history").json()
     by = {x["commit"]: x for x in rows}
-    assert by["Write guide"]["sections"] == "Guide (Setup, Usage)"
-    assert by["Reword usage, add tips"]["sections"] == "Guide (Usage, Tips)"  # only what changed
-    assert by["Edit base: add part"]["sections"] == "Intro, Added part" and by["Edit base: add part"]["author"] == "Alice A"
+    assert by["Write guide"]["sections"] == "Setup (added); Usage (added)"  # round 16: headings only, numbering unknown here
+    assert by["Reword usage, add tips"]["sections"] == "Usage; Tips (added)"  # only what changed, at its heading
+    assert by["Edit base: add part"]["sections"] == "Intro; Added part (added)" and by["Edit base: add part"]["author"] == "Alice A"
     assert "Upload version 1" not in by  # the first upload is not a revision
-    assert "Manual chapter" in by["Release R9"]["sections"] and "Guide" in by["Release R9"]["sections"]
+    assert "Manual chapter (added)" in by["Release R9"]["sections"] and "Guide" not in by["Release R9"]["sections"]
     assert all(x["message"] == x["commit"] and set(x) == {"version", "date", "author", "message", "sections", "commit", "status"} for x in rows)  # old keys stay
     assert all(__import__("re").fullmatch(r"\d\d\.\d\d\.\d{4}", x["date"]) for x in rows)  # round 11: DD.MM.YYYY
     assert rows == c.get(f"/api/documents/{ws['doc']}/revision-history").json()  # deterministic
@@ -63,7 +63,7 @@ def test_revision_table_filled_in_docx_and_pdf(ws):
     body = [[x.text for x in r.cells] for r in t.rows[1:]]
     assert len(body) >= 2 and not any("{%" in x for r in body for x in r)
     mine = next(r for r in body if r[4] == "Write body")
-    assert mine[2] == "Alice A" and mine[3] == "Body (Body part)" and len(mine[0]) == 10
+    assert mine[2] == "Alice A" and mine[3] == "Body part (added)" and len(mine[0]) == 10
     eid, st = run_export(c, ws["doc"], "pdf")
     assert st["status"] == "done", st
     text = "\n".join(p.extract_text() for p in PdfReader(io.BytesIO(fetch(c, eid))).pages)
@@ -79,13 +79,6 @@ def test_old_base_revision_table_keeps_working(ws):
     doc = Document(io.BytesIO(fetch(c, eid)))
     t = next(t for t in doc.tables if t.rows[0].cells[0].text == "Version")
     assert t.rows[1].cells[3].text == "m"
-
-
-def test_changed_headings_is_deterministic():
-    old = [{"type": "heading", "content": [{"type": "text", "text": "A"}]}, {"type": "paragraph", "content": [{"type": "text", "text": "x"}]}]
-    new = [{"type": "paragraph"}, *old, {"type": "heading", "content": [{"type": "text", "text": "B"}]}]
-    assert export.changed_headings(old, new) == ["", "B"]
-    assert export.changed_headings(old, old) == [] and export.changed_headings(None, old) == ["A"]
 
 
 # ---- round 13: empty rows ----

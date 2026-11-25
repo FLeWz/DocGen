@@ -4,7 +4,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import Text, cast
 
-from .. import locks, vcs
+from .. import locks, sections as S, vcs
 from ..deps import Ctx, require
 from ..git import content as C, repo as git
 from ..models import DocDraft, DocRef, Draft, Folder, Role, Snippet
@@ -108,7 +108,7 @@ def diff(snippet_id: UUID, from_: str = Query(alias="from", max_length=64), to: 
          ctx: Ctx = V):
     s = vcs.get_snippet(ctx, snippet_id)
     a, b = vcs.rev_version(ctx, s, from_), vcs.rev_version(ctx, s, to)
-    return dict(from_sha=a["sha"], to_sha=b["sha"], **C.diff(s.id, a, b))
+    return dict(from_sha=a["sha"], to_sha=b["sha"], **C.diff(s.id, a, b), sections=S.snippet_changes(a, b))  # relative, unnumbered
 
 
 @router.delete("/snippets/{snippet_id}", status_code=204)

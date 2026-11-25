@@ -14,7 +14,7 @@ from fastapi import HTTPException
 import httpx
 
 from .dates import dmy
-from . import base_docs, config, docs, docx_export, files, vcs
+from . import base_docs, config, docs, docx_export, files, sections as S, vcs
 from .db import SessionLocal, set_ctx
 from .deps import Ctx
 from .git import repo as git
@@ -62,57 +62,46 @@ def missing_variables(variables: dict, used: dict) -> list[dict]:
     return list(out.values())
 
 
-def _heading_sections(blocks: list, key=lambda b: json.dumps(b, sort_keys=True)) -> dict:
-    """Heading text -> fingerprint of the blocks up to the next heading ('' = the part before the first heading)."""
-    out, cur = {"": []}, ""
+def _flat(ctx: Ctx, title: str, blocks: list[dict], override: dict | None = None):
+    """(nodes, titles, starts): the top-level nodes of the BUILT document in order (snippet pins resolved, builder headings
+    as heading nodes). `override` {snippet id: (title, nodes)} swaps one snippet's version; starts[snippet id] = its offset."""
+    nodes, titles, starts = [], [], {}
     for b in blocks or []:
-        if b.get("type") == "heading":
-            cur = C._text(b).strip() or "(untitled)"
-            out.setdefault(cur, [])
-        out[cur].append(key(b))
-    return {k: json.dumps(v) for k, v in out.items() if v}
-
-
-def changed_headings(old: list | None, new: list | None) -> list[str]:
-    """Headings whose section (the heading and the blocks under it) is new, removed or different; the part before
-    the first heading is reported as ''. Sorted by position in `new`, then removed ones: deterministic."""
-    a, b = _heading_sections(old), _heading_sections(new)
-    return [k for k in [*b, *(k for k in a if k not in b)] if a.get(k) != b.get(k)]
-
-
-def _snippet_sections(old: dict | None, new: dict | None) -> str:
-    """'Title' or 'Title (Heading A, Heading B)' when the snippet's content differs between two versions, else ''."""
-    if not new or (old and (old["content"], old["title"]) == (new["content"], new["title"])):
-        return ""
-    hs = [h for h in changed_headings(old and old["content"].get("content"), new["content"].get("content")) if h]
-    return f"{new['title']} ({', '.join(hs)})" if hs else new["title"]
-
-
-def _doc_sections(ctx: Ctx, old: dict | None, new: dict | None) -> str:
-    """Blocks of a document version that differ from its predecessor, by id: heading text, snippet title, 'Paragraph', ..."""
-    ob = {b["id"]: b for b in (old or {}).get("blocks") or []}
-    nb = {b["id"]: b for b in (new or {}).get("blocks") or []}
-    out = []
-    for i in [*nb, *(k for k in ob if k not in nb)]:
-        if ob.get(i) == nb.get(i):
-            continue
-        b = nb.get(i) or ob[i]
-        t = b.get("type")
-        if t == "heading":
-            out.append(b.get("text") or "(heading)")
-        elif t == "snippet_ref":
+        t, got, ttl = b["type"], [], title
+        if t == "snippet_ref":
             sn = ctx.repo(Snippet).get(UUID(b["snippet_id"]))
-            out.append(sn.title if sn else "snippet")
-        else:
-            out.append({"paragraph": "Paragraph", "toc": "Table of contents", "page_break": "Page break"}.get(t, t))
-    for k, label in (("base_document", "Base document"), ("variables", "Variables"), ("links", "Linked documents")):
-        if old and (old.get(k) or None) != (new.get(k) or None) and not (not old.get(k) and not new.get(k)):
-            out.append(label)
-    return ", ".join(dict.fromkeys(out))
+            if not sn:
+                continue
+            if override and sn.id in override:
+                ttl, got = override[sn.id]
+            else:
+                sha = docs.pin_sha(ctx, b, sn)
+                v = sha and C.version_at(vcs.repo_of(ctx, sn.folder_id), sha, sn.id)
+                if not v:
+                    continue
+                ttl, got = v["title"], v["content"].get("content") or []
+            starts.setdefault(sn.id, len(nodes))
+        elif t == "paragraph":
+            got = (b.get("content") or {}).get("content") or []
+        elif t == "heading":
+            got = [{"type": "heading", "attrs": {"level": b["level"], "numbered": b.get("numbered"), "styleId": b.get("styleId"), "_blk": True},
+                    "content": [{"type": "text", "text": b["text"]}]}]
+        nodes += got
+        titles += [ttl] * len(got)
+    return nodes, titles, starts
 
 
-def _base_headings(data: bytes | None) -> list:
-    """Heading blocks of a base document's body, as {type, text...} blocks for `changed_headings`."""
+def _numbering(ctx: Ctx, base: dict | None) -> S.Numbering:
+    """Heading numbering of the pinned base document version (the bundled default when none)."""
+    data = None
+    if base and base.get("sha"):
+        brepo = git.base_repo_path(ctx.org_id)
+        data = brepo.exists() and git.show(brepo, base["sha"], f"base/{base['id']}.docx")
+    return S.Numbering(data or base_docs.default_docx())
+
+
+def _base_nodes(data: bytes | None) -> list:
+    """Paragraphs of a base document's body as nodes: headings (style Heading N / Title, direct numPr kept), the rest as text."""
     if not data:
         return []
     import io, zipfile
@@ -123,12 +112,42 @@ def _base_headings(data: bytes | None) -> list:
     out = []
     for p in root.iter(W + "p"):
         st = p.find(f"{W}pPr/{W}pStyle")
-        text = "".join(t.text or "" for t in p.iter(W + "t"))
-        if st is not None and (st.get(W + "val") or "").lower().startswith(("heading", "title")) and text.strip():
-            out.append({"type": "heading", "text": text.strip()})
-        elif text.strip() or p.find(f".//{W}drawing") is not None:
-            out.append({"type": "paragraph", "text": text.strip()})
+        sid = st.get(W + "val") if st is not None else None
+        text = "".join(t.text or "" for t in p.iter(W + "t")).strip()
+        if sid and sid.lower().startswith(("heading", "title")) and text:
+            m = re.search(r"(\d)$", sid)
+            np = p.find(f"{W}pPr/{W}numPr/{W}numId")
+            out.append({"type": "heading", "attrs": {"level": int(m[1]) if m else 1, "styleId": sid,
+                                                     **({"_numpr": np.get(W + "val")} if np is not None else {})},
+                        "content": [{"type": "text", "text": text}]})
+        elif text or p.find(f".//{W}drawing") is not None:
+            out.append({"type": "paragraph", "content": [{"type": "text", "text": text}]})
     return out
+
+
+def _doc_sec(ctx: Ctx, d: Document, old: dict | None, new: dict | None) -> str:
+    """Structural changes between two committed versions of a document, numbered over each built document."""
+    if not new:
+        return ""
+    nn, nt, _ = _flat(ctx, new["title"], new.get("blocks"))
+    on, ot, _ = _flat(ctx, old["title"], old.get("blocks")) if old else ([], [], {})
+    br = new.get("base_document")
+    return S.diff_nodes(on, nn, ot, nt, _numbering(ctx, br and dict(id=br["id"], sha=br["version"])))
+
+
+def _snippet_sec(ctx: Ctx, d: Document, blocks: list[dict], s: Snippet, num: S.Numbering, old: dict | None, new: dict | None) -> str:
+    """Changes of one snippet commit, located by where the snippet sits in the document built from `blocks`."""
+    if not new or (old and (old["content"], old["title"]) == (new["content"], new["title"])):
+        return ""
+
+    def seg(v: dict | None):
+        nodes = (v["content"].get("content") if v else None) or []
+        flat, titles, starts = _flat(ctx, d.title, blocks, {s.id: (v["title"] if v else s.title, nodes)})
+        off = starts.get(s.id, 0)
+        return nodes, S.anchors(flat, titles, num)[off:off + len(nodes)], off
+    nn, na, off = seg(new)
+    on, oa, _ = seg(old)
+    return S.changes(on, nn, na, oa, off)
 
 
 def revision_rows(ctx: Ctx, d: Document, blocks: list[dict], base: dict | None = None, rev: str | None = None) -> list[dict]:
@@ -146,7 +165,7 @@ def revision_rows(ctx: Ctx, d: Document, blocks: list[dict], base: dict | None =
             sec = sections(c, commits[i + 1] if i + 1 < len(commits) else None)
             if c["sha"] in rows:
                 r = rows[c["sha"]]
-                r["sections"] = ", ".join(dict.fromkeys(x for x in [r["sections"], sec] if x))
+                r["sections"] = "; ".join(dict.fromkeys(x for x in [r["sections"], sec] if x))
                 continue
             c = vcs.commit_out(c, tm, nm)
             subject = c["message"].split("\n")[0]
@@ -155,21 +174,27 @@ def revision_rows(ctx: Ctx, d: Document, blocks: list[dict], base: dict | None =
 
     repo = vcs.repo_of(ctx, d.folder_id)
     add(repo, d.folder_id, git.log(repo, d.id, key="Document-Id", rev=rev),  # rev: only commits up to a historic version
-        lambda c, p: _doc_sections(ctx, p and docs.version_at(ctx, d, p["sha"]), docs.version_at(ctx, d, c["sha"])))
+        lambda c, p: _doc_sec(ctx, d, p and docs.version_at(ctx, d, p["sha"]), docs.version_at(ctx, d, c["sha"])))
+    num = _numbering(ctx, base)
     for b in blocks:
         s = b["type"] == "snippet_ref" and ctx.repo(Snippet).get(UUID(b["snippet_id"]))
         sha = s and docs.pin_sha(ctx, b, s)
         if sha:
             srepo = vcs.repo_of(ctx, s.folder_id)
             add(srepo, s.folder_id, git.log(srepo, s.id, rev=sha),
-                lambda c, p, s=s, srepo=srepo: _snippet_sections(p and C.version_at(srepo, p["sha"], s.id), C.version_at(srepo, c["sha"], s.id)))
+                lambda c, p, s=s, srepo=srepo: _snippet_sec(ctx, d, blocks, s, num, p and C.version_at(srepo, p["sha"], s.id),
+                                                            C.version_at(srepo, c["sha"], s.id)))
     bid = base and UUID(base["id"])
     brepo = git.base_repo_path(ctx.org_id)
     if bid and base.get("sha") and brepo.exists():
         path = f"base/{bid}.docx"
         commits = git.log(brepo, bid, key="Base-Document-Id", rev=base["sha"])
-        add(brepo, vcs.BASE_SCOPE, commits, lambda c, p: ", ".join(h or "(front matter)" for h in changed_headings(
-            _base_headings(p and git.show(brepo, p["sha"], path)), _base_headings(git.show(brepo, c["sha"], path)))),
+        def base_sec(c, p):
+            new = git.show(brepo, c["sha"], path)
+            old = _base_nodes(p and git.show(brepo, p["sha"], path))
+            nn = _base_nodes(new)
+            return S.diff_nodes(old, nn, ["(front matter)"] * len(old), ["(front matter)"] * len(nn), S.Numbering(new))
+        add(brepo, vcs.BASE_SCOPE, commits, base_sec,
             skip_oldest=True)  # the upload of version 1 is not a revision of the document
     return [{k: v for k, v in r.items() if k != "_k"} for r in sorted(rows.values(), key=lambda r: r["_k"])]
 
