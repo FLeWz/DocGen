@@ -3,6 +3,7 @@ import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, Commit, Draft, Me } from "../api";
 import { canEdit, folderPath, short, useFolders } from "../data";
+import { UpdateFromImportDialog } from "./UpdateFromImport";
 import { SnippetEditor } from "../editor/SnippetEditor";
 import { ContextPanel, PageHead, useActiveFolder } from "../Shell";
 import { Badge, Empty, fmtDate, Icon, Skeleton, useUI } from "../ui";
@@ -47,7 +48,7 @@ export function SnippetPage({ me }: { me: Me }) {
   const { id = "" } = useParams(), nav = useNavigate();
   const [epoch, setEpoch] = useState(0); // bumped after restore so the editor reloads the new draft
   const d = useQuery({ queryKey: ["draft", id], queryFn: () => api<Draft & { folder_id: string }>(`/snippets/${id}/draft`), gcTime: 0 });
-  const folders = useFolders(me);
+  const folders = useFolders(me), [upd, setUpd] = useState(false);
   const fid = (d.data as { folder_id?: string } | undefined)?.folder_id ?? null;
   useActiveFolder(fid);
   const path = folderPath(folders.data, fid);
@@ -55,7 +56,8 @@ export function SnippetPage({ me }: { me: Me }) {
   return (
     <div className="page fill">
       <PageHead crumbs={[{ label: "Dashboard", to: "/" }, ...path.map((p) => ({ label: p.name, to: `/folders/${p.id}` })), { label: d.data?.title ?? "Snippet" }]}
-        actions={<Link className="btn ghost sm" to={`/history/snippet/${id}`}><Icon n="clock" />History</Link>} />
+        actions={<>{canEdit(me) && <button className="btn ghost sm" onClick={() => setUpd(true)}><Icon n="layers" />Update from import…</button>}<Link className="btn ghost sm" to={`/history/snippet/${id}`}><Icon n="clock" />History</Link></>} />
+      {upd && d.data && fid && <UpdateFromImportDialog me={me} snippet={{ id, title: d.data.title, folder_id: fid }} onClose={() => { setUpd(false); setEpoch((e) => e + 1); }} />}
       <SnippetEditor id={id} me={me} epoch={epoch} onCommit={() => nav(`/commit/${fid ?? ""}?select=${id}`)} />
       <SidePanel id={id} me={me} onRestored={() => setEpoch((e) => e + 1)} />
     </div>

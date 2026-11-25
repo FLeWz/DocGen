@@ -491,6 +491,7 @@ class UpdateItem(BaseModel):
     key: int
     action: Literal["update", "create", "skip"]
     snippet_id: UUID | None = None
+    end: int | None = Field(default=None, gt=0)  # block index where this row's snippet ends (default: the next non-skipped heading)
 
 
 class UpdateApplyIn(BaseModel):

@@ -1,6 +1,7 @@
 // Small UI kit: icons, modal dialogs (replace prompt/confirm/alert), toasts, menus, badges, states. Styles: app.css.
 import { formatDate, formatDateTime } from "./dates";
 import { createContext, FormEvent, ReactNode, useCallback, useContext, useEffect, useId, useMemo, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 
 const P: Record<string, string> = {
   folder: "M3 6a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z",
@@ -101,7 +102,7 @@ export function Modal({ title, onClose, children, wide, size, tall, actions }: {
 type Ask = {
   prompt: (o: { title: string; label: string; value?: string; ok?: string; hint?: string }) => Promise<string | null>;
   confirm: (o: { title: string; body?: ReactNode; ok?: string; danger?: boolean }) => Promise<boolean>;
-  toast: (msg: string, kind?: "ok" | "err") => void;
+  toast: (msg: string, kind?: "ok" | "err", links?: { label: string; to: string }[]) => void;
 };
 const Ctx = createContext<Ask>(null as unknown as Ask);
 export const useUI = () => useContext(Ctx);
@@ -110,11 +111,11 @@ type Pending = { kind: "prompt"; o: Parameters<Ask["prompt"]>[0]; done: (v: stri
 
 export function UIProvider({ children }: { children: ReactNode }) {
   const [dlg, setDlg] = useState<Pending | null>(null);
-  const [toasts, setToasts] = useState<{ id: number; msg: string; kind: string }[]>([]);
-  const toast = useCallback((msg: string, kind: "ok" | "err" = "ok") => {
+  const [toasts, setToasts] = useState<{ id: number; msg: string; kind: string; links?: { label: string; to: string }[] }[]>([]);
+  const toast = useCallback((msg: string, kind: "ok" | "err" = "ok", links?: { label: string; to: string }[]) => {
     const id = Date.now() + Math.random();
-    setToasts((t) => [...t, { id, msg, kind }]);
-    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), kind === "err" ? 8000 : 4000);
+    setToasts((t) => [...t, { id, msg, kind, links }]);
+    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), kind === "err" || links ? 8000 : 4000);
   }, []);
   const api = useMemo<Ask>(() => ({
     toast,
@@ -133,7 +134,7 @@ export function UIProvider({ children }: { children: ReactNode }) {
           <div>{dlg.o.body}</div>
         </Modal>)}
       <div className="toasts" aria-live="polite">{toasts.map((t) => (
-        <div key={t.id} className={`toast ${t.kind}`} role={t.kind === "err" ? "alert" : "status"}><Icon n={t.kind === "err" ? "alert" : "check"} />{t.msg}
+        <div key={t.id} className={`toast ${t.kind}`} role={t.kind === "err" ? "alert" : "status"}><Icon n={t.kind === "err" ? "alert" : "check"} />{t.msg}{t.links?.map((l) => <Link key={l.to} to={l.to} className="toastlink" onClick={() => setToasts((x) => x.filter((y) => y.id !== t.id))}>{l.label}</Link>)}
           <button className="btn ghost icon" aria-label="Dismiss" onClick={() => setToasts((l) => l.filter((x) => x.id !== t.id))}><Icon n="x" size={14} /></button></div>))}</div>
     </Ctx.Provider>
   );

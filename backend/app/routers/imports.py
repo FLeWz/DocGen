@@ -384,11 +384,11 @@ def selection_snippet(import_id: UUID, body: SelectionIn, ctx: Ctx = E):
 # ---- update snippets from (another) import: match headings to the folder's snippets, show what changed, write drafts ----
 
 def _match(rows: list[dict], snippets: list[Snippet]) -> None:
-    """Fill row['match'] = (snippet, how, score): remembered source heading, same title/slug, then fuzzy title (>= 0.7);
+    """Fill row['match'] = (snippet, how, score): same title/slug, remembered source heading (a renamed snippet), then fuzzy title (>= 0.7);
     a snippet is matched to one heading only."""
     used: set = set()
-    for how, test in (("source", lambda r, x: _norm((x.source or {}).get("heading_text") or "\0") == _norm(r["title"])),
-                      ("title", lambda r, x: _norm(x.title) == _norm(r["title"]) or x.slug == vcs.slugify(r["title"]))):
+    for how, test in (("title", lambda r, x: _norm(x.title) == _norm(r["title"]) or x.slug == vcs.slugify(r["title"])),
+                      ("source", lambda r, x: _norm((x.source or {}).get("heading_text") or "\0") == _norm(r["title"]))):
         for r in rows:
             x = None if r.get("match") else next((x for x in snippets if x.id not in used and test(r, x)), None)
             if x:
@@ -471,7 +471,10 @@ def update_apply(import_id: UUID, body: UpdateApplyIn, ctx: Ctx = E):
     _guard_drafts(ctx, list(targets.values()), body.overwrite_draft)
     out = []
     for s in secs:
-        part = blocks[s["start"]:s["end"]]
+        end = items[s["key"]].end or s["end"]
+        if not s["start"] < end <= len(blocks):
+            raise HTTPException(422, "block range out of bounds")
+        part = blocks[s["start"]:end]
         src = _source(i, part, s["title"])
         if s["key"] in targets:
             out.append(_update(ctx, targets[s["key"]], part, orig, src))

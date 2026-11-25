@@ -143,11 +143,11 @@ def test_bulk_update_matches_by_source_title_and_fuzzy(imported):
     team, iid = imported
     ed = team["editor"]
     fo = folder(ed)
-    first = ed.post(f"/api/imports/{iid}/split", json={"folder_id": fo, "level": 1}).json()
+    h0 = heads(ed, iid)  # "Merged cells" is made under another title: only the remembered source ties it to the heading
+    first = ed.post(f"/api/imports/{iid}/split", json={"folder_id": fo, "headings": [h0[t] for t in ("Introduction", "Revision history", "Merged cells", "Opaque things")],
+                                                     "titles": {h0["Merged cells"]: "Tables with spans"}}).json()
     ids = {s["title"]: s["id"] for s in first}
-    # a user renames "Merged cells" in a commit: only the remembered source ties it to the heading now
-    d = ed.get(f"/api/snippets/{ids['Merged cells']}/draft").json()
-    assert ed.put(f"/api/snippets/{ids['Merged cells']}/draft", json={"title": "Tables with spans", "content": d["content"]}).status_code == 200
+    ids["Merged cells"] = ids.pop("Tables with spans")
     assert commit(ed, fo, list(ids.values())).status_code == 201
     heads0 = {k: head(ed, v) for k, v in ids.items()}
     n = newer(ed, iid, edit_title=("Revision history", "Revision histories"))
@@ -155,7 +155,7 @@ def test_bulk_update_matches_by_source_title_and_fuzzy(imported):
     hs = {t: hs[t] for t in ("Introduction", "Revision histories", "Merged cells", "Opaque things")}
     body = {"folder_id": fo, "headings": sorted(hs.values())}
     plan = {r["title"]: r for r in ed.post(f"/api/imports/{n}/update-plan", json=body).json()}
-    assert plan["Introduction"]["match"]["how"] == "source" and plan["Introduction"]["target"] == ids["Introduction"]
+    assert plan["Introduction"]["match"]["how"] == "title" and plan["Introduction"]["target"] == ids["Introduction"]
     assert plan["Introduction"]["changes"]["changed"] == 1 and not plan["Introduction"]["changes"]["same"]
     assert plan["Merged cells"]["match"]["how"] == "source" and plan["Merged cells"]["target"] == ids["Merged cells"]
     f = plan["Revision histories"]["match"]
@@ -185,6 +185,10 @@ def test_bulk_update_matches_by_source_title_and_fuzzy(imported):
     assert ed.post(f"/api/imports/{n}/update-apply", json={"folder_id": fo, "items": items2}).status_code == 422  # one snippet, two headings
     assert ed.post(f"/api/imports/{n}/update-apply", json={"folder_id": fo, "items": [{"key": hs["Introduction"], "action": "skip"}]}).status_code == 422
     assert ed.post(f"/api/imports/{n}/update-plan", json={"folder_id": fo, "headings": [1]}).status_code == 422  # block 1 is no heading
+    # "Update from import…" on one snippet: an explicit end keeps the run to that heading instead of the end of the document
+    one = ed.post(f"/api/imports/{n}/update-apply", json={"folder_id": fo, "items": [{"key": hs["Introduction"], "action": "update", "snippet_id": ids["Introduction"], "end": hs["Revision histories"]}], "overwrite_draft": True}).json()
+    assert [o["action"] for o in one] == ["updated"]
+    assert len(ed.get(f"/api/snippets/{ids['Introduction']}/draft").json()["content"]["content"]) == hs["Revision histories"] - hs["Introduction"]
 
 
 def test_bulk_update_draft_protection_and_roles(imported):

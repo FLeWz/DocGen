@@ -63,7 +63,7 @@ export function CommitPage({ me }: { me: Me }) {
   const ch = useQuery({ queryKey: ["changes", folderId], queryFn: () => api<Change[]>(`/folders/${folderId}/changes`), enabled: !!f, refetchOnWindowFocus: false });
   // ?select=<id> (coming from an editor) is checked from the first paint: an effect would race with early clicks
   const want = sp.get("select");
-  const [picked, setPicked] = useState<Set<string>>(() => new Set(want ? [want] : [])), [focus, setFocus] = useState<string | null>(want), [msg, setMsg] = useState("");
+  const [picked, setPicked] = useState<Set<string>>(() => new Set(want ? want.split(",") : [])), [focus, setFocus] = useState<string | null>(want?.split(",")[0] ?? null), [msg, setMsg] = useState("");
   const refresh = () => qc.invalidateQueries();
   const chosen = (ch.data ?? []).filter((c) => picked.has(keyOf(c)) && !c.conflict);
   const commit = useMutation({

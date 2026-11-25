@@ -260,3 +260,6 @@ textarea, pre, .difftext { scrollbar-color: var(--border-strong) var(--surface-2
   ::-webkit-scrollbar { width: 10px; height: 10px; background: var(--surface); } ::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 5px; border: 2px solid var(--surface); } ::-webkit-scrollbar-corner { background: var(--surface); }
 }
 .dateinput { display: block; } .dateinput .err { color: var(--danger); display: block; } input[aria-invalid=true] { border-color: var(--danger); }
+.toast .toastlink { color: #9ecbff; text-decoration: underline; margin-left: 8px; white-space: nowrap; }
+.maprow { display: grid; grid-template-columns: 22px minmax(120px, 1fr) minmax(190px, 1.1fr) 150px; gap: 8px; align-items: center; padding: 4px 8px; border-bottom: 1px solid var(--border); } .maprow:last-child { border-bottom: 0; } .maprow select { min-width: 0; width: 100%; }
+.rowact { display: flex; gap: 8px; align-items: center; margin-left: auto; flex: none; } .rowact select { height: 26px; }

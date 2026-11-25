@@ -11,11 +11,14 @@ import { canEdit, folderLabel, ImportRow, useFolders, useImports } from "../data
 import { PageHead } from "../Shell";
 import { Conflict, conflictOf, NameConflictModal } from "./BaseDocs";
 import { SplitDialog } from "./SplitDialog";
+import { UpdateFromImportDialog } from "./UpdateFromImport";
+import { ConflictModal, useResultToast } from "./ImportConflict";
+import { Action, conflictsOf, draftHeld, Existing } from "../importSnippets";
 import { BaseEditBar, BaseHistoryModal, CommitBaseModal, useBaseEdit, useDiscard } from "./BaseEdit";
 import { Badge, Banner, Empty, ErrorBanner, Field, Icon, Modal, Skeleton, Spinner, ago, useUI } from "../ui";
 
 type ImportDoc = ImportRow & { content: Doc; warnings: string[]; base_document_id?: string | null };
-type Created = { id: string; title: string; slug: string; warnings: string[] };
+type Created = { id: string; folder_id: string; title: string; slug: string; warnings: string[]; action: string };
 
 export function ImportsPage({ me }: { me: Me }) {
   const qc = useQueryClient(), nav = useNavigate(), ui = useUI();
@@ -58,15 +61,21 @@ export function ImportPage({ me }: { me: Me }) {
   })();
   const folders = useFolders(me);
   const isBase = !!q.data?.base_document_id, bedit = useBaseEdit(id, isBase), discard = useDiscard(id, bedit.data?.base_document.name ?? "");
-  const [panel, setPanel] = useState<"sel" | "split" | "base" | "vars" | "commit" | "history" | null>(null);
+  const [panel, setPanel] = useState<"sel" | "split" | "update" | "base" | "vars" | "commit" | "history" | null>(null);
   const [rev, setRev] = useState(0), [sel2, setSel2] = useState<{ picks: Pick[]; error: string }>({ picks: [], error: "" }), edRef = useRef<Editor | null>(null);
   const [range, setRange] = useState<[number, number]>([0, 1]), picked = useRef<unknown[]>([]);
   const [folder, setFolder] = useState(""), [title, setTitle] = useState(""), [name, setName] = useState("");
   const f = folder || folders.data?.[0]?.id || "";
   const edit = canEdit(me), admin = isAdmin(me.org?.role);
   const done = (t: string) => { ui.toast(t); setPanel(null); qc.invalidateQueries(); };
-  const sel = useMutation({ mutationFn: () => api<Created>(`/imports/${id}/selection-snippet`, "POST", { folder_id: f, title, blocks: picked.current }), // the blocks themselves: independent of the autosave reaching the server
-     onSuccess: (r) => done(`Created snippet draft "${r.title}"${r.warnings.length ? ` (${r.warnings[0]})` : ""}`) });
+  const [snip, setSnip] = useState<Existing | null>(null), showResult = useResultToast();
+  const sel = useMutation({ mutationFn: (v: { on_conflict?: Action; overwrite_draft?: boolean }) => api<Created>(`/imports/${id}/selection-snippet`, "POST", { folder_id: f, title, blocks: picked.current, ...v }), // the blocks themselves: independent of the autosave reaching the server
+    onSuccess: (r) => { setSnip(null); setPanel(null); qc.invalidateQueries(); if (r.action === "skipped") ui.toast("Skipped: the existing snippet was not touched"); else showResult([r]); },
+    onError: async (e, v) => {
+      const c = conflictsOf(e);
+      if (c) setSnip(c[0]);
+      else if (draftHeld(e) && await ui.confirm({ title: "Replace your unsaved draft?", ok: "Overwrite draft", danger: true, body: "You have unsaved changes in the draft of that snippet. Overwriting replaces them with the imported blocks; cancel keeps them." })) sel.mutate({ ...v, overwrite_draft: true });
+    } });
   // the editor holds the old text after the server replaced values: a new key makes it load the stored content again
   const applyVars = () => api(`/imports/${id}/variables`, "POST", { items: sel2.picks }).then(() => { if (sel2.picks.length) { setRev((r) => r + 1); return qc.invalidateQueries({ queryKey: qkey }); } });
   const [clash, setClash] = useState<Conflict | null>(null), applied = useRef(false); // the variables are replaced once, even if the name must be changed and we retry
@@ -105,6 +114,7 @@ export function ImportPage({ me }: { me: Me }) {
           {edit && <button className="btn" onClick={async () => { await flush(); setPanel("vars"); }}><Icon n="layers" />Find variables</button>}
           {edit && <button className="btn" onClick={async () => { await flush(); setRange(blockRange(ed)); picked.current = selectedBlocks(ed); setTitle(""); setPanel("sel"); }}><Icon n="file" />Create snippet from selection</button>}
           {edit && !isBase && <button className="btn" onClick={async () => { await flush(); setPanel("split"); }}><Icon n="layers" />Split by headings</button>}
+          {edit && !isBase && <button className="btn" onClick={async () => { await flush(); setPanel("update"); }}><Icon n="layers" />Update snippets from this import…</button>}
           {admin && !isBase && <button className="btn" onClick={async () => { await flush(); setPanel("base"); }}><Icon n="doc" />Use as base document</button>}
           {isBase && <><button className="btn" onClick={() => setPanel("history")}><Icon n="clock" />Versions</button><button className="btn" onClick={discard}><Icon n="trash" />Discard draft</button>
             <button className="btn primary" onClick={async () => { await flush(); await bedit.refetch(); setPanel("commit"); }}><Icon n="check" />Commit…</button></>}
@@ -112,14 +122,16 @@ export function ImportPage({ me }: { me: Me }) {
         </>; }} />
       {panel === "sel" && (
         <Modal title="Create snippet from selection" onClose={() => setPanel(null)} actions={<>{cancel}<button className="btn primary" form="sel-form" disabled={!f || sel.isPending}>Create snippet</button></>}>
-          <form id="sel-form" className="stack" onSubmit={(e) => { e.preventDefault(); sel.mutate(); }}>
+          <form id="sel-form" className="stack" onSubmit={(e) => { e.preventDefault(); sel.mutate({}); }}>
             <p className="muted">{range[1] - range[0]} block{range[1] - range[0] === 1 ? "" : "s"} (no. {range[0] + 1}–{range[1]}) become a snippet draft (styles and images kept).</p>
-            {folderPick}<Field label="Snippet title">{(i) => <input id={i} value={title} onChange={(e) => setTitle(e.target.value)} required autoFocus />}</Field><ErrorBanner e={sel.error} />
+            {folderPick}<Field label="Snippet title">{(i) => <input id={i} value={title} onChange={(e) => setTitle(e.target.value)} required autoFocus />}</Field><ErrorBanner e={conflictsOf(sel.error) || draftHeld(sel.error) ? null : sel.error} />
           </form>
         </Modal>)}
+      {panel === "sel" && snip && <ConflictModal c={snip} busy={sel.isPending} onClose={() => setSnip(null)} onRename={() => setSnip(null)} onPick={(a) => sel.mutate({ on_conflict: a })} />}
       {panel === "commit" && bedit.data && <CommitBaseModal id={id} info={bedit.data} onClose={() => { setPanel(null); qc.invalidateQueries({ queryKey: ["base-docs"] }); qc.invalidateQueries({ queryKey: ["bversions"] }); if (committed.current) nav("/base-documents"); }} onDone={() => { committed.current = true; }} />}
       {panel === "history" && bedit.data && <BaseHistoryModal id={id} info={bedit.data} onClose={() => setPanel(null)} onRestored={() => { setRev((r) => r + 1); qc.invalidateQueries({ queryKey: qkey }); }} />}
       {panel === "split" && <SplitDialog me={me} id={id} total={q.data?.content.content?.length ?? 0} onClose={() => setPanel(null)} />}
+      {panel === "update" && <UpdateFromImportDialog me={me} importId={id} onClose={() => setPanel(null)} />}
       {panel === "vars" && (
         <Modal title="Find variables" wide onClose={() => setPanel(null)} actions={<>{cancel}<button className="btn primary" disabled={!sel2.picks.length || !!sel2.error || vars.isPending} onClick={() => vars.mutate()}>Replace with variables</button></>}>
           <div className="stack"><p className="muted">Values that look like per-document data: cover text, header/footer text and fields, dates, version numbers. Tables of contents/figures, tables and the body are left alone. Chosen values become <code>{"{{ name }}"}</code> (formatting kept); the detected value is the default. Built-in names (<code>doc.title</code>, <code>doc.version</code>, <code>doc.date</code>, <code>author</code>, <code>org.name</code>) are filled by the exporter.</p>
