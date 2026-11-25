@@ -182,6 +182,28 @@ def _clean(row: dict, **extra) -> dict:  # None would render as the text "None"
     return Row({k: "" if v is None else v for k, v in {**row, **extra}.items()})
 
 
+# Column keys of revision-history tables found in the wild (hand-made base documents, the inserted table, the default base):
+# every group is one value, so a template using any of the names is filled. Only the first non-empty member is the source.
+REV_ALIASES = (("date", "last_edited_date", "edited_date"), ("version", "revision", "revision_number", "rev"),
+               ("author", "edited_by"), ("sections", "pages_paragraphs_affected", "pages_affected"),
+               ("commit", "message", "description", "change_ref", "change"))
+
+
+def revision_rows(spec: dict) -> list:
+    """Rows for `revision_history`: blank rows dropped, aliases filled, a single explicit row when there are none."""
+    bi = spec["built_ins"]
+    rows = [_clean(r, date=dmy(r.get("date"))) for r in spec.get("revision_history") or []]
+    rows = [r for r in rows if any(str(v).strip() for v in r.values())]
+    if not rows:
+        rows = [_clean({}, version=bi["doc.version"], date=dmy(bi["doc.date"]), author=bi["author"], message="No revisions yet")]
+    for r in rows:
+        for g in REV_ALIASES:
+            v = next((r[k] for k in g if r.get(k)), "")
+            r.update({k: v for k in g if not r.get(k)})
+        r.setdefault("status", "Committed")
+    return rows
+
+
 def context(spec: dict) -> dict:
     v = spec["variables"]
     ctx: dict = {}
@@ -202,7 +224,7 @@ def context(spec: dict) -> dict:
     ctx.update({"doc": {"title": bi["doc.title"], "version": bi["doc.version"], "date": dmy(bi["doc.date"])},
                 "org": {"name": bi["org.name"]}, "author": bi["author"],
                 "linked_documents": [_clean(l, id=l.get("doc_id"), link=l.get("url")) for l in spec.get("links", [])],
-                "revision_history": [_clean(r, date=dmy(r.get("date"))) for r in spec.get("revision_history") or []]})
+                "revision_history": revision_rows(spec)})
     return ctx
 
 

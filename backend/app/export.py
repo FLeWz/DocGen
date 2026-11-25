@@ -145,7 +145,7 @@ def revision_rows(ctx: Ctx, d: Document, blocks: list[dict], base: dict | None =
             c = vcs.commit_out(c, tm)
             subject = c["message"].split("\n")[0]
             rows[c["sha"]] = dict(version=(c["tags"] or [c["sha"][:7]])[0], date=dmy(c["date"][:10]), author=c["author_name"], message=subject,
-                                  sections=sec, commit=subject, _k=(c["date"], c["sha"]))
+                                  sections=sec, commit=subject, status="Tagged" if c["tags"] else "Committed", _k=(c["date"], c["sha"]))
 
     repo = vcs.repo_of(ctx, d.folder_id)
     add(repo, git.log(repo, d.id, key="Document-Id"),
