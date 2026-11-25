@@ -202,7 +202,7 @@ def base_and_revisions(page):
     page.wait_for_timeout(1500)  # autosave of the draft
     xml = export_docx(page, did)
     assert "Sections changed" in xml, "bumped to v3: the revision table is in the build"
-    for needle in ("Write chapter", "Reword chapter", "E2E User", "Chapter (Chapter heading)", "Add a paragraph", "Add revision table"):
+    for needle in ("Write chapter", "Reword chapter", "E2E User", "Chapter heading (added)", "Add a paragraph", "Add revision table"):
         assert needle in xml, needle
     assert "{%" not in xml and "{{" not in xml
     print("round9 (edit base, revision table, bump): ok")
