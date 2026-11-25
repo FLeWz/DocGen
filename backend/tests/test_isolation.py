@@ -151,7 +151,8 @@ COVERED = {  # every API route must be listed: a new endpoint forces a new isola
     # milestone 7: all covered by test_b_cannot_touch_a_imports
     "POST /api/import/docx", "GET /api/imports", "GET /api/imports/{import_id}", "PUT /api/imports/{import_id}",
     "GET /api/imports/{import_id}/export", "GET /api/imports/{import_id}/split", "POST /api/imports/{import_id}/split",
-    "POST /api/imports/{import_id}/selection-snippet", "POST /api/imports/{import_id}/base-document",
+    "POST /api/imports/{import_id}/selection-snippet", "POST /api/imports/{import_id}/conflicts",
+    "POST /api/imports/{import_id}/update-plan", "POST /api/imports/{import_id}/update-apply", "POST /api/imports/{import_id}/base-document",
     # round 5B: test_b_cannot_touch_a_imports, test_header_footer.test_roles_and_validation
     "GET /api/imports/{import_id}/headers-footers",
     # round 5A: test_vars.test_roles_and_isolation_of_variable_routes
@@ -363,6 +364,10 @@ def test_b_cannot_touch_a_imports(world):
         ("post", f"/api/imports/{iid}/split", {"folder_id": bfo, "headings": [0]}),
         ("post", f"/api/imports/{iid}/split", {"folder_id": bfo, "level": 1}),  # A's import into B's folder
         ("post", f"/api/imports/{iid}/selection-snippet", {**sel, "folder_id": bfo}),
+        ("post", f"/api/imports/{iid}/conflicts", {"folder_id": bfo, "titles": ["x"]}),
+        ("post", f"/api/imports/{iid}/update-plan", {"folder_id": bfo, "headings": [0]}),
+        ("post", f"/api/imports/{iid}/update-apply", {"folder_id": bfo, "items": [{"key": 0, "action": "create"}]}),
+        ("post", f"/api/imports/{b_imp}/update-plan", {"folder_id": fa, "headings": [0]}),
         ("post", f"/api/imports/{iid}/base-document", {"name": "stolen"}),
         ("post", f"/api/imports/{b_imp}/split", {"folder_id": fa, "level": 1}),  # B's import into A's folder
         ("post", f"/api/imports/{b_imp}/selection-snippet", {**sel, "folder_id": fa}),

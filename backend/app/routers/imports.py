@@ -1,6 +1,8 @@
 import copy
 import difflib
+import hashlib
 import io
+import json
 import re
 import zipfile
 from uuid import UUID
@@ -16,9 +18,9 @@ from .. import base_docs, docx_export, docx_hf, docx_import as D, docx_vars, vcs
 from ..deps import Ctx, require
 from ..files import image_path, import_path
 from ..git import repo as git
-from ..models import BaseDocument, BaseDocVersion, Image, Import, Organization, Role
+from ..models import BaseDocument, BaseDocVersion, Draft, Image, Import, Organization, Role, Snippet
 from ..ooxml import collect_parts, neutralize_ole, opaque_element, rel_ids, rel_map
-from ..schemas import BaseCommitIn, BaseRestoreIn, VarPicks, ImportBaseIn, ImportPut, ImportSnippetOut, SelectionIn, SplitIn
+from ..schemas import BaseCommitIn, BaseRestoreIn, VarPicks, ImportBaseIn, ConflictsIn, DraftIn, ImportPut, ImportSnippetOut, SelectionIn, SplitIn, UpdateApplyIn, UpdatePlanIn
 from . import images
 from .base_documents import _get as get_base, _head_docx, _read, _store, _versions, add_base
 
@@ -190,7 +192,7 @@ def _sections(content: dict, level: int | None = None, cuts: list[int] | None = 
         if head is None and not any(D.block_text(b).strip() or b.get("type") != "paragraph" for b in blocks[s:e]):
             continue  # nothing but empty paragraphs before the first heading
         title = ((titles or {}).get(s if head else -1) or "").strip() or title
-        out.append(dict(title=title[:200], start=s, end=e, blocks=e - s, level=(head or {}).get("attrs", {}).get("level")))
+        out.append(dict(key=s if head else -1, title=title[:200], start=s, end=e, blocks=e - s, level=(head or {}).get("attrs", {}).get("level")))
     return out
 
 
@@ -220,22 +222,96 @@ def _carry_parts(blocks: list, orig: bytes) -> None:
                     a["parts"] = parts
 
 
-def _make(ctx: Ctx, folder, title: str, blocks: list, orig: bytes | None = None) -> ImportSnippetOut:
+def _prep(blocks: list, orig: bytes | None) -> tuple[dict, list[str]]:
+    """Snippet content from import blocks (own package parts carried, `orig` dropped) + warnings."""
     blocks = copy.deepcopy(blocks)
     if orig:
         _carry_parts(blocks, orig)
     blocks = [{**b, "attrs": {k: v for k, v in b["attrs"].items() if k != "orig"}} if "orig" in (b.get("attrs") or {}) else b for b in blocks]
-    content = {"type": "doc", "content": blocks}  # `orig` only means something inside the import's own package
-    s = vcs.new_snippet(ctx, folder, title, content=content, styles=D.style_ids(content))
     kinds = sorted({(n.get("attrs") or {}).get("kind", "?") for b in blocks for n in D.walk(b) if n.get("type") == "opaque" and not (n.get("attrs") or {}).get("parts")})
     warn = [f"contains opaque block(s): {', '.join(kinds)} (exported only if self-contained)"] if kinds else []
+    return {"type": "doc", "content": blocks}, warn  # `orig` only means something inside the import's own package
+
+
+def _source(i: Import, blocks: list, title: str) -> dict:
+    head = blocks[0] if blocks and blocks[0].get("type") == "heading" else None
+    return dict(import_id=str(i.id), heading_text=(D.block_text(head).strip() if head else title)[:200],
+                block_range_hash=hashlib.sha1("".join(D.fingerprint(b) for b in blocks).encode()).hexdigest()[:16])
+
+
+def _variables(content: dict) -> list[str]:
+    nodes = [n for b in content["content"] for n in D.walk(b)]
+    out = {(n.get("attrs") or {}).get("name") for n in nodes if n.get("type") == "variable"}
+    out |= {(n.get("attrs") or {}).get("dynamicList") for n in nodes if n.get("type") == "table"}
+    return sorted(v for v in out if v and not re.match(r"(row|doc|org)\.", v) and v not in ("author", "revision_history", "linked_documents"))
+
+
+def _make(ctx: Ctx, folder, title: str, blocks: list, orig: bytes | None = None, source: dict | None = None) -> ImportSnippetOut:
+    content, warn = _prep(blocks, orig)
+    s = vcs.new_snippet(ctx, folder, title, content=content, styles=D.style_ids(content), source=source)
     return ImportSnippetOut(id=s.id, folder_id=folder.id, slug=s.slug, title=s.title, head_sha=None, has_draft=True, warnings=warn)
+
+
+# ---- same title: ask before creating a duplicate; "update existing" writes the user's draft, never a commit ----
+
+def _norm(t: str) -> str:
+    return " ".join(t.lower().split())
+
+
+def _existing(ctx: Ctx, f, title: str):
+    """The snippet of the folder with this title (case-insensitive, trimmed) or the slug the title would get."""
+    rows = ctx.repo(Snippet).list(Snippet.folder_id == f.id)
+    return next((x for x in rows if _norm(x.title) == _norm(title)), None) or next((x for x in rows if x.slug == vcs.slugify(title)), None)
+
+
+def _my_draft(ctx: Ctx, s: Snippet) -> Draft | None:
+    d = vcs.current_draft(ctx, s)
+    return d if d and vcs.dirty(ctx, s, d) else None  # a draft that never left HEAD holds nothing to lose
+
+
+def _info(ctx: Ctx, s: Snippet, f, **extra) -> dict:
+    last = (git.log(vcs.repo_of(ctx, s.folder_id), s.id, limit=1) or [{}])[0]
+    return dict(**extra, snippet_id=str(s.id), title=s.title, slug=s.slug, head_sha=s.head_sha, folder_id=str(f.id), folder_name=f.name,
+                last_commit_at=last.get("date"), last_commit_author=last.get("author_name"), has_draft=_my_draft(ctx, s) is not None)
+
+
+def _free_title(ctx: Ctx, f, title: str) -> str:
+    n = 2
+    while _existing(ctx, f, f"{title} ({n})"):
+        n += 1
+    return f"{title} ({n})"[:200]
+
+
+def _update(ctx: Ctx, s: Snippet, blocks: list, orig: bytes | None, source: dict) -> ImportSnippetOut:
+    """The imported blocks become the user's draft of `s` on top of HEAD (id, slug, title kept; styles and variables
+    recomputed from the content). The version bump happens when the user commits."""
+    content, warn = _prep(blocks, orig)
+    vcs.save_draft(ctx, s, DraftIn(content=content, styles=D.style_ids(content), variables=_variables(content)), rebase=True)
+    s.source = source
+    return ImportSnippetOut(id=s.id, folder_id=s.folder_id, slug=s.slug, title=s.title, head_sha=s.head_sha, has_draft=True,
+                            warnings=warn, action="updated", base_sha=s.head_sha)
+
+
+def _guard_drafts(ctx: Ctx, snippets: list[Snippet], overwrite: bool) -> None:
+    held = [s for s in snippets if not overwrite and _my_draft(ctx, s)]
+    if held:
+        raise HTTPException(409, detail=dict(error="draft_exists", message="you have an unsaved draft on this snippet",
+                                             snippets=[dict(snippet_id=str(s.id), title=s.title, slug=s.slug) for s in held]))
+
+
+@router.post("/imports/{import_id}/conflicts")
+def conflicts(import_id: UUID, body: ConflictsIn, ctx: Ctx = V):
+    """Per title: the snippet that would clash in the folder (or null)."""
+    _get(ctx, import_id)
+    f = vcs.get_folder(ctx, body.folder_id)
+    return [(lambda x: x and _info(ctx, x, f))(_existing(ctx, f, t)) for t in body.titles]
 
 
 @router.post("/imports/{import_id}/split", status_code=201, response_model=list[ImportSnippetOut])
 def split_apply(import_id: UUID, body: SplitIn, ctx: Ctx = E):
     """`level` (old: all headings up to it) or `headings` (explicit block indexes) + optional `titles` ({index: title},
-    -1 = the preface) and `preface`."""
+    -1 = the preface) and `preface`. Sections whose title exists in the folder need an `on_conflict` entry (key = heading
+    index, -1 = preface): else 409 name_exists listing them all."""
     i, f = _get(ctx, import_id), vcs.get_folder(ctx, body.folder_id)
     blocks = i.content.get("content") or []
     if (body.level is None) == (body.headings is None):
@@ -254,8 +330,20 @@ def split_apply(import_id: UUID, body: SplitIn, ctx: Ctx = E):
         raise HTTPException(422, f"too many sections (max {MAX_SECTIONS})")
     if any(len(str(blocks[s["start"]:s["end"]])) > vcs.MAX_DOC for s in secs):
         raise HTTPException(413, "a section is too large for a snippet")
+    ex = {s["key"]: _existing(ctx, f, s["title"]) for s in secs}
+    choice = body.on_conflict or {}
+    open_ = [s for s in secs if ex[s["key"]] and s["key"] not in choice]
+    if open_:
+        raise HTTPException(409, detail=dict(error="name_exists", conflicts=[_info(ctx, ex[s["key"]], f, key=s["key"], new_title=s["title"]) for s in open_]))
+    _guard_drafts(ctx, [ex[s["key"]] for s in secs if choice.get(s["key"]) == "update_existing"], body.overwrite_draft)
     orig = _orig(ctx, i)
-    out = [_make(ctx, f, s["title"], blocks[s["start"]:s["end"]], orig) for s in secs]
+    out = []
+    for s in secs:
+        part, act, e = blocks[s["start"]:s["end"]], choice.get(s["key"]), ex[s["key"]]
+        if act == "skip":
+            continue
+        src = _source(i, part, s["title"])
+        out.append(_update(ctx, e, part, orig, src) if act == "update_existing" else _make(ctx, f, _free_title(ctx, f, s["title"]) if e else s["title"], part, orig, src))
     ctx.db.commit()
     return out
 
@@ -278,7 +366,117 @@ def selection_snippet(import_id: UUID, body: SelectionIn, ctx: Ctx = E):
         if body.end > len(blocks) or body.start >= body.end:
             raise HTTPException(422, f"block range out of bounds (0..{len(blocks)})")
         picked = blocks[body.start:body.end]
-    out = _make(ctx, f, body.title, picked, _orig(ctx, i))
+    e = _existing(ctx, f, body.title)
+    if e and not body.on_conflict:
+        raise HTTPException(409, detail=dict(error="name_exists", conflicts=[_info(ctx, e, f, new_title=body.title)]))
+    src = _source(i, picked, body.title)
+    if e and body.on_conflict == "skip":
+        return ImportSnippetOut(id=e.id, folder_id=f.id, slug=e.slug, title=e.title, head_sha=e.head_sha, action="skipped")
+    if e and body.on_conflict == "update_existing":
+        _guard_drafts(ctx, [e], body.overwrite_draft)
+        out = _update(ctx, e, picked, _orig(ctx, i), src)
+    else:
+        out = _make(ctx, f, _free_title(ctx, f, body.title) if e else body.title, picked, _orig(ctx, i), src)
+    ctx.db.commit()
+    return out
+
+
+# ---- update snippets from (another) import: match headings to the folder's snippets, show what changed, write drafts ----
+
+def _match(rows: list[dict], snippets: list[Snippet]) -> None:
+    """Fill row['match'] = (snippet, how, score): remembered source heading, same title/slug, then fuzzy title (>= 0.7);
+    a snippet is matched to one heading only."""
+    used: set = set()
+    for how, test in (("source", lambda r, x: _norm((x.source or {}).get("heading_text") or "\0") == _norm(r["title"])),
+                      ("title", lambda r, x: _norm(x.title) == _norm(r["title"]) or x.slug == vcs.slugify(r["title"]))):
+        for r in rows:
+            x = None if r.get("match") else next((x for x in snippets if x.id not in used and test(r, x)), None)
+            if x:
+                r["match"] = (x, how, 1.0)
+                used.add(x.id)
+    for r in rows:
+        if not r.get("match"):
+            sc = [(difflib.SequenceMatcher(None, _norm(r["title"]), _norm(x.title)).ratio(), x) for x in snippets if x.id not in used]
+            best = max(sc, key=lambda t: t[0], default=None)
+            if best and best[0] >= 0.7:
+                r["match"] = (best[1], "fuzzy", round(best[0], 2))
+                used.add(best[1].id)
+
+
+def _changes(ctx: Ctx, s: Snippet, content: dict) -> dict:
+    """Blocks of the import that differ from the snippet's HEAD (no HEAD yet: everything is new)."""
+    h = vcs.head_version(ctx, s)
+    a = [json.dumps(x, sort_keys=True) for x in (h["content"]["content"] if h else [])]
+    b = [json.dumps(x, sort_keys=True) for x in content["content"]]
+    n = dict(added=0, removed=0, changed=0)
+    for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(None, a, b, autojunk=False).get_opcodes():
+        if tag == "equal":
+            continue
+        k = min(i2 - i1, j2 - j1) if tag == "replace" else 0
+        n["changed"] += k
+        n["removed"] += (i2 - i1) - k
+        n["added"] += (j2 - j1) - k
+    return dict(**n, same=not any(n.values()))
+
+
+def _plan_sections(i: Import, headings: list[int]) -> list[dict]:
+    blocks = i.content.get("content") or []
+    cuts = sorted(set(headings))
+    if not cuts or any(not 0 <= k < len(blocks) or blocks[k].get("type") != "heading" for k in cuts):
+        raise HTTPException(422, "give heading block indexes")
+    return _sections(i.content, cuts=cuts, preface=False)
+
+
+@router.post("/imports/{import_id}/update-plan")
+def update_plan(import_id: UUID, body: UpdatePlanIn, ctx: Ctx = V):
+    """One row per selected heading: the auto-matched snippet of the folder (`how`: source | title | fuzzy), what would change
+    against its HEAD, and the effective `target` (the user's `targets` choice wins over the match)."""
+    i, f = _get(ctx, import_id), vcs.get_folder(ctx, body.folder_id)
+    secs, blocks, orig = _plan_sections(i, body.headings), i.content.get("content") or [], _orig(ctx, i)
+    snippets = ctx.repo(Snippet).list(Snippet.folder_id == f.id)
+    by_id = {str(x.id): x for x in snippets}
+    rows = [dict(key=s["key"], title=s["title"], start=s["start"], end=s["end"], blocks=s["blocks"], level=s["level"]) for s in secs]
+    _match(rows, snippets)
+    out = []
+    for r in rows:
+        t = (body.targets or {}).get(r["key"])
+        if t is None:
+            t = str(r["match"][0].id) if r.get("match") else "new"
+        if t not in ("new", "skip") and t not in by_id:
+            raise HTTPException(404, "snippet not found")
+        m = r.pop("match", None)
+        x = by_id.get(t)
+        out.append(dict(**r, match=m and dict(snippet_id=str(m[0].id), how=m[1], score=m[2]), target=t,
+                        changes=x and _changes(ctx, x, _prep(blocks[r["start"]:r["end"]], orig)[0]), has_draft=bool(x and _my_draft(ctx, x))))
+    return out
+
+
+@router.post("/imports/{import_id}/update-apply", response_model=list[ImportSnippetOut])
+def update_apply(import_id: UUID, body: UpdateApplyIn, ctx: Ctx = E):
+    """Write the chosen rows: `update` = the user's draft of that snippet (409 draft_exists unless overwrite_draft), `create` =
+    a new snippet draft (title suffixed if taken), `skip`. The sections are cut at the non-skipped headings only."""
+    i, f = _get(ctx, import_id), vcs.get_folder(ctx, body.folder_id)
+    items = {it.key: it for it in body.items if it.action != "skip"}
+    if not items:
+        raise HTTPException(422, "nothing selected")
+    secs, blocks, orig = _plan_sections(i, list(items)), i.content.get("content") or [], _orig(ctx, i)
+    targets = {}
+    for k, it in items.items():
+        if it.action == "update":
+            targets[k] = vcs.get_snippet(ctx, it.snippet_id) if it.snippet_id else None
+            if not targets[k] or targets[k].folder_id != f.id:
+                raise HTTPException(404, "snippet not found")
+    if len({x.id for x in targets.values()}) != len(targets):
+        raise HTTPException(422, "a snippet can only be updated from one heading")
+    _guard_drafts(ctx, list(targets.values()), body.overwrite_draft)
+    out = []
+    for s in secs:
+        part = blocks[s["start"]:s["end"]]
+        src = _source(i, part, s["title"])
+        if s["key"] in targets:
+            out.append(_update(ctx, targets[s["key"]], part, orig, src))
+        else:
+            out.append(_make(ctx, f, _free_title(ctx, f, s["title"]) if _existing(ctx, f, s["title"]) else s["title"], part, orig, src))
     ctx.db.commit()
     return out
 

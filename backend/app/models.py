@@ -103,6 +103,7 @@ class Snippet(OrgScoped, Base):
     slug: Mapped[str] = mapped_column(String(64))
     title: Mapped[str] = mapped_column(String(200))
     head_sha: Mapped[str | None] = mapped_column(String(40))  # NULL until first commit
+    source: Mapped[dict | None] = mapped_column(JSONB)  # {import_id, heading_text, block_range_hash} of the import it was made from / last updated from
     created_at: Mapped[datetime] = _now()
 
 

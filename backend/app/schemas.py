@@ -450,6 +450,9 @@ class ImportPut(BaseModel):
     content: dict  # TipTap doc; opaque nodes are re-validated server-side
 
 
+Conflict = Literal["create_new_with_suffix", "update_existing", "skip"]
+
+
 class SelectionIn(BaseModel):
     """Either `blocks` (the selected top-level blocks as the editor holds them: independent of whether the autosave
     reached the server) or a block index range [start, end) of the stored content."""
@@ -458,6 +461,8 @@ class SelectionIn(BaseModel):
     start: int | None = Field(default=None, ge=0)
     end: int | None = Field(default=None, gt=0)
     blocks: list[dict] | None = Field(default=None, min_length=1, max_length=5000)
+    on_conflict: Conflict | None = None  # required when a snippet with this title/slug exists in the folder (else 409 name_exists)
+    overwrite_draft: bool = False  # update_existing over the user's own unsaved draft
 
     @model_validator(mode="after")
     def _one_source(self):
@@ -472,6 +477,31 @@ class SplitIn(BaseModel):
     headings: list[int] | None = Field(default=None, max_length=1000)  # ... or exactly these heading blocks (indexes)
     titles: dict[int, str] | None = Field(default=None, max_length=1001)  # snippet title per heading index; -1 = preface
     preface: bool = False  # explicit headings only: blocks before the first one become a 'Front matter' snippet
+    on_conflict: dict[int, Conflict] | None = None  # per section (heading index, -1 = preface) whose title exists in the folder
+    overwrite_draft: bool = False
+
+
+class UpdatePlanIn(BaseModel):
+    folder_id: UUID
+    headings: list[int] = Field(max_length=1000)  # the selected heading blocks: a snippet runs to the next selected one
+    targets: dict[int, str] | None = None  # heading index -> snippet id | "new" | "skip" (user's choice over the auto match)
+
+
+class UpdateItem(BaseModel):
+    key: int
+    action: Literal["update", "create", "skip"]
+    snippet_id: UUID | None = None
+
+
+class UpdateApplyIn(BaseModel):
+    folder_id: UUID
+    items: list[UpdateItem] = Field(max_length=1000)
+    overwrite_draft: bool = False
+
+
+class ConflictsIn(BaseModel):
+    folder_id: UUID
+    titles: list[str] = Field(max_length=1000)
 
 
 class ImportBaseIn(BaseModel):
@@ -490,3 +520,5 @@ class VarPicks(BaseModel):
 
 class ImportSnippetOut(SnippetOut):
     warnings: list[str] = []
+    action: str = "created"  # created | updated (draft written over the existing snippet) | skipped
+    base_sha: str | None = None
