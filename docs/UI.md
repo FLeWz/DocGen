@@ -86,3 +86,14 @@ Stable `data-testid`s are used by `e2e/*.py`: `preview`, `word-pdf`, `save-statu
 
 - Login (`/login`): in `AUTH_MODE=oidc` only a "Sign in with <provider>" link (errors from the callback arrive as `?error=`); accept-invite shows the same link. Login 429 text: "too many failed login attempts ... try again in N min".
 - Settings > Invites: "Send test email" next to "Send invite" (admins), shows the exact SMTP error in the banner.
+
+## Round 16: edit locks and revision sections
+
+- **Editing = lock.** Opening a snippet or document (editors and up) acquires its edit lock. Held by someone else: the editor is read-only and the lock bar (`lock-bar`, `data-state` = `readonly | pending | denied | transferred | granted`) says "X is editing since HH:mm" with *Request edit rights* (`request-edit`). Pending: countdown (`lock-countdown`, server clock); denied / within the cooldown the button is disabled and the bar says "You can request again at HH:mm (DD.MM.YYYY)". Admins see *Take over* (`take-over`, confirm dialog). After the rights moved away the bar says "Edit rights given to X" (you granted) or "Edit rights were transferred to X; your last changes were saved to the draft" (timeout / take over) and *Copy my unsaved changes* (`copy-unsaved`: clipboard, else a JSON download); the editor keeps its local content.
+- **Holder side.** A modal (`lock-request-modal`, `lock-grant`, `lock-deny`, `lock-incoming-countdown`) opens in the open editor within a poll (4 s). Grant first saves the editor, then moves the lock; the requester's editor reloads the shared draft and becomes editable within a poll (<= 5 s).
+- **Notifications.** Bell in the top bar (`bell`, unread count `bell-count`, panel `bell-panel`, polls every 10 s); an email goes to the holder if SMTP works.
+- **Badges.** Amber `lock-badge` with the holder's name on folder rows, `tree-lock` icon on folders of the tree that contain a locked item (list refreshed every 15 s).
+- **History.** Rows show `+ co-author names` (`co-authors`) and the lock hand-overs (`lock-transfers`); the revision table's *Edited by* is "committer, co-author, ...".
+- **Revision table, sections.** Only headings, table captions and figure captions with the section number of the built document: `3.2.1 Heading`, `Table 4: Specs (3.2.1)`, `Figure 2: Layout (3.2.1)`, `Heading (added|removed)`; text before the first heading shows the snippet title; entries `; `-joined, at most 12, then `+N more`.
+- Tests: `e2e/locks.py` (grant, deny, cooldown, badges, history; `locks.py timeout` runs in the throwaway stack of `make test-e2e-locks`), Vitest `lockstate.test.ts`.
+

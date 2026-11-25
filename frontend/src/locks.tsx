@@ -88,7 +88,7 @@ export function LockBar({ lock, me, handle }: { lock: EditLock; me: Me; handle: 
   const msg = {
     loading: "", editing: "",
     readonly: <><Icon n="lock" size={14} /> <b>{who}</b> is editing since {s.holder ? hhmm(s.holder.since) : ""} — read-only for you.</>,
-    pending: <><Icon n="clock" size={14} /> Edit rights requested from <b>{who}</b>. Answer expected within <b data-testid="lock-countdown">{mmss(left(s.my_request!.expires_at))}</b>; without one the rights move to you.</>,
+    pending: <><Icon n="clock" size={14} /> Edit rights requested from <b>{who}</b>. Answer expected within <b data-testid="lock-countdown">{mmss(s.my_request ? left(s.my_request.expires_at) : 0)}</b>; without one the rights move to you.</>,
     denied: <><Icon n="alert" size={14} /> <b>{who}</b> denied your request. {block}</>,
     transferred: <><Icon n="alert" size={14} /> Edit rights were transferred to <b>{who}</b>; your last changes were saved to the draft. This editor is read-only now.</>,
     granted: <><Icon n="check" size={14} /> Edit rights given to <b>{who}</b>. This editor is read-only now.</>,

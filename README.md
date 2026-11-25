@@ -115,6 +115,10 @@ Set in `.env` (read by `docker-compose.yml`). No secrets are committed; `.env` i
 | `SEED_DEMO` | `1` in `.env.example` (`0` if unset) | Create demo data on api start |
 | `AUTH_MODE` | `local` | `local` = email + password; `oidc` = OpenID Connect only (see [docs/OIDC.md](docs/OIDC.md) for all `OIDC_*` variables) |
 | `SMTP_*` | Mailpit | Outgoing mail, see [Mail (SMTP)](#mail-smtp) |
+| `LOCK_HEARTBEAT_TTL_S` | `90` | Edit lock expires after this many seconds without a heartbeat (the editor sends one every ~20 s) |
+| `LOCK_REQUEST_TIMEOUT_S` | `300` | Seconds the lock holder has to Grant/Deny an edit-rights request before the rights move to the requester |
+| `LOCK_REQUEST_COOLDOWN_S` | `1800` | A user may request edit rights on the same snippet/document once per this many seconds (from the creation of the request) |
+| `LOCK_SWEEP_S` | `15` | Interval of the background pass that resolves timed-out requests when no tab is open |
 
 Fixed inside the api container (not in `.env`): `DATABASE_URL`, `MIGRATE_DATABASE_URL`, `PDF_URL=http://pdf:3000`,
 `REPOS_ROOT=/repos`, `FILES_ROOT=/files`. Optional app tuning: `PDF_TIMEOUT_S` (120), `PDF_MAX_BYTES` (100 MiB).
