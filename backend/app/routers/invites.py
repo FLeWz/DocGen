@@ -9,7 +9,7 @@ from .. import config, mail
 from ..db import get_db, set_ctx
 from ..deps import Ctx, optional_ctx, require
 from ..models import AuthSession, Invite, Membership, Organization, Role, User
-from ..schemas import AcceptIn, InviteCreateIn, InviteLookupOut, InviteOut, MeOut, OrgOut, TokenIn, UserOut
+from ..schemas import AcceptIn, InviteCreateIn, InviteLookupOut, InviteOut, MeOut, TestMailIn, OrgOut, TokenIn, UserOut
 from ..scoping import OrgRepo
 from ..security import hash_pw, new_token, sha
 from .auth import me_out, start_session
@@ -30,10 +30,10 @@ def out(i: Invite, sent: bool | None = None) -> InviteOut:
                      created_at=i.created_at, email_sent=sent)
 
 
-def send(ctx: Ctx, i: Invite, token: str) -> bool:
+def send(ctx: Ctx, i: Invite, token: str) -> bool | None:
     org = ctx.db.get(Organization, ctx.org_id)
     link = f"{config.PUBLIC_URL}/accept-invite?token={token}"
-    return mail.send_mail(i.email, f"You're invited to {org.name} on DocGen",
+    return mail.send_bg(i.email, f"You're invited to {org.name} on DocGen",
         f"{ctx.user.name} invited you to join {org.name} as {i.role}.\n\nAccept: {link}\n\n"
         f"The link works once and expires on {i.expires_at:%d.%m.%Y}.")
 
@@ -53,6 +53,13 @@ def create(body: InviteCreateIn, ctx: Ctx = Depends(require(Role.admin))):
                                expires_at=datetime.now(timezone.utc) + timedelta(days=config.INVITE_DAYS))
     ctx.db.commit()
     return out(inv, send(ctx, inv, tok))
+
+
+@router.post("/test-mail")
+def send_test_mail(body: TestMailIn, ctx: Ctx = Depends(require(Role.admin))):
+    """Send a test email now (sync) and report the exact SMTP error; `to` defaults to the caller."""
+    err = mail.send_test(body.to or ctx.user.email)
+    return {"ok": err is None, "error": err}
 
 
 @router.get("", response_model=list[InviteOut])

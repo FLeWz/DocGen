@@ -15,12 +15,11 @@ SECRET_KEY = _e("SECRET_KEY")
 PUBLIC_URL = _e("PUBLIC_URL", "http://localhost:8080").rstrip("/")
 ALLOW_SIGNUP = _e("ALLOW_SIGNUP", "0") == "1"  # invite-only unless explicitly opened
 COOKIE_SECURE = _e("COOKIE_SECURE", "false").lower() == "true"
-SMTP_HOST = _e("SMTP_HOST", "mail")
-SMTP_PORT = int(_e("SMTP_PORT", "1025"))
-SMTP_USER = _e("SMTP_USER", "")
-SMTP_PASSWORD = _e("SMTP_PASSWORD", "")
-SMTP_STARTTLS = _e("SMTP_STARTTLS", "false").lower() == "true"
-SMTP_FROM = _e("SMTP_FROM", "DocGen <noreply@docgen.local>")
+# SMTP_* are read at send time (mail.settings), so presets and tests see the live environment
+AUTH_MODE = _e("AUTH_MODE", "local").strip().lower()  # local = built-in passwords, oidc = OpenID Connect only
+if AUTH_MODE not in ("local", "oidc"):
+    raise RuntimeError(f"AUTH_MODE must be local or oidc, got {AUTH_MODE!r}")
+OIDC_PROVIDER_NAME = _e("OIDC_PROVIDER_NAME", "SSO") or "SSO"
 REPOS_ROOT = _e("REPOS_ROOT", "/repos")
 FILES_ROOT = _e("FILES_ROOT", "/files")
 MAX_IMAGE_BYTES = 10 * 1024 * 1024

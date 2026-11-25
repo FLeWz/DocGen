@@ -123,7 +123,7 @@ COVERED = {  # every API route must be listed: a new endpoint forces a new isola
     "GET /api/orgs", "POST /api/orgs", "GET /api/orgs/current", "POST /api/orgs/switch", "DELETE /api/orgs/current",
     "GET /api/members", "PATCH /api/members/{user_id}", "DELETE /api/members/{user_id}",
     "GET /api/invites", "POST /api/invites", "POST /api/invites/{id}/resend", "DELETE /api/invites/{id}",
-    "POST /api/invites/lookup", "POST /api/invites/accept",  # token-scoped, see test_invites
+    "POST /api/invites/lookup", "POST /api/invites/accept", "POST /api/invites/test-mail",  # token-scoped, see test_invites
     "GET /api/folders", "POST /api/folders", "PATCH /api/folders/{folder_id}", "DELETE /api/folders/{folder_id}",
     "GET /api/folders/{folder_id}/snippets", "POST /api/folders/{folder_id}/snippets",
     "GET /api/folders/{folder_id}/changes", "POST /api/folders/{folder_id}/commit",
