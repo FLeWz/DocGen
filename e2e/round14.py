@@ -42,13 +42,12 @@ with sync_playwright() as pw:
             docs.append(api("POST", f"/folders/{fo}/commit", {"message": f"doc rev {i + 1}", "document_ids": [doc]})["sha"])
 
         page.goto(f"{BASE}/history/document/{doc}")
-        row = page.get_by_test_id("commit-row").filter(has_text="doc rev 1")
+        row = page.get_by_test_id("commit-row").nth(1)  # oldest = doc rev 1 (newest first)
         row.get_by_test_id("rename-commit").click()
         page.get_by_role("textbox", name="Name").fill("Released to customer")
         page.get_by_role("textbox", name="Name").press("Enter")
         expect(row).to_contain_text("Released to customer")
         expect(row.get_by_test_id("renamed-badge")).to_have_attribute("title", re.compile(r"Originally: doc rev 1 — renamed by .* on \d\d\.\d\d\.\d{4} \d\d:\d\d"))
-        row = page.get_by_test_id("commit-row").filter(has_text="Released to customer")
         with page.expect_download() as d:
             row.get_by_test_id("dl-docx").click()
         t = docx_text(open(d.value.path(), "rb").read())
