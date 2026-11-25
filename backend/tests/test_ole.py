@@ -47,7 +47,8 @@ def test_embedded_document_is_kept_as_is(team):
 
 def test_snippet_with_the_object_exports_into_a_document(team):
     ed = team["editor"]
-    iid = imp(ed, build()).json()["id"]
+    src = build()  # once: the zip entries carry the build time, a second build() can differ by a second
+    iid = imp(ed, src).json()["id"]
     fo = folder(ed)
     blocks = ed.get(f"/api/imports/{iid}").json()["content"]["content"]
     k = next(i for i, b in enumerate(blocks) if b["type"] == "opaque")
@@ -62,7 +63,7 @@ def test_snippet_with_the_object_exports_into_a_document(team):
     assert st["status"] == "done", st
     out = names(fetch(ed, eid))
     emb = [n for n in out if n.startswith("word/embeddings/")]
-    assert len(emb) == 2 and out[emb[0]] == names(build())["word/embeddings/oleObject1.bin"]
+    assert len(emb) == 2 and out[emb[0]] == names(src)["word/embeddings/oleObject1.bin"]
     assert out["word/document.xml"].count(b"OLEObject") == 2
     rels = out["word/_rels/document.xml.rels"].decode()
     assert all(n.split("word/")[1] in rels for n in emb)
