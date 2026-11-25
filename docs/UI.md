@@ -74,3 +74,10 @@ Stable `data-testid`s are used by `e2e/*.py`: `preview`, `word-pdf`, `save-statu
 - **Insert > Tables > Revision table** (every editor, not in headers/footers).
 - **Embedded documents** are drawn as their preview picture (raster) or a labelled box (`.oleobj`).
 - **Scrollbars**: thin, themed (see DECISIONS round 9).
+
+## Round 12: snippets from an import
+
+- **Create snippet from selection**: a title that exists in the folder opens `ConflictModal` (`data-testid="snippet-conflict"`): "A snippet titled “X” already exists in <folder> (last commit dd.mm.yyyy by Name)": *Update it (new draft version)*, *Create a separate snippet*, *Choose another title*, *Skip*. Your own unsaved draft on it asks "Replace your unsaved draft?" first.
+- **Split by headings**: each row (`split-row`) shows a badge *new* / *exists*, for existing ones a select (Update existing, default / Create new (suffix) / Skip); `split-summary` = "N new · N updated (as drafts, not committed) · N skipped"; the button reads "Apply (N new, M updated)".
+- **Update snippets from this import…** (import page) / **Update from import…** (snippet page): `UpdateFromImport.tsx` (`update-dialog`, `update-row`, `update-summary`): import picker (any import, e.g. a newer upload), folder, Level 1/1-2/1-3, per heading a checkbox, target snippet select (auto-match, "Create new", "Skip"), badge with the change count or "no changes" (unticked by default). *Apply to drafts (N)* writes drafts only; the toast links to the draft and to the folder's Commit screen (`?select=` accepts a comma list). On the snippet page the rows are radios: one heading replaces that snippet's draft.
+- Testids: `snippet-conflict`, `split-row`, `split-summary`, `update-dialog`, `update-row`, `update-summary`. Toasts accept links (`ui.toast(msg, kind, [{label, to}])`).

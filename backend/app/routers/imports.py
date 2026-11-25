@@ -2,7 +2,6 @@ import copy
 import difflib
 import hashlib
 import io
-import json
 import re
 import zipfile
 from uuid import UUID
@@ -406,8 +405,19 @@ def _match(rows: list[dict], snippets: list[Snippet]) -> None:
 def _changes(ctx: Ctx, s: Snippet, content: dict) -> dict:
     """Blocks of the import that differ from the snippet's HEAD (no HEAD yet: everything is new)."""
     h = vcs.head_version(ctx, s)
-    a = [json.dumps(x, sort_keys=True) for x in (h["content"]["content"] if h else [])]
-    b = [json.dumps(x, sort_keys=True) for x in content["content"]]
+    asset, cache = _asset(ctx), {}
+
+    def fp(blk: dict) -> str:  # modulo what the editor adds when it re-saves a block, and with images by their bytes (a re-import stores new ids)
+        blk = copy.deepcopy(blk)
+        for n in D.walk(blk):
+            a = n.get("attrs") or {}
+            if n.get("type") == "image" and a.get("imageId"):
+                if a["imageId"] not in cache:
+                    data = asset(None, a["imageId"])
+                    cache[a["imageId"]] = hashlib.sha1(data).hexdigest() if data else a["imageId"]
+                a["imageId"] = cache[a["imageId"]]
+        return D.fingerprint(blk)
+    a, b = [fp(x) for x in (h["content"]["content"] if h else [])], [fp(x) for x in content["content"]]
     n = dict(added=0, removed=0, changed=0)
     for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(None, a, b, autojunk=False).get_opcodes():
         if tag == "equal":

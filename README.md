@@ -220,3 +220,5 @@ The e2e scripts log in as throwaway users created through the CLI (`scripts/e2e-
 * Org deletion removes its repos/files; folder deletion removes its history. Uploaded images are only removed by the
   admin cleanup endpoint (24 h grace; images that ever entered a commit are kept).
 * Base documents can be deleted (admin) only while no document or draft uses them; the file stays in `_base.git` history. No password reset or email verification; Mailpit is dev only.
+
+Snippets from imports (round 12): "Create snippet from selection" and "Split by headings" ask when a snippet with the same title (or slug) exists in the folder: update it (writes your draft on top of HEAD, commit it for the new version), create a separate one, rename or skip. "Update snippets from this import…" (import page) and "Update from import…" (snippet page) refresh existing snippets from the open or a newer import: headings are matched by title, remembered source or fuzzy title, changed sections are applied to drafts. API: `docs/DECISIONS.md`, Round 12.
