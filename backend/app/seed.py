@@ -154,6 +154,9 @@ def seed() -> str:
 
 
 if __name__ == "__main__":
+    from . import config
+    if config.AUTH_MODE == "oidc":
+        sys.exit("seed: skipped, demo users have passwords and AUTH_MODE=oidc has none")
     try:
         print("seed:", seed())
     except Exception as e:  # never keep the app from starting

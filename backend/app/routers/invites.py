@@ -121,6 +121,8 @@ def accept(body: AcceptIn, response: Response, db: Session = Depends(get_db),
     if user and user.email != inv.email:
         raise HTTPException(403, "this invite was sent to a different email")
     if not user:
+        if config.AUTH_MODE == "oidc":
+            raise HTTPException(404, "password accounts are disabled (AUTH_MODE=oidc): sign in with your identity provider")
         if db.scalar(select(User.id).where(User.email == inv.email)):
             raise HTTPException(401, "log in first")
         if not (body.name and body.password):

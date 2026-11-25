@@ -53,7 +53,7 @@ SIGNUP = {"email": "n@b.co", "password": PW, "name": "n", "org_name": "o"}
 
 
 def test_signup_closed_by_default(client):
-    assert client.get("/api/auth/me/config").json() == {"allow_signup": False}
+    assert client.get("/api/auth/config").json() == {"mode": "local", "provider_name": None, "allow_signup": False}
     assert client.post("/api/auth/signup", json=SIGNUP).status_code == 404
     assert client.get("/api/auth/me").status_code == 401  # nothing was created / logged in
     assert client.post("/api/auth/login", json={"email": "n@b.co", "password": PW}).status_code == 401
@@ -61,7 +61,7 @@ def test_signup_closed_by_default(client):
 
 def test_signup_when_enabled(client, monkeypatch):
     monkeypatch.setattr("app.config.ALLOW_SIGNUP", True)
-    assert client.get("/api/auth/me/config").json() == {"allow_signup": True}
+    assert client.get("/api/auth/config").json()["allow_signup"] is True
     assert client.post("/api/auth/signup", json=SIGNUP).status_code == 201
     assert new_client().post("/api/auth/signup", json=SIGNUP).status_code == 409
     assert new_client().post("/api/auth/signup", json={**SIGNUP, "email": "bad", "password": "short"}).status_code == 422

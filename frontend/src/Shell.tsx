@@ -185,7 +185,8 @@ export function Shell({ me }: { me: Me }) {
   const wide = innerWidth >= 1360;
   const [rp, setRp] = useState(() => (localStorage.getItem("docgen.rpanel") ?? (wide ? "1" : "0")) === "1");
   const [sb, setSb] = useState(() => localStorage.getItem("docgen.sidebar") !== "0");
-  const logout = useMutation({ mutationFn: () => api("/auth/logout", "POST"), onSuccess: () => { nav("/login"); qc.clear(); qc.invalidateQueries(); } });
+  const logout = useMutation({ mutationFn: () => api<{ redirect?: string | null } | undefined>("/auth/logout", "POST"),
+    onSuccess: (r) => { if (r?.redirect) { location.href = r.redirect; return; } nav("/login"); qc.clear(); qc.invalidateQueries(); } }); // oidc: the IdP's end-session page
   const flip = (k: string, v: boolean, set: (b: boolean) => void) => { set(!v); localStorage.setItem(k, v ? "0" : "1"); };
   // essential panels (document builder) open by default unless the user closed them before
   const setHasPanel = useCallback((b: boolean, ess?: boolean) => { setHas(b); if (b && ess && localStorage.getItem("docgen.rpanel") === null) setRp(true); }, []);

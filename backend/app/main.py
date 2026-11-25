@@ -1,13 +1,24 @@
+import threading
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
 from .db import engine
-from .routers import (auth, base_documents, commits, documents, exports, folders, images, imports, invites, library,
+from . import config, oidc as oidc_lib
+from .routers import (auth, oidc, base_documents, commits, documents, exports, folders, images, imports, invites, library,
                       maintenance, members, orgs, overview, render, snippets, styles)
 from .security import valid_csrf
 
-app = FastAPI(title="DocGen", docs_url="/api/docs", openapi_url="/api/openapi.json", redoc_url=None)
+@asynccontextmanager
+async def lifespan(app):
+    if config.AUTH_MODE == "oidc":  # non-fatal startup check, retried in the background with clear log lines
+        threading.Thread(target=oidc_lib.warmup, daemon=True).start()
+    yield
+
+
+app = FastAPI(title="DocGen", docs_url="/api/docs", openapi_url="/api/openapi.json", redoc_url=None, lifespan=lifespan)
 
 
 @app.middleware("http")
@@ -26,7 +37,7 @@ async def name_exists(request: Request, e: base_documents.NameExists):
     return JSONResponse({**e.body, "detail": {**e.body, "message": f"A base document named {e.body['name']} already exists"}}, status_code=409)
 
 
-for r in (auth, orgs, members, invites, folders, snippets, commits, styles, images, base_documents, documents, exports, library, imports, maintenance, render, overview):
+for r in (auth, oidc, orgs, members, invites, folders, snippets, commits, styles, images, base_documents, documents, exports, library, imports, maintenance, render, overview):
     app.include_router(r.router, prefix="/api")
 
 

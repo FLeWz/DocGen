@@ -48,7 +48,18 @@ class User(Base):
     id: Mapped[uuid.UUID] = _id()
     email: Mapped[str] = mapped_column(String(254), unique=True)
     name: Mapped[str] = mapped_column(String(100))
-    password_hash: Mapped[str] = mapped_column(String(200))
+    password_hash: Mapped[str | None] = mapped_column(String(200))  # NULL = SSO-only user
+    created_at: Mapped[datetime] = _now()
+
+
+class Identity(Base):
+    """An SSO login: (issuer, sub) identifies the person at the IdP, user_id the DocGen user."""
+    __tablename__ = "identities"
+    __table_args__ = (UniqueConstraint("issuer", "sub"),)
+    id: Mapped[uuid.UUID] = _id()
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    issuer: Mapped[str] = mapped_column(String(500))
+    sub: Mapped[str] = mapped_column(String(255))
     created_at: Mapped[datetime] = _now()
 
 
@@ -82,6 +93,7 @@ class AuthSession(Base):
     active_org_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("organizations.id", ondelete="SET NULL"))
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    id_token: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = _now()
 
 

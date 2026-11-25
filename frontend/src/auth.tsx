@@ -11,12 +11,27 @@ const Card = ({ title, sub, children }: { title: string; sub?: string; children:
   <div className="authwrap"><main className="authcard"><div className="brand big"><span className="logo">D</span>DocGen</div><h1>{title}</h1>{sub && <p className="muted">{sub}</p>}{children}</main></div>
 );
 
-function LoginForm({ onDone }: { onDone: () => void }) {
+type AuthConfig = { mode: "local" | "oidc"; provider_name: string | null; allow_signup: boolean };
+const useAuthConfig = () => useQuery({ queryKey: ["auth-config"], queryFn: () => api<AuthConfig>("/auth/config") });
+
+/** AUTH_MODE=oidc: the only way in. return_to is a relative path; the server re-checks it. */
+function SsoButton({ name, returnTo }: { name: string | null; returnTo: string }) {
+  const err = useSearchParams()[0].get("error");
+  return (
+    <div className="stack">
+      {err && <div className="banner err" role="alert">{err}</div>}
+      <a className="btn primary block" href={`/api/auth/oidc/login?return_to=${encodeURIComponent(returnTo)}`}>Sign in with {name ?? "SSO"}</a>
+    </div>
+  );
+}
+
+function LoginForm({ onDone, from = "/" }: { onDone: () => void; from?: string }) {
   const qc = useQueryClient();
-  const cfg = useQuery({ queryKey: ["auth-config"], queryFn: () => api<{ allow_signup: boolean }>("/auth/me/config") });
+  const cfg = useAuthConfig();
   const [signup, setSignup] = useState(false);
   const up = signup && !!cfg.data?.allow_signup;
   const m = useMutation({ mutationFn: (d: FormData) => api(up ? "/auth/signup" : "/auth/login", "POST", Object.fromEntries(d)), onSuccess: async () => { await qc.invalidateQueries(); onDone(); } });
+  if (cfg.data?.mode === "oidc") return <SsoButton name={cfg.data.provider_name} returnTo={from} />;
   return (
     <form onSubmit={form((d) => m.mutate(d))} className="stack">
       {up && <Field label="Your name">{(id) => <input id={id} name="name" autoComplete="name" required />}</Field>}
@@ -35,7 +50,7 @@ function LoginForm({ onDone }: { onDone: () => void }) {
 export function Login({ me }: { me?: Me }) {
   const nav = useNavigate(), from = (useLocation().state as { from?: string } | null)?.from ?? "/";
   if (me) return <Navigate to={from} replace />;
-  return <Card title="Log in to DocGen" sub="Versioned snippets, documents and DOCX export."><LoginForm onDone={() => nav(from, { replace: true })} /></Card>;
+  return <Card title="Log in to DocGen" sub="Versioned snippets, documents and DOCX export."><LoginForm from={from} onDone={() => nav(from, { replace: true })} /></Card>;
 }
 
 export function AcceptInvite({ me }: { me?: Me }) {
@@ -44,16 +59,19 @@ export function AcceptInvite({ me }: { me?: Me }) {
   const lk = useQuery({ queryKey: ["invite", token], queryFn: () => api<Lookup>("/invites/lookup", "POST", { token }), retry: false });
   const accept = useMutation({ mutationFn: (d?: FormData) => api("/invites/accept", "POST", { token, ...(d ? Object.fromEntries(d) : {}) }), onSuccess: async () => { await qc.invalidateQueries(); nav("/", { replace: true }); } });
   const logout = useMutation({ mutationFn: () => api("/auth/logout", "POST"), onSuccess: () => qc.invalidateQueries() });
+  const cfg = useAuthConfig();
   if (lk.isLoading) return <Card title="Checking your invitation…"><Skeleton rows={3} /></Card>;
   if (lk.error) return <Card title="Invitation not available"><ErrorBanner e={(lk.error as ApiError).status === 404 ? new Error("This invite link is invalid.") : lk.error} /></Card>;
   const i = lk.data!;
+  if (cfg.data?.mode === "oidc" && me && i.status === "accepted") return <Navigate to="/" replace />; // joined by signing in
   if (i.status !== "pending") return <Card title="Invitation not available"><ErrorBanner e={new Error(`This invite is ${i.status}. Ask an admin of ${i.org_name} for a new one.`)} /></Card>;
   return (
     <Card title={`Join ${i.org_name}`} sub={`Invitation for ${i.email} as ${i.role}.`}>
       {me && me.user.email === i.email && <button className="btn primary block" disabled={accept.isPending} onClick={() => accept.mutate(undefined)}>Join {i.org_name}</button>}
       {me && me.user.email !== i.email && <div className="stack"><p>You are logged in as <b>{me.user.email}</b>, but this invitation is for <b>{i.email}</b>.</p><button className="btn block" onClick={() => logout.mutate()}>Log out</button></div>}
-      {!me && i.user_exists && <div className="stack"><p className="muted">You already have an account. Log in to accept.</p><LoginForm onDone={() => {}} /></div>}
-      {!me && !i.user_exists && (
+      {!me && cfg.data?.mode !== "oidc" && i.user_exists && <div className="stack"><p className="muted">You already have an account. Log in to accept.</p><LoginForm onDone={() => {}} /></div>}
+      {!me && cfg.data?.mode === "oidc" && <SsoButton name={cfg.data.provider_name} returnTo={`/accept-invite?token=${encodeURIComponent(token)}`} />}
+      {!me && cfg.data?.mode !== "oidc" && !i.user_exists && (
         <form className="stack" onSubmit={form((d) => accept.mutate(d))}>
           <Field label="Your name">{(id) => <input id={id} name="name" autoComplete="name" required autoFocus />}</Field>
           <Field label="Password" hint="10 to 128 characters">{(id) => <input id={id} name="password" type="password" autoComplete="new-password" minLength={10} required />}</Field>
