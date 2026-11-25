@@ -38,6 +38,8 @@ function Invites({ me }: { me: Me }) {
   const refresh = () => qc.invalidateQueries({ queryKey: ["invites"] });
   const create = useMutation({ mutationFn: (d: FormData) => api<Invite>("/invites", "POST", Object.fromEntries(d)),
     onSuccess: (i) => { refresh(); i.email_sent === false ? ui.toast("Invite created, but the email could not be sent. Use Resend later.", "err") : ui.toast(`Invitation sent to ${i.email}`); } });
+  const test = useMutation({ mutationFn: async () => { const r = await api<{ ok: boolean; error: string | null }>("/invites/test-mail", "POST", {}); if (!r.ok) throw new Error(`Test email failed: ${r.error}`); },
+    onSuccess: () => ui.toast(`Test email sent to ${me.user.email}`) });
   const resend = useMutation({ mutationFn: (id: string) => api(`/invites/${id}/resend`, "POST"), onSuccess: () => { refresh(); ui.toast("Invitation re-sent"); }, onError: (e: Error) => ui.toast(e.message, "err") });
   const revoke = async (i: Invite) => {
     if (await ui.confirm({ title: `Revoke the invite for ${i.email}?`, danger: true, ok: "Revoke invite", body: "The link in the email stops working." }))
@@ -49,8 +51,9 @@ function Invites({ me }: { me: Me }) {
         <div className="field"><label htmlFor="inv-email">Email</label><input id="inv-email" name="email" type="email" required placeholder="name@company.com" /></div>
         <div className="field"><label htmlFor="inv-role">Role</label><select id="inv-role" name="role" defaultValue="editor">{ROLES.filter((r) => r !== "owner" || me.org?.role === "owner").map((r) => <option key={r}>{r}</option>)}</select></div>
         <button className="btn primary" disabled={create.isPending}><Icon n="mail" />Send invite</button>
+        <button type="button" className="btn" disabled={test.isPending} onClick={() => test.mutate()} title={`Sends a test email to ${me.user.email} with the server's SMTP settings`}>{test.isPending ? "Sending…" : "Send test email"}</button>
       </form>
-      <ErrorBanner e={create.error ?? list.error} />
+      <ErrorBanner e={create.error ?? list.error ?? test.error} />
       {list.isLoading ? <Skeleton rows={3} h={34} /> : !list.data?.length ? <Empty icon="mail" title="No invitations yet">Invite colleagues by email. Roles: viewer reads, editor edits and commits, admin manages the organization.</Empty> : (
         <table className="tbl" data-testid="invites"><thead><tr><th>Email</th><th>Role</th><th>Status</th><th>Expires</th><th><span className="sr">Actions</span></th></tr></thead>
           <tbody>{list.data.map((i) => (
