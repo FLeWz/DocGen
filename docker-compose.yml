@@ -65,7 +65,7 @@ services:
     volumes: ["./e2e-artifacts:/artifacts"]
     depends_on:
       web: {condition: service_healthy}
-    command: ["sh", "-c", "for t in smoke docbuilder import invite fidelity basedoc editor round7 tables round9 round12; do python $$t.py || exit 1; done"]
+    command: ["sh", "-c", "for t in smoke docbuilder import invite fidelity basedoc editor round7 tables round9 round12 round13; do python $$t.py || exit 1; done"]
 
   pdf:
     image: gotenberg/gotenberg:8
