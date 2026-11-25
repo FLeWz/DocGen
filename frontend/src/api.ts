@@ -48,10 +48,11 @@ export type Doc = { type: "doc"; content?: unknown[] };
 export type Style = { id: string; style_id: string; name: string; kind: "paragraph" | "heading" | "character" | "table"; level: number | null;
   color: string | null; font_size: number | null; font_family: string | null; numbering: "none" | "decimal";
   space_before: number; space_after: number; bold: boolean; italic: boolean; builtin: boolean };
-export type Draft = { snippet_id: string; title: string; slug: string; content: Doc; styles: string[]; variables: string[];
+export type Contributor = { id: string; name: string; email: string; at: string };
+export type Draft = { snippet_id: string; title: string; slug: string; content: Doc; styles: string[]; variables: string[]; contributors: Contributor[]; last_editor: { id: string; name: string } | null;
   exists: boolean; base_sha: string | null; head_sha: string | null; conflict: boolean; dirty: boolean };
 export type Commit = { sha: string; author_name: string; author_email: string; date: string; message: string; snippet_ids: string[]; tags: string[]
-  original_message?: string; name?: string | null; renamed?: boolean; renamed_by?: string | null; renamed_at?: string | null };
+  co_authors?: { name: string; email: string }[]; lock_transfers?: string[]; original_message?: string; name?: string | null; renamed?: boolean; renamed_by?: string | null; renamed_at?: string | null };
 export type Change = { kind?: "document"; document_id?: string | null; snippet_id: string | null; slug: string; title: string; status: "new" | "modified"; conflict: boolean; text: string;
   summary: { added: number; removed: number; changed: number; unchanged: number }; three_way: ThreeWay | null };
 export type ThreeWay = { snippet_id: string; slug: string; base: { content: Doc } | null; theirs: { content: Doc } | null; mine: { content: Doc } };
@@ -59,7 +60,7 @@ export const pretty = (v: unknown) => JSON.stringify(v, null, 2);
 
 // ---- milestone 4: base documents, documents, library, exports ----
 export type BaseDocVersion = { id: string; sha: string; number: number; filename: string; size: number; message: string;
-  original_message?: string; name?: string | null; renamed?: boolean; renamed_by?: string | null; renamed_at?: string | null;
+  co_authors?: { name: string; email: string }[]; lock_transfers?: string[]; original_message?: string; name?: string | null; renamed?: boolean; renamed_by?: string | null; renamed_at?: string | null;
   placeholders: { content: boolean; slots: string[] }; variables: VarDecl[]; created_at: string };
 export type VarCandidate = { id: string; kind: string; value: string; locs: Record<string, number>; name: string; include: boolean; display?: string };
 export type BaseDoc = { id: string; name: string; head: BaseDocVersion | null; version_count: number; used_by: number; created_at: string; updated_at: string };

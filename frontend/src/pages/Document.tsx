@@ -13,6 +13,7 @@ import { PMNode } from "../editor/doc";
 import { useLook } from "../editor/look";
 import { Preview, useStyles } from "../editor/SnippetEditor";
 import { ContextPanel, PageHead, useActiveFolder } from "../Shell";
+import { EditorHandle, LockBar, useEditLock } from "../locks";
 import { Badge, Banner, Empty, ErrorBanner, Icon, Modal, Skeleton, Spinner, useUI } from "../ui";
 import { DiffText } from "./DiffView";
 import { EditBaseButton } from "./BaseDocs";
@@ -144,7 +145,9 @@ function useBuilderWidths(uid: string, ready: boolean) {
 
 export function DocumentPage({ me }: { me: Me }) {
   const { id = "" } = useParams(), nav = useNavigate(), qc = useQueryClient(), ui = useUI();
-  const ro = me.org?.role === "viewer";
+  const viewer = me.org?.role === "viewer";
+  const lock = useEditLock("documents", id, !viewer), handle: EditorHandle = useRef(null);
+  const ro = viewer || !lock.held; // somebody else holds the edit lock (or we are a viewer): read-only
   const q = useQuery({ queryKey: ["doc", id], queryFn: () => api<DocFull>(`/documents/${id}`), staleTime: Infinity, gcTime: 0 });
   const folders = useFolders(me);
   useActiveFolder(q.data?.folder_id ?? null);
@@ -178,9 +181,14 @@ export function DocumentPage({ me }: { me: Me }) {
       qc.invalidateQueries({ queryKey: ["rev", id] });
       qc.invalidateQueries({ queryKey: ["changes"] });
       setStatus(pending.current ? "saving" : "saved");
-    }).catch((e: Error) => { pending.current = true; setErr(e.message); setStatus("error"); });
+    }).catch((e: Error) => { pending.current = true; setErr(e.message); setStatus("error"); if (e instanceof ApiError && (e.detail as { error?: string })?.error === "locked") lockRef.current.markLost(); });
     return chain.current;
   }, [id, qc]);
+  handle.current = { flush, json: () => wRef.current };
+  const lockRef = useRef(lock); lockRef.current = lock;
+  useEffect(() => { // rights arrived (granted / timed out): show the draft the previous holder left
+    if (lock.epoch) api<DocFull>(`/documents/${id}`).then((d) => { wRef.current = bodyOf(d); setW(wRef.current); pending.current = false; qc.invalidateQueries({ queryKey: ["rev", id] }); });
+  }, [lock.epoch]); // eslint-disable-line react-hooks/exhaustive-deps
   const set = useCallback((n: DocBody) => {
     wRef.current = n; setW(n); pending.current = true; setStatus("saving");
     window.clearTimeout(timer.current); timer.current = window.setTimeout(flush, 800);
@@ -250,6 +258,7 @@ export function DocumentPage({ me }: { me: Me }) {
     <div className="page fill">
       <PageHead crumbs={[{ label: "Dashboard", to: "/" }, ...path.map((p) => ({ label: p.name, to: `/folders/${p.id}` })), { label: w.title || "Document" }]}
         actions={<Link className="btn ghost sm" to={`/history/document/${id}`}><Icon n="clock" />History</Link>} />
+      <LockBar lock={lock} me={me} handle={handle} />
       <div className="edhead">
         <input className="titleinput" aria-label="Document title" placeholder="Untitled document" value={w.title} disabled={ro} onChange={(e) => upd({ title: e.target.value })} />
         <span className={`savestatus ${status}`} data-testid="doc-save-status" data-status={status} role="status">{status === "saving" ? <><Spinner />Saving…</> : status === "saved" ? <><Icon n="check" size={14} />Draft saved</> : status === "error" ? <><Icon n="alert" size={14} />Save failed</> : null}</span>

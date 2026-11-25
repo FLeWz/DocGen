@@ -2,7 +2,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Editor } from "@tiptap/core";
 import { EditorContent, useEditor, useEditorState } from "@tiptap/react";
 import { ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, apiBlob, BaseDoc, Doc, Draft, Me, Style } from "../api";
+import { api, ApiError, apiBlob, BaseDoc, Doc, Draft, Me, Style } from "../api";
+import { EditorHandle, LockBar, useEditLock } from "../locks";
 import { ErrorBanner, Icon, Modal, Notice, NoticeBar, Spinner, useUI } from "../ui";
 import { blockRange, hasSelection, selectModeOn, setSelectMode } from "./blockrange";
 import { extractStyles, extractVariables, PMNode } from "./doc";
@@ -37,13 +38,14 @@ export type SaveBody = { title?: string; content: PMNode; styles: string[]; vari
 
 /** TipTap editor + ribbon + preview over any document source (snippet draft, imported DOCX). Saves are debounced 800 ms.
  *  For an import, `content.hf` carries the edited header/footer parts next to the body blocks. */
-export function RichEditor({ qkey, load, save, keyOf, me, idleSaved, notices = [], noticeBar = "editor", noticeTestId, actions, onSaved, lookSrc }: {
+export function RichEditor({ qkey, load, save, keyOf, me, idleSaved, notices = [], noticeBar = "editor", noticeTestId, actions, onSaved, lookSrc, locked, handle }: {
+  locked?: boolean; handle?: EditorHandle; // locked: somebody else holds the edit lock -> read-only
   lookSrc?: LookSrc; // fixed look (imported DOCX); else the user picks a base document
   qkey: unknown[]; load: () => Promise<EditorData>; save: (b: SaveBody) => Promise<EditorData>; keyOf: (d: EditorData) => string; me: Me;
   idleSaved?: boolean; notices?: Notice[]; noticeBar?: string; noticeTestId?: string; actions?: (h: { editor: Editor; flush: () => Promise<unknown> }) => ReactNode; onSaved?: () => void;
 }) {
   const qc = useQueryClient();
-  const ro = me.org?.role === "viewer";
+  const ro = me.org?.role === "viewer" || !!locked;
   const d = useQuery({ queryKey: qkey, queryFn: load, gcTime: 0 }); // no stale cache on reopen: its refetch would reload (wipe) the editor after typing started
   const [pick, setPick] = useState(() => localStorage.getItem(`docgen.look.${me.org?.id}`) ?? "");
   const [pv, setPv] = useState<"live" | "word" | "off">("live");
@@ -90,6 +92,7 @@ export function RichEditor({ qkey, load, save, keyOf, me, idleSaved, notices = [
     onUpdate: ({ editor }) => { setDoc(editor.getJSON() as PMNode); touch(); },
   });
   editorRef.current = editor;
+  if (handle) handle.current = { flush, json: () => editorRef.current?.getJSON() };
   useEffect(() => () => { flush(); }, [flush]); // leaving the editor never drops edits
   const [ready, setReady] = useState(false); // read-only until the document arrived: early typing would be wiped by the load
   // emitUpdate=false: the update event would autosave an unchanged draft just for opening it
@@ -195,21 +198,27 @@ export function SnippetEditor({ id, me, epoch, onCommit, onDiscarded }: { id: st
   const [bump, setBump] = useState(0); // forces a reload after discarding the draft
   const qkey = useMemo(() => ["draft", id], [id]);
   const d = useQuery({ queryKey: qkey, queryFn: () => api<Draft>(`/snippets/${id}/draft`), gcTime: 0 }).data;
+  const viewer = me.org?.role === "viewer";
+  const lock = useEditLock("snippets", id, !viewer), handle: EditorHandle = useRef(null);
+  useEffect(() => { if (lock.epoch) qc.refetchQueries({ queryKey: qkey }).then(() => setBump((b) => b + 1)); }, [lock.epoch]); // eslint-disable-line react-hooks/exhaustive-deps  rights arrived: show the draft the previous holder left
   const discard = useMutation({
     mutationFn: () => api(`/snippets/${id}/draft`, "DELETE"),
     onSuccess: async () => { await qc.invalidateQueries(); setBump((b) => b + 1); ui.toast("Draft discarded"); onDiscarded?.(); },
     onError: (e: Error) => ui.toast(e.message, "err"),
   });
-  return (
-    <RichEditor qkey={qkey} me={me} idleSaved={d?.dirty}
+  const by = d?.last_editor && d.contributors.length > 1 ? ` · edited by ${d.contributors.map((c) => c.name).join(", ")}` : "";
+  return (<>
+    <LockBar lock={lock} me={me} handle={handle} />
+    <RichEditor qkey={qkey} me={me} idleSaved={d?.dirty} locked={!lock.held} handle={handle}
       load={() => api<Draft>(`/snippets/${id}/draft`)}
-      save={(b) => api<Draft>(`/snippets/${id}/draft`, "PUT", b)}
+      save={(b) => api<Draft>(`/snippets/${id}/draft`, "PUT", b).catch((e) => { if (e instanceof ApiError && (e.detail as { error?: string })?.error === "locked") lock.markLost(); throw e; })}
       keyOf={(x) => { const y = x as Draft; return [id, epoch, bump, y.base_sha, y.conflict, y.head_sha].join(); }}
       onSaved={() => qc.invalidateQueries({ queryKey: ["changes"] })}
-      noticeBar={`snippet:${id}`} notices={d?.conflict ? [{ id: "conflict", kind: "warn", text: "HEAD moved since your draft started — resolve it on the commit screen." }] : []}
+      noticeBar={`snippet:${id}`} notices={[...(d?.conflict ? [{ id: "conflict", kind: "warn" as const, text: "HEAD moved since your draft started — resolve it on the commit screen." }] : []),
+        ...(by ? [{ id: "by", kind: "info" as const, text: `Shared draft${by}` }] : [])]}
       actions={({ flush }) => <>
-        {me.org?.role !== "viewer" && <button className="btn" onClick={async () => { if (await ui.confirm({ title: "Discard your draft?", danger: true, ok: "Discard draft", body: "Your uncommitted changes to this snippet are lost; the last committed version is restored." })) discard.mutate(); }}><Icon n="trash" />Discard draft</button>}
-        <button className="btn primary" onClick={async () => { await flush(); onCommit(); }}><Icon n="commit" />Commit…</button>
+        {me.org?.role !== "viewer" && <button className="btn" disabled={!lock.held} onClick={async () => { if (await ui.confirm({ title: "Discard the draft?", danger: true, ok: "Discard draft", body: "The uncommitted changes to this snippet (everyone's) are lost; the last committed version is restored." })) discard.mutate(); }}><Icon n="trash" />Discard draft</button>}
+        <button className="btn primary" disabled={!lock.held} onClick={async () => { await flush(); onCommit(); }}><Icon n="commit" />Commit…</button>
       </>} />
-  );
+  </>);
 }

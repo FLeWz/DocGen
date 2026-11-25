@@ -122,7 +122,10 @@ def active(db, org_id) -> list[dict]:
     out = []
     for lock in _repo(db, org_id, EditLock).list():
         if lock.heartbeat_at >= now() - ttl():
-            out.append(dict(entity_type=lock.entity_type, entity_id=str(lock.entity_id), holder=holder(db, lock)))
+            e = _repo(db, org_id, MODELS[lock.entity_type]).get(lock.entity_id)
+            if e:  # `folder_id` places the badge in the folder tree
+                out.append(dict(entity_type=lock.entity_type, entity_id=str(lock.entity_id), folder_id=str(e.folder_id),
+                                holder=holder(db, lock)))
     return out
 
 

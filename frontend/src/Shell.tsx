@@ -1,4 +1,5 @@
 // App shell: top bar (product, org switcher, search, user menu), sidebar (folder tree), main, collapsible right context panel.
+import { Bell, useLocks } from "./locks";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -63,7 +64,7 @@ function MoveDialog({ f, folders, onClose, onMove }: { f: Folder; folders: Folde
 function Tree({ me }: { me: Me }) {
   const { active } = useShell();
   const ui = useUI(), nav = useNavigate(), qc = useQueryClient();
-  const folders = useFolders(me), ov = useOverview(me);
+  const folders = useFolders(me), ov = useOverview(me), lk = useLocks(me);
   const key = `docgen.tree.${me.org?.id}`;
   const [open, setOpen] = useState<Set<string>>(() => new Set(JSON.parse(localStorage.getItem(key) ?? "[]")));
   const [menu, setMenu] = useState<{ x: number; y: number; f: Folder } | null>(null);
@@ -104,7 +105,7 @@ function Tree({ me }: { me: Me }) {
       <li key={f.id} role="treeitem" aria-expanded={ch.length ? isOpen : undefined} aria-selected={active === f.id}>
         <div className={`node ${active === f.id ? "on" : ""}`} style={{ paddingLeft: 6 + depth * 14 }} onContextMenu={(e) => { e.preventDefault(); setMenu({ x: e.clientX, y: e.clientY, f }); }}>
           <button className="chev" tabIndex={-1} aria-label={isOpen ? `Collapse ${f.name}` : `Expand ${f.name}`} style={{ visibility: ch.length ? "visible" : "hidden" }} onClick={() => toggle(f.id)}><Icon n={isOpen ? "chevD" : "chevR"} size={14} /></button>
-          <Link to={`/folders/${f.id}`} className="nodelink" data-testid="tree-folder" title={f.name}><Icon n="folder" /><span className="nm">{f.name}</span>{n > 0 && <span className="cnt" title={`${c?.snippets ?? 0} snippets, ${c?.documents ?? 0} documents`}>{n}</span>}</Link>
+          <Link to={`/folders/${f.id}`} className="nodelink" data-testid="tree-folder" title={f.name}><Icon n="folder" /><span className="nm">{f.name}</span>{lk.data?.some((l) => l.folder_id === f.id) && <span className="treelock" data-testid="tree-lock" title={lk.data.filter((l) => l.folder_id === f.id).map((l) => `${l.holder.name} is editing`).join(", ")}><Icon n="lock" size={12} /></span>}{n > 0 && <span className="cnt" title={`${c?.snippets ?? 0} snippets, ${c?.documents ?? 0} documents`}>{n}</span>}</Link>
           <button className="more" aria-label={`Actions for ${f.name}`} onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); setMenu({ x: r.left, y: r.bottom + 2, f }); }}><Icon n="more" size={14} /></button>
         </div>
         {ch.length > 0 && isOpen && <ul role="group">{ch.map((k) => node(k, depth + 1))}</ul>}
@@ -202,6 +203,7 @@ export function Shell({ me }: { me: Me }) {
           <OrgSwitcher me={me} />
           <Search me={me} />
           <div className="spacer" />
+          <Bell me={me} />
           {has && <button className="btn ghost" aria-pressed={rp} onClick={() => flip("docgen.rpanel", rp, setRp)} title="Toggle the context panel"><Icon n="panel" />Details</button>}
           <MenuButton label="User menu" className="btn ghost avatar-btn" align="right" items={[
             { label: `${me.user.name} · ${me.user.email}`, icon: "user", onClick: () => {}, disabled: true }, "sep",

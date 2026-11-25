@@ -94,7 +94,7 @@ export function HistoryPage({ me }: { me: Me }) {
           <thead><tr><th>Version</th><th>Message</th><th>Author</th><th>Date</th><th>Tags</th><th><span className="sr">Actions</span></th></tr></thead>
           <tbody>{h.data.map((c, i) => (
             <tr key={c.sha} data-testid="commit-row">
-              <td><code>{short(c.sha)}</code>{i === 0 && <Badge kind="green">latest</Badge>}</td><td>{c.message} <RenamedBadge c={c} /></td><td>{c.author_name}</td><td className="nowrap">{fmtDate(c.date)}</td>
+              <td><code>{short(c.sha)}</code>{i === 0 && <Badge kind="green">latest</Badge>}</td><td>{c.message} <RenamedBadge c={c} /></td><td>{c.author_name}{!!c.co_authors?.length && <small className="muted" data-testid="co-authors" title={c.co_authors.map((a) => `${a.name} <${a.email}>`).join(", ")}> + {c.co_authors.map((a) => a.name).join(", ")}</small>}{!!c.lock_transfers?.length && <small className="muted" data-testid="lock-transfers" title="Edit-lock hand-overs"> <Icon n="lock" size={11} /> {c.lock_transfers.join("; ")}</small>}</td><td className="nowrap">{fmtDate(c.date)}</td>
               <td className="badges">{c.tags.map((t) => <Badge key={t} kind="violet"><Icon n="tag" size={11} />{t}{kind === "folder" && edit && <button className="x" aria-label={`Remove tag ${t}`} onClick={() => tag.mutate({ del: t })}><Icon n="x" size={11} /></button>}</Badge>)}</td>
               <td className="end">{edit && <RenameButton url={`/folders/${folderId}/commits`} c={c} />}{kind === "folder" && edit && <button className="btn sm" onClick={() => addTag(c)}><Icon n="tag" />Add tag</button>}
                 {kind === "document" && (["docx", "pdf"] as const).map((f) => <span key={f} className="nowrap">

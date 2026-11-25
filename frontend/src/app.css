@@ -263,3 +263,11 @@ textarea, pre, .difftext { scrollbar-color: var(--border-strong) var(--surface-2
 .toast .toastlink { color: #9ecbff; text-decoration: underline; margin-left: 8px; white-space: nowrap; }
 .maprow { display: grid; grid-template-columns: 22px minmax(120px, 1fr) minmax(190px, 1.1fr) 150px; gap: 8px; align-items: center; padding: 4px 8px; border-bottom: 1px solid var(--border); } .maprow:last-child { border-bottom: 0; } .maprow select { min-width: 0; width: 100%; }
 .rowact { display: flex; gap: 8px; align-items: center; margin-left: auto; flex: none; } .rowact select { height: 26px; }
+
+/* round 16: edit locks */
+.lockbar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); padding: 6px var(--sp-3); margin: var(--sp-1) 0; border-radius: var(--radius-s); background: var(--warn-soft); color: var(--text); border: 1px solid var(--border); font-size: 13px; }
+.lockbar.pending { background: var(--primary-soft); } .lockbar.denied, .lockbar.transferred { background: var(--danger-soft); } .lockbar.granted { background: var(--surface-2); }
+.treelock { display: inline-flex; margin-left: 4px; color: var(--warn); }
+.bellwrap { position: relative; } .bellcount { position: absolute; top: 2px; right: 2px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: var(--danger); color: #fff; font-size: 10px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; }
+.bellpanel { position: absolute; right: 0; top: 100%; width: 340px; max-height: 60vh; overflow: auto; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: 0 8px 24px rgb(0 0 0 / 18%); padding: var(--sp-2); z-index: 40; }
+.bellpanel ul { list-style: none; margin: 0; padding: 0; } .bellpanel li { display: flex; flex-direction: column; gap: 2px; padding: 6px; border-radius: var(--radius-s); font-size: 13px; } .bellpanel li.unread { background: var(--primary-soft); }

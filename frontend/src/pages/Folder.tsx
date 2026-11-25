@@ -5,6 +5,7 @@ import { api, Change, DocRow, Me, RefStatus, SnippetRow } from "../api";
 import { canEdit, folderPath, short, useFolders, useOverview } from "../data";
 import { PageHead, useActiveFolder } from "../Shell";
 import { Badge, Empty, ErrorBanner, Icon, MenuButton, Skeleton, useUI } from "../ui";
+import { LockBadge, useLocks } from "../locks";
 import { NewItem } from "./NewItem";
 
 const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? "" : "s"}`;
@@ -18,7 +19,7 @@ export function FolderPage({ me }: { me: Me }) {
   const f = folders.data?.find((x) => x.id === id), path = folderPath(folders.data, id);
   useActiveFolder(f ? id : null);
   const [q, setQ] = useState(""), [type, setType] = useState<"all" | "snippet" | "document">("all"), [mk, setMk] = useState<"snippet" | "document" | null>(null);
-  const edit = canEdit(me);
+  const edit = canEdit(me), lk = useLocks(me), lockOf = (kind: string, id: string) => lk.data?.find((l) => l.entity_type === kind && l.entity_id === id);
   const sn = useQuery({ queryKey: ["snippets", id], queryFn: () => api<SnippetRow[]>(`/folders/${id}/snippets`), enabled: !!f });
   const dc = useQuery({ queryKey: ["documents", id], queryFn: () => api<DocRow[]>(`/documents?folder_id=${id}`), enabled: !!f });
   const ch = useQuery({ queryKey: ["changes", id], queryFn: () => api<Change[]>(`/folders/${id}/changes`), enabled: !!f });
@@ -41,6 +42,7 @@ export function FolderPage({ me }: { me: Me }) {
     const c = changed.get(r.id);
     return <>
       {c?.conflict ? <Badge kind="red">Conflict</Badge> : c ? <Badge kind="amber">{r.head_sha ? "Draft · modified" : "Draft · new"}</Badge> : r.head_sha ? <Badge kind="green">Committed</Badge> : <Badge>Empty</Badge>}
+      <LockBadge l={lockOf(r.kind, r.id)} />
       {updates.has(r.id) && <Badge kind="blue" data-testid="badge-update-available">Update available</Badge>}
     </>;
   };
