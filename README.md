@@ -224,3 +224,6 @@ The e2e scripts log in as throwaway users created through the CLI (`scripts/e2e-
 * Base documents can be deleted (admin) only while no document or draft uses them; the file stays in `_base.git` history. No password reset or email verification; Mailpit is dev only.
 
 Snippets from imports (round 12): "Create snippet from selection" and "Split by headings" ask when a snippet with the same title (or slug) exists in the folder: update it (writes your draft on top of HEAD, commit it for the new version), create a separate one, rename or skip. "Update snippets from this import…" (import page) and "Update from import…" (snippet page) refresh existing snippets from the open or a newer import: headings are matched by title, remembered source or fuzzy title, changed sections are applied to drafts. API: `docs/DECISIONS.md`, Round 12.
+
+Round 14: commits can be renamed (**Rename** on every history/version row; Enter saves, Esc cancels, *Reset to original*). It is a display-name override stored in `commit_names`: git messages and shas are never rewritten (`PATCH /api/folders/{id}/commits/{sha}`, `PATCH /api/base-documents/{id}/versions/{sha}`, `{name}`, empty/DELETE = reset). Histories, revision tables and version downloads show the name; renaming invalidates cached downloads of affected versions. See docs/DECISIONS.md, round 14.
+

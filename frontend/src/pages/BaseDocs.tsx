@@ -3,6 +3,7 @@ import { Fragment, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api, ApiError, BaseDoc, BaseDocVersion, isAdmin, Me, VarDecl } from "../api";
 import { useImports } from "../data";
+import { RenamedBadge, RenameButton } from "../renameCommit";
 import { PageHead } from "../Shell";
 import { Candidates } from "../builder/FindVariables";
 import { Pick } from "../builder/picks";
@@ -96,8 +97,8 @@ function Versions({ b, admin }: { b: BaseDoc; admin: boolean }) {
     <div className="subtable">
       {vs.isLoading ? <Skeleton rows={2} /> : (
         <table className="tbl compact"><thead><tr><th>Version</th><th>Commit</th><th>File</th><th>Size</th><th>Placeholders</th><th>Message</th><th>Uploaded</th><th /></tr></thead>
-          <tbody>{vs.data?.map((v) => <tr key={v.id}><td>v{v.number}</td><td><code>{v.sha.slice(0, 7)}</code></td><td>{v.filename}</td><td>{(v.size / 1024).toFixed(0)} KB</td><td>{ph(v)}</td><td>{v.message}</td><td className="nowrap">{fmtDate(v.created_at)}</td>
-            <td className="end nowrap"><a className="btn sm ghost" href={`/api/base-documents/${b.id}/download?version=${v.sha}`}><Icon n="download" />Download</a></td></tr>)}</tbody></table>)}
+          <tbody>{vs.data?.map((v) => <tr key={v.id}><td>v{v.number}</td><td><code>{v.sha.slice(0, 7)}</code></td><td>{v.filename}</td><td>{(v.size / 1024).toFixed(0)} KB</td><td>{ph(v)}</td><td>{v.message} <RenamedBadge c={v} /></td><td className="nowrap">{fmtDate(v.created_at)}</td>
+            <td className="end nowrap">{admin && <RenameButton url={`/base-documents/${b.id}/versions`} c={v} />}<a className="btn sm ghost" href={`/api/base-documents/${b.id}/download?version=${v.sha}`}><Icon n="download" />Download</a></td></tr>)}</tbody></table>)}
       {admin && <p><EditBaseButton id={b.id} /></p>}
       {use.data?.documents.length ? <p className="small">Used by: {[...new Map(use.data.documents.map((d) => [d.document_id, d])).values()].map((d, i) => <Fragment key={d.document_id}>{i ? ", " : ""}<Link to={`/documents/${d.document_id}`}>{d.title}</Link></Fragment>)}</p> : <p className="muted small">No document uses this base document.</p>}
       {vs.data?.[0] && <BaseVars key={vs.data[0].sha} b={b} v={vs.data[0]} admin={admin} />}

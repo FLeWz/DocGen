@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, Commit, Draft, Me } from "../api";
+import { RenamedBadge, RenameButton } from "../renameCommit";
 import { canEdit, folderPath, short, useFolders } from "../data";
 import { UpdateFromImportDialog } from "./UpdateFromImport";
 import { SnippetEditor } from "../editor/SnippetEditor";
@@ -19,7 +20,7 @@ export function useRestore(id: string, done: () => void) {
   });
 }
 
-function SidePanel({ id, me, onRestored }: { id: string; me: Me; onRestored: () => void }) {
+function SidePanel({ id, fid, me, onRestored }: { id: string; fid: string | null; me: Me; onRestored: () => void }) {
   const ui = useUI();
   const [tab, setTab] = useState<"v" | "u">("v");
   const h = useQuery({ queryKey: ["shist", id], queryFn: () => api<Commit[]>(`/snippets/${id}/history`) });
@@ -35,8 +36,8 @@ function SidePanel({ id, me, onRestored }: { id: string; me: Me; onRestored: () 
       {tab === "v" && (h.isLoading ? <Skeleton rows={4} /> : !h.data?.length ? <Empty icon="clock" title="No versions yet">Commit this snippet to create the first version.</Empty> : (
         <ul className="vlist" data-testid="version-list">{h.data.map((c, i) => (
           <li key={c.sha}><div><code>{short(c.sha)}</code>{i === 0 && <Badge kind="green">current</Badge>}{c.tags.map((t) => <Badge key={t} kind="violet"><Icon n="tag" size={11} />{t}</Badge>)}</div>
-            <p>{c.message}</p><small>{c.author_name} · {fmtDate(c.date)}</small>
-            <div className="vact">{canEdit(me) && <button className="btn sm" onClick={() => ask(c)}>Restore to draft</button>}<Link className="btn sm ghost" to={`/history/snippet/${id}?to=${c.sha}`}>Compare</Link></div></li>))}</ul>))}
+            <p>{c.message} <RenamedBadge c={c} /></p><small>{c.author_name} · {fmtDate(c.date)}</small>
+            <div className="vact">{canEdit(me) && <RenameButton url={`/folders/${fid}/commits`} c={c} />}{canEdit(me) && <button className="btn sm" onClick={() => ask(c)}>Restore to draft</button>}<Link className="btn sm ghost" to={`/history/snippet/${id}?to=${c.sha}`}>Compare</Link></div></li>))}</ul>))}
       {tab === "u" && (used.isLoading ? <Skeleton rows={3} /> : !used.data?.length ? <Empty icon="doc" title="Not used yet">No committed document references this snippet.</Empty> : (
         <ul className="vlist">{used.data.map((d) => <li key={d.document_id}><Link to={`/documents/${d.document_id}`}><Icon n="doc" /> {d.title}</Link><small>{d.folder_name}</small>
           <p>{d.versions.map((v) => <span key={v.commit_sha} className="pinline"><code>{short(v.commit_sha)}</code>{v.current ? " (current)" : ""} pins {v.pin.type === "latest" ? "latest" : short(v.pin.value)}</span>)}</p></li>)}</ul>))}
@@ -59,7 +60,7 @@ export function SnippetPage({ me }: { me: Me }) {
         actions={<>{canEdit(me) && <button className="btn ghost sm" onClick={() => setUpd(true)}><Icon n="layers" />Update from import…</button>}<Link className="btn ghost sm" to={`/history/snippet/${id}`}><Icon n="clock" />History</Link></>} />
       {upd && d.data && fid && <UpdateFromImportDialog me={me} snippet={{ id, title: d.data.title, folder_id: fid }} onClose={() => { setUpd(false); setEpoch((e) => e + 1); }} />}
       <SnippetEditor id={id} me={me} epoch={epoch} onCommit={() => nav(`/commit/${fid ?? ""}?select=${id}`)} />
-      <SidePanel id={id} me={me} onRestored={() => setEpoch((e) => e + 1)} />
+      <SidePanel id={id} fid={fid} me={me} onRestored={() => setEpoch((e) => e + 1)} />
     </div>
   );
 }

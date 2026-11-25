@@ -4,11 +4,12 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, ApiError } from "../api";
+import { RenamedBadge, RenameButton } from "../renameCommit";
 import { Badge, Banner, ErrorBanner, Field, Icon, Modal, ago, useUI } from "../ui";
 
 export type BaseEditInfo = { base_document: { id: string; name: string }; started_number: number | null; head_number: number; stale: boolean;
   diff: { added: number; removed: number; changed: number; headers_footers: number; blocks: { op: string; index: number; type: string; text: string }[] };
-  versions: { number: number; sha: string; message: string; created_at: string; filename: string }[] };
+  versions: { number: number; sha: string; message: string; created_at: string; filename: string; renamed?: boolean; original_message?: string; renamed_by?: string | null; renamed_at?: string | null }[] };
 type Committed = { version: number; sha: string; placeholders: { content: boolean; slots: string[] }; variables: { name: string; type: string }[]; warnings: string[] };
 
 export const useBaseEdit = (id: string, on: boolean) => useQuery({ queryKey: ["base-edit", id], enabled: on, refetchInterval: 4000, queryFn: () => api<BaseEditInfo>(`/imports/${id}/base-edit`) });
@@ -59,8 +60,8 @@ export function BaseHistoryModal({ id, info, onClose, onRestored }: { id: string
   return (
     <Modal title={`Versions of “${info.base_document.name}”`} wide onClose={onClose}>
       <div className="scrollbox"><table className="tbl compact" data-testid="base-versions"><thead><tr><th>Version</th><th>Message</th><th>Date</th><th /></tr></thead>
-        <tbody>{info.versions.map((v) => <tr key={v.sha}><td>v{v.number}</td><td>{v.message || v.filename}</td><td className="nowrap">{ago(v.created_at)}</td>
-          <td className="end nowrap"><a className="btn sm ghost" href={`/api/base-documents/${info.base_document.id}/download?version=${v.sha}`}><Icon n="download" />Download</a>
+        <tbody>{info.versions.map((v) => <tr key={v.sha}><td>v{v.number}</td><td>{v.message || v.filename} <RenamedBadge c={v} /></td><td className="nowrap">{ago(v.created_at)}</td>
+          <td className="end nowrap"><RenameButton url={`/base-documents/${info.base_document.id}/versions`} c={v} /><a className="btn sm ghost" href={`/api/base-documents/${info.base_document.id}/download?version=${v.sha}`}><Icon n="download" />Download</a>
             <button className="btn sm" disabled={r.isPending} onClick={() => ui.confirm({ title: `Restore v${v.number} into the draft?`, body: "Your current draft is replaced. Nothing is committed until you commit.", ok: "Restore" }).then((y) => y && r.mutate(v.sha))}>Restore into draft</button></td></tr>)}</tbody></table></div>
     </Modal>
   );

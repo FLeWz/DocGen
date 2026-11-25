@@ -20,7 +20,7 @@
 | `/documents/:id` | Document builder (library, blocks, right panel: variables, base document, links, revision history) |
 | `/imports`, `/imports/:id` | Imports: dropzone + list; DOCX editor with actions bar and warnings |
 | `/commit/:folderId` | Changed files, side-by-side diff, message, 3-pane conflict resolver |
-| `/history/folder/:id`, `/history/snippet/:id`, `/history/document/:id` | History, diff between two commits, restore, tags; document rows: Download DOCX/PDF of that commit (cached badge) |
+| `/history/folder/:id`, `/history/snippet/:id`, `/history/document/:id` | History, diff between two commits, restore, tags; document rows: Download DOCX/PDF of that commit (cached badge); every row: Rename (pencil, prompt: Enter saves, Esc cancels, Reset to original) + amber `renamed` badge whose tooltip shows the original message and who/when; same Rename on the snippet side-panel versions and the base-document versions list (admin) |
 | `/base-documents` | Base documents (round 6): table (name, current version, placeholders, variables, used by, created/updated), Details (versions, download, used-by, variables editor, Find variables), rename, new version, delete, create (upload / default template / from an import); read-only for non-admins |
 | `/styles` | Style set editor |
 | `/settings/{general,members,invites}` | Org settings; `general` holds the danger zone. `/settings/base-documents` and `/settings/styles` redirect to the two pages above |

@@ -100,7 +100,7 @@ export function Modal({ title, onClose, children, wide, size, tall, actions }: {
 }
 
 type Ask = {
-  prompt: (o: { title: string; label: string; value?: string; ok?: string; hint?: string }) => Promise<string | null>;
+  prompt: (o: { title: string; label: string; value?: string; ok?: string; hint?: string; reset?: string }) => Promise<string | null>; // reset: extra button, resolves ""
   confirm: (o: { title: string; body?: ReactNode; ok?: string; danger?: boolean }) => Promise<boolean>;
   toast: (msg: string, kind?: "ok" | "err", links?: { label: string; to: string }[]) => void;
 };
@@ -145,6 +145,7 @@ function PromptDialog({ o, onDone }: { o: Parameters<Ask["prompt"]>[0]; onDone: 
   const submit = (e: FormEvent) => { e.preventDefault(); onDone(v.trim() || null); };
   return (
     <Modal size="sm" title={o.title} onClose={() => onDone(null)} actions={<>
+      {o.reset && <button className="btn" type="button" onClick={() => onDone("")}>{o.reset}</button>}
       <button className="btn" type="button" onClick={() => onDone(null)}>Cancel</button>
       <button className="btn primary" form="prompt-form" disabled={!v.trim()}>{o.ok ?? "OK"}</button></>}>
       <form id="prompt-form" onSubmit={submit}>
