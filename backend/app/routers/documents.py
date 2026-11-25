@@ -1,7 +1,8 @@
 import re
+import shutil
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Response
 
 from .. import docs, export, files, vcs
 from ..deps import Ctx, require
@@ -86,6 +87,7 @@ def delete_document(document_id: UUID, ctx: Ctx = E):
     ctx.db.commit()
     for p in paths:
         p.unlink(missing_ok=True)
+    shutil.rmtree(files.cache_dir(ctx.org_id, d.id), ignore_errors=True)
     return Response(status_code=204)
 
 
@@ -162,6 +164,16 @@ def start_export(document_id: UUID, format: str = Query(default="docx", max_leng
     ctx.db.commit()
     export.submit(ctx.org_id, ctx.user.id, e.id)
     return dict(export_id=e.id, status=e.status)
+
+
+@router.get("/documents/{document_id}/versions/{sha}/export", status_code=202)
+def export_version(document_id: UUID, sha: str = Path(pattern=r"^[0-9a-f]{40}$"), format: str = Query(default="docx", max_length=8),
+                   ctx: Ctx = V):
+    """Export the document as committed at `sha`; same job flow as /export (poll /api/exports/{id}, then /download).
+    `cached: true` = the finished file was served from the render cache."""
+    if format not in export.RENDERERS:
+        raise HTTPException(400, f"unsupported format '{format}' (available: {', '.join(export.RENDERERS)})")
+    return export.start_version(ctx, docs.get_document(ctx, document_id), sha, format)
 
 
 @router.get("/documents/{document_id}/exports", response_model=list[ExportOut])

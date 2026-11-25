@@ -145,7 +145,7 @@ COVERED = {  # every API route must be listed: a new endpoint forces a new isola
     "DELETE /api/documents/{document_id}/draft", "GET /api/documents/{document_id}/history",
     "GET /api/documents/{document_id}/updates", "GET /api/documents/{document_id}/blocks/{block_id}/bump",
     "POST /api/documents/{document_id}/blocks/{block_id}/bump", "GET /api/documents/{document_id}/export",
-    "GET /api/documents/{document_id}/exports", "GET /api/exports/{export_id}",
+    "GET /api/documents/{document_id}/exports", "GET /api/documents/{document_id}/versions/{sha}/export", "GET /api/exports/{export_id}",
     "GET /api/documents/{document_id}/revision-history",  # milestone 5, see test_b_cannot_touch_a_documents
     "GET /api/exports/{export_id}/download", "GET /api/library/snippets", "GET /api/snippets/{snippet_id}/used-by",
     # milestone 7: all covered by test_b_cannot_touch_a_imports
@@ -305,7 +305,8 @@ def test_b_cannot_touch_a_documents(world):
         ("get", f"/api/documents/{did}/updates", None), ("get", f"/api/documents/{did}/blocks/{blk}/bump", None),
         ("post", f"/api/documents/{did}/blocks/{blk}/bump", None), ("get", f"/api/documents/{did}/export", None),
         ("get", f"/api/documents/{did}/exports", None), ("get", f"/api/documents/{did}/revision-history", None),
-        ("get", f"/api/documents/{did}/export?format=pdf", None), ("get", f"/api/exports/{eid}", None),
+        ("get", f"/api/documents/{did}/export?format=pdf", None),
+        ("get", f"/api/documents/{did}/versions/{commit_r.json()['sha']}/export", None), ("get", f"/api/exports/{eid}", None),
         ("get", f"/api/exports/{eid}/download", None), ("get", f"/api/snippets/{sid}/used-by", None),
         ("post", f"/api/folders/{fa}/commit", {"message": "x", "document_ids": [did]}),
         ("post", f"/api/folders/{bfo}/commit", {"message": "x", "document_ids": [did]}),  # A's doc into B's folder

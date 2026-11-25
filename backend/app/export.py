@@ -2,7 +2,9 @@
 PDF = the rendered DOCX converted by the Gotenberg container (LibreOffice)."""
 import hashlib
 import json
+import os
 import re
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
@@ -21,6 +23,10 @@ from .models import BaseDocVersion, Document, Export, Folder, Organization, Role
 from .scoping import OrgRepo
 
 _pool = ThreadPoolExecutor(2, thread_name_prefix="export")
+EXPORTER_VERSION = "13.1"  # bump when DOCX/PDF output changes for the same spec: cached renders of older versions are never hit
+CACHE_KEEP = 10  # newest cached renders kept per document
+_inflight: dict[str, UUID] = {}  # cache key -> running export: concurrent identical requests share one render (single process)
+_lock = threading.Lock()
 STALE = timedelta(minutes=10)
 
 
@@ -125,7 +131,7 @@ def _base_headings(data: bytes | None) -> list:
     return out
 
 
-def revision_rows(ctx: Ctx, d: Document, blocks: list[dict], base: dict | None = None) -> list[dict]:
+def revision_rows(ctx: Ctx, d: Document, blocks: list[dict], base: dict | None = None, rev: str | None = None) -> list[dict]:
     """Auto revision history, oldest first: commits of the document, of each pinned snippet (up to its pin) and of
     the pinned base document (edits/versions after the first, up to its pin). Row: version (tag or short sha), date,
     author, message + commit (the subject) and sections = what that commit changed (blocks/headings of the document,
@@ -148,7 +154,7 @@ def revision_rows(ctx: Ctx, d: Document, blocks: list[dict], base: dict | None =
                                   sections=sec, commit=subject, status="Tagged" if c["tags"] else "Committed", _k=(c["date"], c["sha"]))
 
     repo = vcs.repo_of(ctx, d.folder_id)
-    add(repo, git.log(repo, d.id, key="Document-Id"),
+    add(repo, git.log(repo, d.id, key="Document-Id", rev=rev),  # rev: only commits up to a historic version
         lambda c, p: _doc_sections(ctx, p and docs.version_at(ctx, d, p["sha"]), docs.version_at(ctx, d, c["sha"])))
     for b in blocks:
         s = b["type"] == "snippet_ref" and ctx.repo(Snippet).get(UUID(b["snippet_id"]))
@@ -168,9 +174,22 @@ def revision_rows(ctx: Ctx, d: Document, blocks: list[dict], base: dict | None =
     return [{k: v for k, v in r.items() if k != "_k"} for r in sorted(rows.values(), key=lambda r: r["_k"])]
 
 
-def build_spec(ctx: Ctx, d: Document) -> dict:
-    """Everything the renderer needs. Tags and `latest` are frozen to commit shas here."""
-    w = docs.working(ctx, d)
+def build_spec(ctx: Ctx, d: Document, at: str | None = None) -> dict:
+    """Everything the renderer needs. Tags and `latest` are frozen to commit shas here. `at`: the document as committed
+    there (its own pins, variables, base version; doc.version = tag or short sha, doc.date/author = that commit's)."""
+    c = None
+    if at:
+        repo = vcs.repo_of(ctx, d.folder_id)
+        try:
+            log = git.log(repo, d.id, key="Document-Id", rev=at)
+        except git.NotFound:
+            raise HTTPException(404, "version not found")
+        w = log and log[0]["sha"] == git.resolve(repo, at) and docs.version_at(ctx, d, log[0]["sha"])
+        if not w:
+            raise HTTPException(404, "version not found")
+        c = vcs.commit_out(log[0], vcs.tag_map(repo))
+    else:
+        w = docs.working(ctx, d)
     blocks = []
     for b in w["blocks"]:
         b = dict(b)
@@ -186,13 +205,13 @@ def build_spec(ctx: Ctx, d: Document) -> dict:
     bv = br and ctx.repo(BaseDocVersion).first(BaseDocVersion.base_document_id == UUID(br["id"]), BaseDocVersion.sha == br["version"])
     return dict(base_variables=bv.variables if bv else [],  # frozen: defaults edited later must not change a stored spec
 
-        document=dict(id=str(d.id), slug=w["slug"], head_sha=d.head_sha, draft=docs.draft_of(ctx, d) is not None),
+        document=dict(id=str(d.id), slug=w["slug"], head_sha=c["sha"] if c else d.head_sha, draft=not c and docs.draft_of(ctx, d) is not None),
         title=w["title"], base=br and dict(id=br["id"], sha=br["version"]), blocks=blocks,
         variables=w["variables"], links=w["links"],
-        revision_history=w.get("revision_history") if w.get("revision_history") is not None else revision_rows(ctx, d, w["blocks"], br and dict(id=br["id"], sha=br["version"])),
-        built_ins={"doc.title": w["title"], "doc.version": (d.head_sha or "draft")[:7],
-                   "doc.date": datetime.now(timezone.utc).date().isoformat(), "org.name": org.name,
-                   "author": ctx.user.name})
+        revision_history=w.get("revision_history") if w.get("revision_history") is not None else revision_rows(ctx, d, w["blocks"], br and dict(id=br["id"], sha=br["version"]), c and c["sha"]),
+        built_ins={"doc.title": w["title"], "doc.version": c and (c["tags"] or [c["sha"][:7]])[0] or (d.head_sha or "draft")[:7],
+                   "doc.date": c["date"][:10] if c else datetime.now(timezone.utc).date().isoformat(), "org.name": org.name,
+                   "author": c["author_name"] if c else ctx.user.name})
 
 
 def pins_of(spec: dict) -> dict:
@@ -215,8 +234,46 @@ def cached(ctx: Ctx, d: Document, fmt: str) -> Export | None:
     return None
 
 
-def create(ctx: Ctx, d: Document, fmt: str) -> Export:
-    spec = build_spec(ctx, d)
+def cache_key(spec: dict, fmt: str) -> str:
+    """Render-input hash. The spec already holds everything the output depends on: pinned shas (a `latest` pin is frozen to
+    the snippet's HEAD sha, so a new commit there is a miss), variables, base version, and the revision rows with their
+    tags (so adding/removing/renaming a tag on a commit of the history is a miss). Plus format and exporter version."""
+    return hashlib.sha256(f"{EXPORTER_VERSION}|{fmt}|{spec_hash(spec)}".encode()).hexdigest()
+
+
+def cache_prune(org_id, doc_id) -> None:
+    fs = sorted(files.cache_dir(org_id, doc_id).glob("*.*"), key=lambda p: p.stat().st_mtime, reverse=True)
+    for p in fs[CACHE_KEEP:]:
+        p.unlink(missing_ok=True)
+
+
+def start_version(ctx: Ctx, d: Document, sha: str, fmt: str) -> dict:
+    """Export of a committed version: served from the cache when the render inputs are identical, else rendered once even
+    when requested concurrently. Every call is recorded in the exports table."""
+    spec = build_spec(ctx, d, sha)
+    key = cache_key(spec, fmt)
+    path = files.cache_path(ctx.org_id, d.id, spec["document"]["head_sha"], key, fmt)
+    with _lock:
+        if (eid := _inflight.get(key)) and (e := ctx.repo(Export).get(eid)) and e.status in ("queued", "running"):
+            return dict(export_id=e.id, status=e.status, cached=False)
+        e = create(ctx, d, fmt, spec)
+        hit = path.exists()
+        if hit:
+            e.status, e.sha256, e.finished_at = "done", hashlib.sha256(path.read_bytes()).hexdigest(), datetime.now(timezone.utc)
+            dst = files.export_path(ctx.org_id, e.id, fmt)
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            dst.write_bytes(path.read_bytes())
+            os.utime(path)  # keeps recently used renders when pruning
+        else:
+            _inflight[key] = e.id
+        ctx.db.commit()
+    if not hit:
+        submit(ctx.org_id, ctx.user.id, e.id, (key, path))
+    return dict(export_id=e.id, status=e.status, cached=hit)
+
+
+def create(ctx: Ctx, d: Document, fmt: str, spec: dict | None = None) -> Export:
+    spec = spec or build_spec(ctx, d)
     used: dict = {}
     for b in spec["blocks"]:
         v = "pin" in b and C.version_at(git.repo_path(ctx.org_id, b["pin"]["folder_id"]), b["pin"]["sha"], b["pin"]["snippet_id"])
@@ -291,11 +348,11 @@ RENDERERS = {"docx": render_docx, "pdf": render_pdf}
 MIME = {"docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "pdf": "application/pdf"}
 
 
-def submit(org_id, user_id, export_id) -> None:
-    _pool.submit(_run, org_id, user_id, export_id)
+def submit(org_id, user_id, export_id, cache: tuple | None = None) -> None:
+    _pool.submit(_run, org_id, user_id, export_id, cache)
 
 
-def _run(org_id, user_id, export_id) -> None:
+def _run(org_id, user_id, export_id, cache: tuple | None = None) -> None:
     with SessionLocal() as db:
         set_ctx(db, org_id=org_id, user_id=user_id)
         repo = OrgRepo(db, Export, org_id)
@@ -308,10 +365,19 @@ def _run(org_id, user_id, export_id) -> None:
             p.parent.mkdir(parents=True, exist_ok=True)
             p.write_bytes(data)
             e.sha256, e.warnings, e.status = hashlib.sha256(data).hexdigest(), warnings, "done"
+            if cache:  # atomic: a reader never sees half a file
+                cache[1].parent.mkdir(parents=True, exist_ok=True)
+                tmp = cache[1].with_suffix(".tmp")
+                tmp.write_bytes(data)
+                os.replace(tmp, cache[1])
+                cache_prune(org_id, e.document_id)
         except Exception as x:  # job boundary: record, never crash the worker
             e.status, e.error = "error", re.sub(r"\s+", " ", str(x))[:500] or type(x).__name__
         e.finished_at = datetime.now(timezone.utc)
         db.commit()
+        if cache:
+            with _lock:
+                _inflight.pop(cache[0], None)
 
 
 def expire_stale(ctx: Ctx, e: Export) -> None:
