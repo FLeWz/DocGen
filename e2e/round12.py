@@ -83,7 +83,7 @@ with sync_playwright() as pw:
         page.get_by_role("button", name="Choose another title").click()
         page.get_by_label("Snippet title").fill("Callout bit")
         page.get_by_role("button", name="Create snippet", exact=True).click()
-        expect(page.get_by_text('Created 1 snippet draft')).to_be_visible()
+        expect(page.get_by_text('Created snippet draft "Callout bit"')).to_be_visible()
 
         # a second upload with an edit: only the changed section is ticked; applied to drafts
         upload(page)

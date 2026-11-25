@@ -8,7 +8,7 @@ export function useResultToast() {
   const ui = useUI();
   return (r: Written[]) => {
     const up = r.filter((x) => x.action === "updated"), n = r.length - up.length;
-    const msg = [n && `Created ${n} snippet draft${n === 1 ? "" : "s"}`, up.length && `Updated ${up.length} draft${up.length === 1 ? "" : "s"} (not committed)`].filter(Boolean).join(", ") || "Nothing written";
+    const msg = r.length === 1 && !up.length ? `Created snippet draft "${r[0].title}"` : [n && `Created ${n} snippet draft${n === 1 ? "" : "s"}`, up.length && `Updated ${up.length} draft${up.length === 1 ? "" : "s"} (not committed)`].filter(Boolean).join(", ") || "Nothing written";
     const one = r[0];
     ui.toast(`${msg}${one && r.length === 1 && one.warnings?.length ? ` (${one.warnings[0]})` : ""}`, "ok",
       up.length ? [...(up.length === 1 ? [{ label: "Open draft", to: `/snippets/${up[0].id}` }] : []), { label: "Go to Commit", to: `/commit/${up[0].folder_id}?select=${up.map((x) => x.id).join(",")}` }] : undefined);
