@@ -5,7 +5,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from .. import vcs
 from ..deps import Ctx, require
 from ..git import repo as git
-from ..models import Folder, Role
+from sqlalchemy import delete
+
+from ..models import CommitName, Folder, Role
 from ..schemas import FolderCreateIn, FolderOut, FolderPatchIn, TagIn
 
 router = APIRouter(tags=["folders"])
@@ -60,6 +62,8 @@ def patch_folder(folder_id: UUID, body: FolderPatchIn, ctx: Ctx = Depends(requir
 def delete_folder(folder_id: UUID, ctx: Ctx = Depends(require(Role.admin))):
     doomed = _descendants(ctx, vcs.get_folder(ctx, folder_id))
     paths = [vcs.repo_of(ctx, f.id) for f in doomed]
+    for f in doomed:
+        ctx.db.execute(delete(CommitName).where(CommitName.org_id == ctx.org_id, CommitName.scope == str(f.id)))
     ctx.repo(Folder).delete(doomed[0])  # DB cascades children, snippets, drafts
     ctx.db.commit()
     for p in paths:
@@ -70,7 +74,8 @@ def delete_folder(folder_id: UUID, ctx: Ctx = Depends(require(Role.admin))):
 def folder_history(folder_id: UUID, ctx: Ctx = Depends(require(Role.viewer))):
     repo = vcs.repo_of(ctx, vcs.get_folder(ctx, folder_id).id)
     tm = vcs.tag_map(repo)
-    return [vcs.commit_out(r, tm) for r in git.log(repo)]
+    nm = vcs.names(ctx, folder_id)
+    return [vcs.commit_out(r, tm, nm) for r in git.log(repo)]
 
 
 @router.get("/folders/{folder_id}/tags")

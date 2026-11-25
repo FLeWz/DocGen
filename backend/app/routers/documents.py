@@ -76,6 +76,10 @@ def delete_document(document_id: UUID, ctx: Ctx = E):
     d = docs.get_document(ctx, document_id)
     ctx.db.scalar(ctx.repo(Folder).query().where(Folder.id == d.folder_id).with_for_update())
     paths = [files.export_path(ctx.org_id, e.id, e.format) for e in ctx.repo(Export).list(Export.document_id == d.id)]
+    repo = vcs.repo_of(ctx, d.folder_id)
+    # overrides of commits that only this document owns go with it (shared commits keep theirs)
+    vcs.drop_names(ctx, d.folder_id, (r["sha"] for r in git.log(repo, d.id, key="Document-Id")
+                                      if len(vcs.TRAILER.findall(r["body"])) == 0 and len(vcs.DOC_TRAILER.findall(r["body"])) == 1))
     if d.head_sha:
         try:
             git.commit(vcs.repo_of(ctx, d.folder_id), re.sub(r"[<>\n]", "", ctx.user.name).strip() or "user",
@@ -96,7 +100,8 @@ def history(document_id: UUID, ctx: Ctx = V):
     d = docs.get_document(ctx, document_id)
     repo = vcs.repo_of(ctx, d.folder_id)
     tm = vcs.tag_map(repo)
-    return [vcs.commit_out(r, tm) for r in git.log(repo, d.id, key="Document-Id")]
+    nm = vcs.names(ctx, d.folder_id)
+    return [vcs.commit_out(r, tm, nm) for r in git.log(repo, d.id, key="Document-Id")]
 
 
 @router.get("/documents/{document_id}/updates")

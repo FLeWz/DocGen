@@ -146,6 +146,10 @@ class RestoreIn(BaseModel):
     version: str = Field(max_length=64)  # sha or tag
 
 
+class CommitRename(BaseModel):
+    name: str | None = Field(default=None, max_length=1000)  # null/blank = reset to the original; trimmed length checked in vcs.rename
+
+
 class CommitIn(BaseModel):
     message: str = Field(min_length=1, max_length=2000)
     snippet_ids: list[UUID] = Field(default=[], max_length=500)
@@ -220,7 +224,12 @@ class BaseDocVersionOut(BaseModel):
     number: int
     filename: str
     size: int
-    message: str
+    message: str  # display name (override) or the original
+    original_message: str | None = None
+    name: str | None = None
+    renamed: bool = False
+    renamed_by: str | None = None
+    renamed_at: datetime | None = None
     placeholders: dict
     variables: list = []
     created_at: datetime

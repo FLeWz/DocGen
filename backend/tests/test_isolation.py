@@ -113,7 +113,7 @@ def test_every_org_id_table_has_rls_and_not_null(owner_engine):
             "join information_schema.columns col on col.table_name=c.relname and col.column_name='org_id' "
             "where c.relkind='r' and col.table_schema='public'")).all()
     assert {r[0] for r in rows} >= {"memberships", "invites", "folders", "snippets", "drafts", "styles", "images",
-                              "base_documents", "base_doc_versions", "documents", "document_drafts", "document_refs", "exports", "imports"}
+                              "base_documents", "base_doc_versions", "documents", "document_drafts", "document_refs", "exports", "imports", "commit_names"}
     assert all(r[1] and r[2] == "NO" for r in rows), rows
 
 
@@ -169,6 +169,9 @@ COVERED = {  # every API route must be listed: a new endpoint forces a new isola
     # round 9: test_base_edit.py (roles, per-user drafts, conflicts), test_base_edit.test_b_cannot_touch_a_base_edit (isolation)
     "POST /api/base-documents/{id}/edit", "GET /api/imports/{import_id}/base-edit", "POST /api/imports/{import_id}/base-commit",
     "POST /api/imports/{import_id}/base-restore",
+    # round 14: test_commit_names.py (roles, validation, cross-org 404, cleanup)
+    "PATCH /api/folders/{folder_id}/commits/{sha}", "DELETE /api/folders/{folder_id}/commits/{sha}",
+    "PATCH /api/base-documents/{id}/versions/{sha}", "DELETE /api/base-documents/{id}/versions/{sha}",
 }
 
 

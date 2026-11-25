@@ -21,7 +21,7 @@ from ..models import BaseDocument, BaseDocVersion, Draft, Image, Import, Organiz
 from ..ooxml import collect_parts, neutralize_ole, opaque_element, rel_ids, rel_map
 from ..schemas import BaseCommitIn, BaseRestoreIn, VarPicks, ImportBaseIn, ConflictsIn, DraftIn, ImportPut, ImportSnippetOut, SelectionIn, SplitIn, UpdateApplyIn, UpdatePlanIn
 from . import images
-from .base_documents import _get as get_base, _head_docx, _read, _store, _versions, add_base
+from .base_documents import _get as get_base, _head_docx, _read, _store, _versions, add_base, named
 
 router = APIRouter(tags=["imports"])
 V = Depends(require(Role.viewer))
@@ -663,7 +663,8 @@ def base_edit_info(import_id: UUID, ctx: Ctx = A):
     started = next((v for v in vs if v.sha == i.base_sha), None)
     return dict(base_document=dict(id=bd.id, name=bd.name), started_number=started and started.number, head_number=head.number,
                 stale=i.base_sha != head.sha, diff=_diff(i),
-                versions=[dict(number=v.number, sha=v.sha, message=v.message, created_at=v.created_at, filename=v.filename) for v in vs])
+                versions=[dict(number=v.number, sha=v.sha, message=n.message, created_at=v.created_at, filename=v.filename)
+                          for v, n in zip(vs, named(ctx, vs))])
 
 
 @router.post("/imports/{import_id}/base-commit", status_code=201)

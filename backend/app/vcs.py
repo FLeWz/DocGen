@@ -1,13 +1,15 @@
 """Shared folder/snippet/draft logic for the git-backed routers."""
 import json
 import re
+import unicodedata
 from uuid import UUID
 
 from fastapi import HTTPException
+from sqlalchemy import func
 
 from .deps import Ctx
 from .git import content as C, repo as git
-from .models import Draft, Folder, Snippet
+from .models import CommitName, Draft, Folder, Snippet, User
 
 MAX_DOC = 5_000_000
 
@@ -129,10 +131,51 @@ DOC_TRAILER = re.compile(r"^Document-Id: ([0-9a-f-]{36})$", re.M)
 ANY_TRAILER = re.compile(r"^(?:Snippet|Document)-Id:.*$", re.M)  # server-written only: stripped from user text
 
 
-def commit_out(row: dict, tagmap: dict) -> dict:
+BASE_SCOPE = "base"
+
+
+def names(ctx: Ctx, scope) -> dict:
+    """sha -> override of one repo (folder id or BASE_SCOPE)."""
+    out = {}
+    for n in ctx.repo(CommitName).list(CommitName.scope == str(scope)):
+        u = n.renamed_by and ctx.db.get(User, n.renamed_by)
+        out[n.sha] = dict(name=n.name, by=u.name if u else None, at=n.renamed_at)
+    return out
+
+
+def name_fields(n: dict | None, original: str) -> dict:
+    """The ONE place that decides what a commit is called: the override, else the immutable git message."""
+    return dict(message=n["name"] if n else original, original_message=original, name=n and n["name"], renamed=bool(n),
+                renamed_by=n and n["by"], renamed_at=n and n["at"])
+
+
+def commit_out(row: dict, tagmap: dict, nm: dict | None = None) -> dict:
     body = row.pop("body")
-    return dict(**row, message=ANY_TRAILER.sub("", body).strip(), snippet_ids=TRAILER.findall(body),
+    return dict(**row, **name_fields((nm or {}).get(row["sha"]), ANY_TRAILER.sub("", body).strip()), snippet_ids=TRAILER.findall(body),
                 document_ids=DOC_TRAILER.findall(body), tags=tagmap.get(row["sha"], []))
+
+
+def rename(ctx: Ctx, scope, sha: str, name: str | None, original: str) -> dict | None:
+    """Set/replace (name) or remove (None/blank) the override. Caller has checked that sha is a commit of the repo."""
+    name = (name or "").strip()
+    if any(unicodedata.category(c) == "Cc" for c in name):
+        raise HTTPException(422, "name must not contain control characters")
+    if len(name) > 200:
+        raise HTTPException(422, "name is too long (max 200)")
+    row = ctx.repo(CommitName).first(CommitName.scope == str(scope), CommitName.sha == sha)
+    if not name:
+        row and ctx.repo(CommitName).delete(row)
+    elif row:
+        row.name, row.renamed_by, row.renamed_at = name, ctx.user.id, func.now()
+    else:
+        ctx.repo(CommitName).add(scope=str(scope), sha=sha, name=name, renamed_by=ctx.user.id)
+    ctx.db.commit()
+    return names(ctx, scope).get(sha)
+
+
+def drop_names(ctx: Ctx, scope, shas) -> None:
+    for n in ctx.repo(CommitName).list(CommitName.scope == str(scope), CommitName.sha.in_(list(shas))):
+        ctx.repo(CommitName).delete(n)
 
 
 def tag_map(repo) -> dict:

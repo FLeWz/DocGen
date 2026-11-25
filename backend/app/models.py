@@ -254,3 +254,16 @@ class Import(OrgScoped, Base):
     created_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     created_at: Mapped[datetime] = _now()
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class CommitName(OrgScoped, Base):
+    """Display-name override of a git commit (git itself is never rewritten: shas are pinned/tagged/cached).
+    scope = folder id (str) or 'base' for the organization's base-document repo."""
+    __tablename__ = "commit_names"
+    __table_args__ = (UniqueConstraint("org_id", "scope", "sha"),)
+    id: Mapped[uuid.UUID] = _id()
+    scope: Mapped[str] = mapped_column(String(36))
+    sha: Mapped[str] = mapped_column(String(40))
+    name: Mapped[str] = mapped_column(String(200))
+    renamed_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    renamed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

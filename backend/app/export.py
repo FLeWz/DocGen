@@ -138,8 +138,8 @@ def revision_rows(ctx: Ctx, d: Document, blocks: list[dict], base: dict | None =
     snippet titles with changed headings, changed headings of the base document)."""
     rows: dict[str, dict] = {}
 
-    def add(repo, commits, sections, skip_oldest=False):
-        tm = vcs.tag_map(repo)
+    def add(repo, scope, commits, sections, skip_oldest=False):
+        tm, nm = vcs.tag_map(repo), vcs.names(ctx, scope)
         for i, c in enumerate(commits):  # newest first: the predecessor is the next entry
             if skip_oldest and i == len(commits) - 1:
                 continue
@@ -148,27 +148,27 @@ def revision_rows(ctx: Ctx, d: Document, blocks: list[dict], base: dict | None =
                 r = rows[c["sha"]]
                 r["sections"] = ", ".join(dict.fromkeys(x for x in [r["sections"], sec] if x))
                 continue
-            c = vcs.commit_out(c, tm)
+            c = vcs.commit_out(c, tm, nm)
             subject = c["message"].split("\n")[0]
             rows[c["sha"]] = dict(version=(c["tags"] or [c["sha"][:7]])[0], date=dmy(c["date"][:10]), author=c["author_name"], message=subject,
                                   sections=sec, commit=subject, status="Tagged" if c["tags"] else "Committed", _k=(c["date"], c["sha"]))
 
     repo = vcs.repo_of(ctx, d.folder_id)
-    add(repo, git.log(repo, d.id, key="Document-Id", rev=rev),  # rev: only commits up to a historic version
+    add(repo, d.folder_id, git.log(repo, d.id, key="Document-Id", rev=rev),  # rev: only commits up to a historic version
         lambda c, p: _doc_sections(ctx, p and docs.version_at(ctx, d, p["sha"]), docs.version_at(ctx, d, c["sha"])))
     for b in blocks:
         s = b["type"] == "snippet_ref" and ctx.repo(Snippet).get(UUID(b["snippet_id"]))
         sha = s and docs.pin_sha(ctx, b, s)
         if sha:
             srepo = vcs.repo_of(ctx, s.folder_id)
-            add(srepo, git.log(srepo, s.id, rev=sha),
+            add(srepo, s.folder_id, git.log(srepo, s.id, rev=sha),
                 lambda c, p, s=s, srepo=srepo: _snippet_sections(p and C.version_at(srepo, p["sha"], s.id), C.version_at(srepo, c["sha"], s.id)))
     bid = base and UUID(base["id"])
     brepo = git.base_repo_path(ctx.org_id)
     if bid and base.get("sha") and brepo.exists():
         path = f"base/{bid}.docx"
         commits = git.log(brepo, bid, key="Base-Document-Id", rev=base["sha"])
-        add(brepo, commits, lambda c, p: ", ".join(h or "(front matter)" for h in changed_headings(
+        add(brepo, vcs.BASE_SCOPE, commits, lambda c, p: ", ".join(h or "(front matter)" for h in changed_headings(
             _base_headings(p and git.show(brepo, p["sha"], path)), _base_headings(git.show(brepo, c["sha"], path)))),
             skip_oldest=True)  # the upload of version 1 is not a revision of the document
     return [{k: v for k, v in r.items() if k != "_k"} for r in sorted(rows.values(), key=lambda r: r["_k"])]
@@ -187,7 +187,7 @@ def build_spec(ctx: Ctx, d: Document, at: str | None = None) -> dict:
         w = log and log[0]["sha"] == git.resolve(repo, at) and docs.version_at(ctx, d, log[0]["sha"])
         if not w:
             raise HTTPException(404, "version not found")
-        c = vcs.commit_out(log[0], vcs.tag_map(repo))
+        c = vcs.commit_out(log[0], vcs.tag_map(repo), vcs.names(ctx, d.folder_id))
     else:
         w = docs.working(ctx, d)
     blocks = []

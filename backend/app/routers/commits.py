@@ -2,7 +2,7 @@ import re
 from collections import Counter
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Path
 from sqlalchemy.exc import IntegrityError
 
 import difflib
@@ -12,7 +12,7 @@ from ..deps import Ctx, require
 from ..git import content as C, repo as git
 from ..files import image_path
 from ..models import DocDraft, DocRef, Document, Draft, Folder, Image, Role, Snippet
-from ..schemas import CommitIn
+from ..schemas import CommitIn, CommitRename
 
 router = APIRouter(tags=["commits"])
 
@@ -126,3 +126,19 @@ def commit(folder_id: UUID, body: CommitIn, ctx: Ctx = Depends(require(Role.edit
         ctx.repo(DocDraft).delete(dr)
     ctx.db.commit()
     return dict(sha=sha, snippet_ids=[s.id for s, _ in picked], document_ids=[d.id for d, _ in pdocs])
+
+
+@router.patch("/folders/{folder_id}/commits/{sha}")
+@router.delete("/folders/{folder_id}/commits/{sha}")
+def rename_commit(folder_id: UUID, sha: str = Path(pattern=r"^[0-9a-f]{40}$"), body: CommitRename | None = None,
+                  ctx: Ctx = Depends(require(Role.editor))):
+    """Display-name override only (git is never rewritten). Empty/null name or DELETE = reset to the original."""
+    f = vcs.get_folder(ctx, folder_id)
+    repo = vcs.repo_of(ctx, f.id)
+    try:
+        git.resolve(repo, sha)  # a real commit of THIS folder's repo
+    except git.NotFound:
+        raise HTTPException(404, "commit not found")
+    vcs.rename(ctx, f.id, sha, body and body.name, "")
+    row = git.log(repo, rev=sha, limit=1)[0]
+    return vcs.commit_out(row, vcs.tag_map(repo), vcs.names(ctx, f.id))

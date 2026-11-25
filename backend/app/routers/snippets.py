@@ -98,7 +98,8 @@ def history(snippet_id: UUID, ctx: Ctx = V):
     s = vcs.get_snippet(ctx, snippet_id)
     repo = vcs.repo_of(ctx, s.folder_id)
     tm = vcs.tag_map(repo)
-    return [vcs.commit_out(r, tm) for r in git.log(repo, s.id)]
+    nm = vcs.names(ctx, s.folder_id)
+    return [vcs.commit_out(r, tm, nm) for r in git.log(repo, s.id)]
 
 
 @router.get("/snippets/{snippet_id}/diff")

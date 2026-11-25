@@ -3,16 +3,16 @@ import re
 import zipfile
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Path, Query, Response, UploadFile
 from sqlalchemy import func, text
 from sqlalchemy.exc import IntegrityError
 
-from .. import base_docs, docx_vars
+from .. import base_docs, docx_vars, vcs
 from ..ooxml import neutralize_ole
 from ..deps import Ctx, require
 from ..git import repo as git
 from ..models import BaseDocument, BaseDocVersion, DocDraft, Document, Export, Role
-from ..schemas import BaseDocOut, BaseDocVersionOut, BaseDocRename, VarPicks, Variables
+from ..schemas import BaseDocOut, BaseDocVersionOut, BaseDocRename, CommitRename, VarPicks, Variables
 from .. import docs
 
 router = APIRouter(tags=["base-documents"])
@@ -29,6 +29,12 @@ def _get(ctx: Ctx, id: UUID) -> BaseDocument:
 
 def _versions(ctx: Ctx, bd: BaseDocument) -> list[BaseDocVersion]:
     return sorted(ctx.repo(BaseDocVersion).list(BaseDocVersion.base_document_id == bd.id), key=lambda v: -v.number)
+
+
+def named(ctx: Ctx, vs: list[BaseDocVersion]) -> list[BaseDocVersionOut]:
+    """Versions with their display names (vcs.name_fields): `message` = override or original."""
+    nm = vcs.names(ctx, vcs.BASE_SCOPE)
+    return [BaseDocVersionOut.model_validate(v, from_attributes=True).model_copy(update=vcs.name_fields(nm.get(v.sha), v.message)) for v in vs]
 
 
 class NameExists(Exception):
@@ -76,7 +82,7 @@ def _usage(ctx: Ctx) -> dict[str, list[dict]]:
 def _out(ctx: Ctx, bd: BaseDocument, usage: dict | None = None) -> BaseDocOut:
     vs = _versions(ctx, bd)
     used = (usage if usage is not None else _usage(ctx)).get(str(bd.id), [])
-    return BaseDocOut(id=bd.id, name=bd.name, head=vs[0] if vs else None, version_count=len(vs), created_at=bd.created_at,
+    return BaseDocOut(id=bd.id, name=bd.name, head=named(ctx, vs[:1])[0] if vs else None, version_count=len(vs), created_at=bd.created_at,
                       updated_at=vs[0].created_at if vs else bd.created_at, used_by=len({u["document_id"] for u in used}))
 
 
@@ -166,9 +172,11 @@ def delete_base_document(id: UUID, ctx: Ctx = A):
     if used:
         raise HTTPException(409, detail=dict(message=f"{len({u['document_id'] for u in used})} document(s) still use this base document", error="in_use",
                                              documents=[{**u, "document_id": str(u["document_id"]), "folder_id": str(u["folder_id"])} for u in used]))
+    _vs = _versions(ctx, bd)
     ctx.repo(BaseDocument).delete(bd)
     ctx.db.flush()
     repo = git.base_repo_path(ctx.org_id)
+    vcs.drop_names(ctx, vcs.BASE_SCOPE, (v.sha for v in _vs))
     if repo.exists():
         try:
             git.commit(repo, re.sub(r"[<>\n]", "", ctx.user.name).strip() or "user", ctx.user.email,
@@ -235,7 +243,23 @@ def new_version(id: UUID, file: UploadFile, message: str = Form(default="", max_
 
 @router.get("/base-documents/{id}/versions", response_model=list[BaseDocVersionOut])
 def versions(id: UUID, ctx: Ctx = V):
-    return _versions(ctx, _get(ctx, id))
+    return named(ctx, _versions(ctx, _get(ctx, id)))
+
+
+@router.patch("/base-documents/{id}/versions/{sha}", response_model=BaseDocVersionOut)
+@router.delete("/base-documents/{id}/versions/{sha}", response_model=BaseDocVersionOut)
+def rename_version(id: UUID, sha: str = Path(pattern=r"^[0-9a-f]{40}$"), body: CommitRename | None = None, ctx: Ctx = A):
+    """Display-name override of a version's commit (git untouched). Empty/null name or DELETE = reset."""
+    bd = _get(ctx, id)
+    v = ctx.repo(BaseDocVersion).first(BaseDocVersion.base_document_id == bd.id, BaseDocVersion.sha == sha)
+    try:
+        if not v:
+            raise git.NotFound(sha)
+        git.resolve(git.base_repo_path(ctx.org_id), sha)
+    except (git.NotFound, git.GitError):
+        raise HTTPException(404, "version not found")
+    vcs.rename(ctx, vcs.BASE_SCOPE, sha, body and body.name, v.message)
+    return named(ctx, [v])[0]
 
 
 @router.get("/base-documents/{id}/download")
