@@ -129,6 +129,7 @@ For production remove the `mail` service and point `SMTP_*` at a real server. Em
 `AUTH_MODE=oidc` replaces the built-in passwords with your company's identity provider (Authorization Code + PKCE). Setup, every
 `OIDC_*` variable, the callback URL to register (`<PUBLIC_URL>/api/auth/oidc/callback`), provisioning rules (accounts are auto-created; the role comes from the Keycloak client roles `owner/admin/editor/viewer` in the token; no role = refused), Keycloak / Entra ID / Okta /
 Authentik / ADFS examples and troubleshooting: **[docs/OIDC.md](docs/OIDC.md)**. Default stays `AUTH_MODE=local`.
+Logout ends the DocGen session first and then the IdP's SSO session (RP-initiated, `id_token_hint`); in Keycloak register `<PUBLIC_URL>/login` as a *Valid post logout redirect URI* (details in docs/OIDC.md, round 19).
 
 ## Mail (SMTP)
 
@@ -209,6 +210,8 @@ Tables (round 8): while the cursor is in a table a contextual **Table** tab, a f
 Round 9: admins can **edit base documents** directly (Base documents > Details > Edit, or from the document builder): the same editor as imports, *Commit…* writes a new version (author = you; documents keep their pinned version, the builder offers the bump). *Insert > Revision table* drops in a dynamic table over the built-in `revision_history` (date, revision, author, changed sections, commit). Embedded Word objects (OLE) survive import/export; only linked/macro/executable ones are dropped, with a warning. See docs/DECISIONS.md, round 9.
 
 Round 13: revision tables accept the old and new column keys (`row.revision`/`row.version`, `edited_by`/`author`, `description`/`message`/`commit`, ...), blank rows are dropped and an empty history prints one "No revisions yet" row. Document history has **Download DOCX/PDF** per commit (the document as committed: its pins, variables, `doc.version` = tag or short sha); renders are cached under `/files/{org}/cache/` until a tag changes the revision table (`GET /api/documents/{id}/versions/{sha}/export`). See docs/DECISIONS.md, round 13.
+
+Round 19: text boxes and other opaque blocks get *Edit text* / *Convert to text* on hover; harmless wrappers (smart tags, plain content controls, tracked insertions, comment markers, REF fields, internal links) import as editable text; inserting a table or figure offers a caption (Insert dialog, default on); caption numbers read as plain numbers; editor view prefs are stored under versioned keys. See docs/DECISIONS.md "Round 19".
 
 Dates (round 11): every date shown or generated is **DD.MM.YYYY** (timestamps in the UI: DD.MM.YYYY HH:mm, 24 h, browser time zone): UI tables, `doc.date`, date variables, revision history, `date` filter default (`%d.%m.%Y`). Date variables are text inputs accepting DD.MM.YYYY or YYYY-MM-DD, stored as ISO in the document. Frontend formatting lives in `frontend/src/dates.ts` only (a test forbids `toLocale*String`/`Intl.DateTimeFormat` elsewhere); backend in `backend/app/dates.py`. Explicit filter formats (`date:YYYY-MM-DD`, `date:%d/%m/%y`) are honoured. See docs/DECISIONS.md, round 11.
 

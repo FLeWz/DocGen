@@ -99,5 +99,11 @@ Stable `data-testid`s are used by `e2e/*.py`: `preview`, `word-pdf`, `save-statu
 
 
 ## Editor view (round 18)
-- `RichEditor` (snippets, imports, base documents): Preview mode `off` (default) / Live / Word PDF, Zoom 100% default; both remembered in localStorage (`docgen.editor.preview`, `docgen.editor.zoom`, helper `editor/prefs.ts`).
+- `RichEditor` (snippets, imports, base documents): Preview mode `off` (default) / Live / Word PDF, Zoom 100% default; both remembered in localStorage (`docgen.editor.v2.preview`, `docgen.editor.v2.zoom`: versioned so pre-round-18 values are ignored; helper `editor/prefs.ts`).
 - Fullscreen/focus mode: button `data-testid="focus-toggle"`, Ctrl+Shift+F, Esc (not while a dialog/menu is open), `?focus=1`. Class `ed-focus` on `<html>` hides topbar, sidebar, right panel, page head; ribbon, title/save status/actions and the view bar stay. The `F11` button is the real browser Fullscreen API.
+
+## Round 19
+- **Opaque blocks.** Hover (editable editors only) shows `✎ Edit text` (text boxes: a modal with one paragraph per line, written back into every `w:txbxContent` of the block, shape/anchor XML verbatim) and `Convert to text` (confirm; plain paragraphs with the visible text and paragraph style; Ctrl+Z restores). The tooltip names the reason (`opaqueText.ts` `OPAQUE_WHY`). Kind `bookmark` is invisible. Import warnings list `N× kind: reason` and `N× wrapper: shown as editable text`.
+- **Insert table / image.** The size picker, the 3×3 button and the image upload open a dialog: rows/columns (table) or file name (figure), `Add caption` checkbox (default on, remembered in `docgen.caption.add`, position per kind in `docgen.caption.pos.<kind>`), Position (tables above, figures below), Label (Table/Figure/Listing/custom), Caption text. Caption and block go in with one `insertContent` (one undo). Header/footer editors insert without the dialog. Insert caption for an existing table/image: Insert/Table tab button or Ctrl+Alt+L.
+- **Caption numbers** read as plain text (no chip, no `ARABIC`, no field code); the real `SEQ` field stays in the DOCX; tooltip "Automatic number". Numbers renumber live (`Derived` plugin) per label; an imported `Table \* ARABIC` argument counts as `Table`.
+- Login (OIDC): "You have been signed out." notice after a logout; the SSO button keeps working with `prompt=login` once.
