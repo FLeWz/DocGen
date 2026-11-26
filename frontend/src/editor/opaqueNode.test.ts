@@ -28,6 +28,6 @@ test("bookmark markers are invisible, read-only editors show no actions", () => 
   const e = mk(`<w:bookmarkStart ${NS} w:id="1" w:name="x"/>`, "bookmark");
   expect(e.view.dom.querySelector(".opaque-hidden")).not.toBeNull();
   expect(e.view.dom.querySelectorAll(".opaque-bar button")).toHaveLength(0);
-  const ro = mk(XML); ro.setEditable(false);
-  expect(ro.view.dom.querySelectorAll(".opaque-bar button").length).toBeGreaterThanOrEqual(0);
+  const ro = mk(XML); ro.setEditable(false); (ro.view.dom.querySelector(".opaque-bar button") as HTMLButtonElement).click();
+  expect(ro.getJSON().content![0].type).toBe("opaque");  // read-only editors ignore the actions (CSS hides the bar)
 });

@@ -103,10 +103,10 @@ export const Opaque = Node.create({
         dom.title = opaqueWhy(String(n.attrs.kind));
         if (html) body.innerHTML = html; else body.textContent = `⬚ ${n.attrs.kind}`;
         bar.replaceChildren();
-        if (!editor.isEditable || n.attrs.kind === "bookmark") return;
-        if (textboxLines(xml)) btn("✎ Edit text", "Edit the text of this text box (the shape stays)", () => { const pos = at(); if (pos !== null) window.dispatchEvent(new CustomEvent("docgen:textbox", { detail: { editor, pos } })); });
+        if (n.attrs.kind === "bookmark") return;  // shown only while the editor is editable (CSS), so no repaint on the read-only -> ready switch
+        if (textboxLines(xml)) btn("✎ Edit text", "Edit the text of this text box (the shape stays)", () => { const pos = at(); if (pos !== null && editor.isEditable) window.dispatchEvent(new CustomEvent("docgen:textbox", { detail: { editor, pos } })); });
         btn("Convert to text", "Replace this block by plain paragraphs holding its text (the drawing, shape and formatting are lost; undo brings it back)", () => {
-          const pos = at(); if (pos === null) return;
+          const pos = at(); if (pos === null || !editor.isEditable) return;
           if (!window.confirm("Convert to plain paragraphs? The drawing/shape/field and its formatting are lost (Ctrl+Z undoes it).")) return;
           const ls = visibleLines(String(n.attrs.xml ?? ""));
           const paras = (ls.length ? ls : [{ text: "", style: null }]).map((l) => ({ type: "paragraph", attrs: { styleId: l.style && /^[A-Za-z0-9_-]{1,60}$/.test(l.style) ? l.style : null }, ...(l.text ? { content: [{ type: "text", text: l.text }] } : {}) }));

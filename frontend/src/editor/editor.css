@@ -163,7 +163,7 @@
 .opaque-view, .opaque-chip { position: relative; }
 .opaque-bar { display: none; position: absolute; top: 2px; right: 2px; gap: 4px; z-index: 3; }
 .opaque-bar button { font: 12px system-ui, sans-serif; padding: 1px 8px; border: 1px solid #999; border-radius: 10px; background: #fff; color: #333; cursor: pointer; }
-.opaque-view:hover > .opaque-bar, .opaque-chip:hover > .opaque-bar, .ProseMirror-selectednode > .opaque-bar { display: flex; }
+.ProseMirror[contenteditable=true] .opaque-view:hover > .opaque-bar, .ProseMirror[contenteditable=true] .opaque-chip:hover > .opaque-bar, .ProseMirror[contenteditable=true] .ProseMirror-selectednode > .opaque-bar { display: flex; }
 .opaque-hidden { height: 0; margin: 0; overflow: hidden; }
 .opaque-hidden .ProseMirror-selectednode { outline: none; }
 
