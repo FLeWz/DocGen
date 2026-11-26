@@ -109,9 +109,14 @@ Stable `data-testid`s are used by `e2e/*.py`: `preview`, `word-pdf`, `save-statu
 - Login (OIDC): "You have been signed out." notice after a logout; the SSO button keeps working with `prompt=login` once.
 
 ## Round 20: editing modes
-- View bar (first item): segmented switch `Word | Markdown` (`data-testid="mode-word|mode-markdown"`, `aria-pressed`). Registry in `editor/modes.ts` (adding LaTeX = one entry). Disabled with a tooltip while the Structure sidebar or the header/footer editor is open, for viewers, and while loading.
+- View bar (first item): segmented switch `Word | Markdown | LaTeX` (`data-testid="mode-word|mode-markdown|mode-latex"`, `aria-pressed`). Registry in `editor/modes.ts` (one entry per mode; text -> text goes through Word with the same error/lossy rules). Disabled with a tooltip while the Structure sidebar or the header/footer editor is open, for viewers, and while loading.
 - Default is Word on every open; the mode lives in `RichEditor` state only. Reload, restore/discard of the draft or leaving the editor = Word.
 - Markdown mode: CodeMirror 6 (`.mdsrc`, `data-testid="text-editor"`, line numbers, wrapping, search Ctrl+F, undo, theme from the CSS variables). The Word ribbon, Look, Page guides, Structure and Select blocks are hidden; Preview mode, Zoom, save status, focus mode (`?focus=1`), Commit stay. Preview (HTML or Word PDF) renders the last successfully parsed content (debounced 500 ms).
 - Error list (`data-testid="text-errors"`): `Line n, column m` buttons jump to the position; warnings only: `Switch anyway (lossy)` (`switch-lossy`). Read-only (locked by somebody else): the text editor is read-only; the lock is untouched by switching.
 - Insert > Equation / Ctrl+Alt+E / click an equation: dialog with LaTeX, Inline/Display, live KaTeX preview and the parse error (`math-latex`, `math-preview`, `math-ok`).
+
+## Round 21: LaTeX mode
+- Same shell as Markdown mode (error list, `Switch anyway (lossy)`, autosave rules, read-only when locked, disabled during header/footer editing and the Structure sidebar). `TextEditor` takes `mode`: `latex` = CodeMirror `StreamLanguage(stex)` (`@codemirror/legacy-modes`, bundled, no network), bracket matching, auto-closing brackets and completions from the static list in `editor/latex.ts` (commands and `\begin{...}` snippets; `LATEX_ITEMS`, tested in `latex.test.ts`). Aria label "LaTeX source".
+- A syntax error shows `Line n, column m` (click jumps) and the message, e.g. `\begin{itemize} is never closed`; ignored packages and unsupported commands are warnings (`line 9: \usepackage is ignored`).
+- Markdown <-> LaTeX: clicking the other text mode parses the current text to Word first (errors/warnings stop and show the list), then writes the other syntax.
 
