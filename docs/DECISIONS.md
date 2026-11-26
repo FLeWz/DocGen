@@ -273,3 +273,11 @@
 
 **Gaps.** Only tested against the mock IdP (`tests/mock_idp.py` now signs an access token and can put claims in id/access/userinfo separately), never a real Keycloak. A user removed from the group is refused at the next login but an existing DocGen session lives until it expires (no back-channel logout, no removal of the membership). Roles are not synced on a schedule, only at login. A user with an invite but no role is refused.
 
+
+## Round 18: editor defaults, taller editor, focus mode
+
+**Defaults.** Editors open with Preview off and Zoom 100%; the last choice is remembered per browser (localStorage), invalid values fall back to the defaults. The document builder's Preview modal (PDF default, PDF zoom "page-width") is unchanged: it is not an editor view.
+
+**Taller.** The stage was already the single scroll container; height was lost to chrome: a view bar wrapping to two rows (78 px -> 40 px) and the pane header (hidden when there is one pane). The ribbon (about 200 px) is untouched; it can be collapsed.
+
+**Focus mode.** In-app, not the Fullscreen API: a class on `<html>` driven by `?focus=1` (replace-state, so it survives reload and bookmarks, but is never stored). Shortcuts use a capture listener because the ribbon and ProseMirror stop propagation. Dialogs are native `<dialog>` top-layer, so they sit above it. Gaps: the lock bar and notice bars stay visible (they are already one compact line each); the base-document edit banner is not collapsed.

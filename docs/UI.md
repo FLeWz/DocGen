@@ -97,3 +97,7 @@ Stable `data-testid`s are used by `e2e/*.py`: `preview`, `word-pdf`, `save-statu
 - **Revision table, sections.** Only headings, table captions and figure captions with the section number of the built document: `3.2.1 Heading`, `Table 4: Specs (3.2.1)`, `Figure 2: Layout (3.2.1)`, `Heading (added|removed)`; text before the first heading shows the snippet title; entries `; `-joined, at most 12, then `+N more`.
 - Tests: `e2e/locks.py` (grant, deny, cooldown, badges, history; `locks.py timeout` runs in the throwaway stack of `make test-e2e-locks`), Vitest `lockstate.test.ts`.
 
+
+## Editor view (round 18)
+- `RichEditor` (snippets, imports, base documents): Preview mode `off` (default) / Live / Word PDF, Zoom 100% default; both remembered in localStorage (`docgen.editor.preview`, `docgen.editor.zoom`, helper `editor/prefs.ts`).
+- Fullscreen/focus mode: button `data-testid="focus-toggle"`, Ctrl+Shift+F, Esc (not while a dialog/menu is open), `?focus=1`. Class `ed-focus` on `<html>` hides topbar, sidebar, right panel, page head; ribbon, title/save status/actions and the view bar stay. The `F11` button is the real browser Fullscreen API.
