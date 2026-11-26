@@ -24,12 +24,12 @@ test("a bad formula reports the error and renders nothing; empty is not an error
 test("math node: attrs round-trip through JSON and HTML, atom inline", () => {
   const doc = { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "a " }, { type: "math", attrs: { latex: "x^2", display: false } }, { type: "math", attrs: { latex: "\\frac{a}{b}", display: true } }] }] };
   const e = new Editor({ extensions, content: doc });
-  const out = e.getJSON().content![0].content!;
+  const out = e.getJSON().content![0].content! as any[];
   expect(out[1]).toEqual({ type: "math", attrs: { latex: "x^2", display: false } });
   expect(out[2].attrs).toEqual({ latex: "\\frac{a}{b}", display: true });
   expect(e.view.dom.querySelectorAll(".math-node .katex").length).toBe(2);
   expect(e.view.dom.querySelector(".math-display")).not.toBeNull();
-  const again = new Editor({ extensions, content: e.getHTML() }).getJSON().content![0].content!;
+  const again = new Editor({ extensions, content: e.getHTML() }).getJSON().content![0].content! as any[];
   expect(again.filter((n) => n.type === "math").map((n) => n.attrs)).toEqual([{ latex: "x^2", display: false }, { latex: "\\frac{a}{b}", display: true }]);
 });
 
