@@ -2,11 +2,15 @@
 // app's CSS variables, so light and dark themes need no second theme.
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
 import { markdown } from "@codemirror/lang-markdown";
-import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
+import { autocompletion, closeBrackets, closeBracketsKeymap, completionKeymap } from "@codemirror/autocomplete";
+import { stex } from "@codemirror/legacy-modes/mode/stex";
+import { bracketMatching, HighlightStyle, StreamLanguage, syntaxHighlighting } from "@codemirror/language";
 import { highlightSelectionMatches, search, searchKeymap } from "@codemirror/search";
 import { EditorState } from "@codemirror/state";
 import { drawSelection, EditorView, highlightActiveLine, keymap, lineNumbers } from "@codemirror/view";
 import { tags as t } from "@lezer/highlight";
+import { latexCompletion } from "./latex";
+import type { ModeId } from "./modes";
 import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
 
 export type TextHandle = { jump: (offset: number) => void; focus: () => void };
@@ -14,6 +18,7 @@ export type TextHandle = { jump: (offset: number) => void; focus: () => void };
 const look = HighlightStyle.define([
   { tag: t.heading, fontWeight: "700", color: "var(--primary)" }, { tag: t.strong, fontWeight: "700" }, { tag: t.emphasis, fontStyle: "italic" },
   { tag: t.link, color: "var(--primary)" }, { tag: t.url, color: "var(--muted)" }, { tag: t.monospace, fontFamily: "var(--mono)" },
+  { tag: [t.tagName, t.keyword], color: "var(--primary)" }, { tag: t.comment, color: "var(--muted)", fontStyle: "italic" }, { tag: [t.bracket, t.atom], color: "var(--muted)" },
   { tag: t.quote, color: "var(--muted)" }, { tag: [t.processingInstruction, t.meta, t.contentSeparator], color: "var(--muted)" }, { tag: t.strikethrough, textDecoration: "line-through" },
 ]);
 const theme = EditorView.theme({
@@ -28,23 +33,25 @@ const theme = EditorView.theme({
   ".cm-searchMatch": { backgroundColor: "color-mix(in srgb, var(--primary) 25%, transparent)" },
 });
 
-export const TextEditor = forwardRef<TextHandle, { value: string; onChange: (v: string) => void; readOnly?: boolean; label?: string }>(function TextEditor({ value, onChange, readOnly, label }, ref) {
+export const TextEditor = forwardRef<TextHandle, { value: string; onChange: (v: string) => void; readOnly?: boolean; label?: string; mode?: ModeId }>(function TextEditor({ value, onChange, readOnly, label, mode }, ref) {
   const host = useRef<HTMLDivElement>(null), view = useRef<EditorView | null>(null), cb = useRef(onChange);
   cb.current = onChange;
   useEffect(() => {
     const v = new EditorView({
       parent: host.current!,
       state: EditorState.create({ doc: value, extensions: [
-        lineNumbers(), history(), drawSelection(), highlightActiveLine(), highlightSelectionMatches(), search({ top: true }), markdown(), EditorView.lineWrapping,
+        lineNumbers(), history(), drawSelection(), highlightActiveLine(), highlightSelectionMatches(), search({ top: true }), ...(mode === "latex"
+          ? [StreamLanguage.define(stex), bracketMatching(), closeBrackets(), autocompletion({ override: [latexCompletion] }), keymap.of([...closeBracketsKeymap, ...completionKeymap])]
+          : [markdown()]), EditorView.lineWrapping,
         syntaxHighlighting(look), theme, keymap.of([...searchKeymap, ...historyKeymap, ...defaultKeymap, indentWithTab]),
         EditorState.readOnly.of(!!readOnly), EditorView.editable.of(!readOnly),
-        EditorView.contentAttributes.of({ "aria-label": label ?? "Markdown source" }),
+        EditorView.contentAttributes.of({ "aria-label": label ?? "Source" }),
         EditorView.updateListener.of((u) => { if (u.docChanged) cb.current(u.state.doc.toString()); }),
       ] }),
     });
     view.current = v;
     return () => { v.destroy(); view.current = null; };
-  }, [readOnly]); // eslint-disable-line react-hooks/exhaustive-deps  (value is the initial text; later changes come from the editor itself)
+  }, [readOnly, mode]); // eslint-disable-line react-hooks/exhaustive-deps  (value is the initial text; later changes come from the editor itself)
   useImperativeHandle(ref, () => ({
     jump: (o) => { const v = view.current; if (v) { v.dispatch({ selection: { anchor: Math.min(o, v.state.doc.length) }, scrollIntoView: true }); v.focus(); } },
     focus: () => view.current?.focus(),

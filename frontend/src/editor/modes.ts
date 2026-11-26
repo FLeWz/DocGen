@@ -1,11 +1,12 @@
-// Editing modes: Word (the TipTap page editor) plus text views of the same JSON (markdown now, LaTeX = round 21).
+// Editing modes: Word (the TipTap page editor) plus text views of the same JSON (markdown, LaTeX).
 // Adding a mode = one entry in MODES (+ its `format`, which the backend bridge must know) - nothing else enumerates them.
 import type { PMNode } from "./doc";
 
-export type ModeId = "word" | "markdown";
+export type ModeId = "word" | "markdown" | "latex";
 export const MODES: { id: ModeId; label: string; format: string | null; hint: string }[] = [
   { id: "word", label: "Word", format: null, hint: "The page editor" },
   { id: "markdown", label: "Markdown", format: "markdown", hint: "The same content as markdown text (Word-only formatting as {attributes})" },
+  { id: "latex", label: "LaTeX", format: "latex", hint: "The same content as plain LaTeX (no packages, Word-only formatting as % docgen: comments)" },
 ];
 export const DEFAULT_MODE: ModeId = "word"; // every fresh editor opens in Word; the mode is never persisted
 export const modeOf = (id: ModeId) => MODES.find((m) => m.id === id)!;

@@ -6,7 +6,9 @@ const doc = { type: "doc", content: [{ type: "paragraph" }] };
 test("registry: Word is the default and has no text format; text modes name their backend format", () => {
   expect(DEFAULT_MODE).toBe("word");
   expect(modeOf("word").format).toBeNull();
-  expect(MODES.filter((m) => m.format).map((m) => m.format)).toEqual(["markdown"]);
+  expect(MODES.map((m) => m.id)).toEqual(["word", "markdown", "latex"]); // switch order: Word | Markdown | LaTeX
+  expect(MODES.filter((m) => m.format).map((m) => m.format)).toEqual(["markdown", "latex"]);
+  expect(MODES.every((m) => m.label && m.hint)).toBe(true);
   expect(new Set(MODES.map((m) => m.id)).size).toBe(MODES.length);
 });
 
@@ -40,4 +42,17 @@ test("error jump: 1-based line/column to a clamped offset", () => {
 test("the unsaved text of a failed parse is keyed per editor and mode", () => {
   expect(textKey(["draft", "abc"], "markdown")).toBe("docgen.text.markdown.draft/abc");
   expect(textKey(["draft", "abc"], "markdown")).not.toBe(textKey(["draft", "xyz"], "markdown"));
+});
+
+test("text-mode storage keys never collide between markdown and LaTeX of the same editor", () => {
+  expect(textKey(["snippet", "1"], "latex")).toBe("docgen.text.latex.snippet/1");
+  expect(textKey(["snippet", "1"], "latex")).not.toBe(textKey(["snippet", "1"], "markdown"));
+});
+
+test("a LaTeX error list jumps to line and column like markdown (1-based, clamped)", () => {
+  const t = "\\section{A}\n\\begin{itemize}\n\\item x\n";
+  expect(offsetOf(t, 2, 1)).toBe(t.indexOf("\\begin"));
+  expect(offsetOf(t, 3, 3)).toBe(t.indexOf("\\item") + 2);
+  expect(leaveText({ content: null, warnings: [], errors: [{ line: 2, column: 1, message: "\\begin{itemize} is never closed" }] }).kind).toBe("stay");
+  expect(leaveText({ content: doc, warnings: ["line 3: unsupported command \\foo is ignored"], errors: [] }).kind).toBe("ask");
 });

@@ -145,21 +145,23 @@ export function RichEditor({ qkey, load, save, keyOf, me, idleSaved, notices = [
       if (kept && kept !== r.text) { setErr("Restored the text you had not saved last time (it had errors)"); onText(kept); }
     } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
   };
-  const toWord = async (lossy = false) => {
-    if (!editor || busy) return;
+  const toWord = async (lossy = false): Promise<boolean> => {
+    if (!editor || busy) return false;
     setBusy(true);
     window.clearTimeout(parseT.current); parseSeq.current++;
     try {
       const r = await parse(txtRef.current), g = leaveText(r, lossy);
-      if (g.kind !== "go") { setConv({ errors: r.errors, warnings: r.warnings, content: r.content, ask: g.kind === "ask" }); return; }
+      if (g.kind !== "go") { setConv({ errors: r.errors, warnings: r.warnings, content: r.content, ask: g.kind === "ask" }); return false; }
       editor.commands.setContent(g.content as any, { emitUpdate: false });
       const json = editor.getJSON() as PMNode;
       setDoc(json); textDoc.current = null; localStorage.removeItem(textKey(qkey, modeRef.current));
       if (JSON.stringify(json) !== JSON.stringify(base.current)) { pending.current = true; touch(); }
       setConv(null); setErr(""); setMode("word");
-    } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
+      return true;
+    } catch (e) { setErr((e as Error).message); return false; } finally { setBusy(false); }
   };
-  const switchTo = (to: ModeId) => { if (to === mode) return; if (to === "word") toWord(); else if (mode === "word") toText(to); };
+  // text -> text goes through Word (parse with the same error/lossy rules, then write the other syntax)
+  const switchTo = async (to: ModeId) => { if (to === mode) return; if (to === "word") toWord(); else if (mode === "word") toText(to); else if (await toWord()) toText(to); };
   const [ready, setReady] = useState(false); // read-only until the document arrived: early typing would be wiped by the load
   // emitUpdate=false: the update event would autosave an unchanged draft just for opening it
   useEffect(() => { editor?.setEditable(!ro && ready, false); }, [editor, ro, ready]);
@@ -253,7 +255,7 @@ export function RichEditor({ qkey, load, save, keyOf, me, idleSaved, notices = [
       <div className={`panes ${pv === "off" && !src.import ? "single" : ""}`}>
         {mode !== "word" && <section className="pane" aria-label="Text editor pane">
           <div className="pane-h">{modeOf(mode).label} <span className="muted small" style={{ textTransform: "none", letterSpacing: 0, fontWeight: 400 }}>· the same content as text; saved as the usual draft when it parses</span></div>
-          <TextEditor key={`${mode}:${loaded.current}`} ref={tx} value={txtRef.current} readOnly={ro} onChange={onText} label={`${modeOf(mode).label} source`} />
+          <TextEditor key={`${mode}:${loaded.current}`} ref={tx} mode={mode} value={txtRef.current} readOnly={ro} onChange={onText} label={`${modeOf(mode).label} source`} />
           {conv && (conv.errors.length > 0 || conv.warnings.length > 0) && <div className={`mderrs ${conv.errors.length ? "bad" : "warn"}`} data-testid="text-errors" role="alert">
             <ul>
               {conv.errors.map((e, i) => <li key={`e${i}`}><button type="button" className="linklike" onClick={() => tx.current?.jump(offsetOf(txtRef.current, e.line, e.column))}>Line {e.line}, column {e.column}</button> {e.message}</li>)}
