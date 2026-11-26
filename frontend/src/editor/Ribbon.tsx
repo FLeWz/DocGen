@@ -2,6 +2,7 @@
 // Used by the document editor and by the header/footer editor (mode="hf": no document-level items). Named styles first (style
 // dropdown), direct formatting second (font, size, colour ... go into the `fmt` mark / `pfmt` attr, see fmt.ts).
 import type { Editor } from "@tiptap/core";
+import { MathDialog } from "./MathDialog";
 import { NodeSelection } from "@tiptap/pm/state";
 import { useEditorState } from "@tiptap/react";
 import { useEffect, useRef, useState } from "react";
@@ -103,6 +104,12 @@ export function Ribbon({ editor, ro, styles, mode = "body", onErr, structure, on
     return () => window.removeEventListener("docgen:cmd", h);
   }, [editor]);
   useEffect(() => { editor.view.dom.setAttribute("spellcheck", String(spell)); }, [editor, spell]);
+  const [mathAt, setMathAt] = useState<{ pos: number | null } | null>(null);  // equation dialog: pos = the equation being edited, null = insert at the cursor
+  useEffect(() => {  // raised by the equation node view (click) and by Ctrl+Alt+E
+    const h = (e: Event) => { const d = (e as CustomEvent).detail; if (d?.editor === editor && editor.isEditable) setMathAt({ pos: d.pos }); };
+    window.addEventListener("docgen:math", h);
+    return () => window.removeEventListener("docgen:math", h);
+  }, [editor]);
   const [tb, setTb] = useState<{ pos: number; text: string } | null>(null);  // "Edit text box content" (raised by the opaque node view)
   useEffect(() => {
     const h = (e: Event) => {
@@ -354,6 +361,7 @@ export function Ribbon({ editor, ro, styles, mode = "body", onErr, structure, on
       </>}
     </G>
     <G label="Symbols">
+      {!hf && <I i="omega" t="Insert equation (Ctrl+Alt+E): LaTeX math, a native Word equation in the export" label="Equation" fn={() => setMathAt({ pos: null })} />}
       <I i="hr" t="Horizontal rule" fn={hr} /><I i="omega" t="Symbols and special characters" fn={() => setDlg("symbols")} /><I i="nbsp" t="Non-breaking space" fn={() => run().insertContent("\u00a0").run()} />
       <I i="br" t="Line break (Shift+Enter)" fn={() => run().setHardBreak().run()} />
     </G>
@@ -501,6 +509,14 @@ export function Ribbon({ editor, ro, styles, mode = "body", onErr, structure, on
               <Field label="Label" hint="Table, Figure, Listing…">{(id) => <input id={id} list="cap-labels" value={copt.label} onChange={(e) => setCopt({ ...copt, label: e.target.value })} maxLength={30} />}</Field></div>
             <Field label="Caption text" hint="Numbered with a SEQ field, style Caption: lists of tables/figures find it.">{(id) => <input id={id} value={copt.text} onChange={(e) => setCopt({ ...copt, text: e.target.value })} autoFocus />}</Field></>}
         </form></Modal>}
+      {mathAt && (() => {
+        const n = mathAt.pos !== null ? editor.state.doc.nodeAt(mathAt.pos) : null, cur = n?.type.name === "math" ? n : null;
+        const sel = !cur && !editor.state.selection.empty ? editor.state.doc.textBetween(editor.state.selection.from, editor.state.selection.to) : "";
+        const done = () => { setMathAt(null); editor.commands.focus(); };
+        return <MathDialog editing={!!cur} initial={{ latex: String(cur?.attrs.latex ?? sel), display: !!cur?.attrs.display }} onClose={done}
+          onSubmit={(v) => { if (cur && mathAt.pos !== null) editor.chain().focus().command(({ tr }) => { tr.setNodeMarkup(mathAt.pos!, undefined, { ...cur.attrs, ...v }); return true; }).run(); else editor.chain().focus().insertContent({ type: "math", attrs: v }).run(); setMathAt(null); }}
+          onDelete={cur && mathAt.pos !== null ? () => { editor.chain().focus().deleteRange({ from: mathAt.pos!, to: mathAt.pos! + cur.nodeSize }).run(); setMathAt(null); } : undefined} />;
+      })()}
       {tb && <Modal title="Edit text box content" onClose={() => setTb(null)} actions={<><button className="btn" type="button" onClick={() => setTb(null)}>Cancel</button><button className="btn primary" form="tb-form">Save text</button></>}>
         <form id="tb-form" className="stack" onSubmit={(e) => { e.preventDefault(); saveTextbox(); }}>
           <Field label="Text" hint="One paragraph per line. The shape, its position and the paragraph formatting stay as they are.">{(id) => <textarea id={id} rows={10} value={tb.text} onChange={(e) => setTb({ ...tb, text: e.target.value })} autoFocus style={{ fontFamily: "monospace" }} />}</Field></form></Modal>}

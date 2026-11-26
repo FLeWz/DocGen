@@ -6,6 +6,7 @@ import { effectiveStyle, PMNode } from "./doc";
 import { cellStyle, esc, imgCss, listCss, pflags, pfmtCss, rowCss, runCss, safeId, tableCss } from "./fmt";
 import { applyDateFilter, todayIso } from "../dates";
 import { ooxmlToHtml } from "./ooxml";
+import { renderMath } from "./math";
 import { opaqueWhy } from "./opaqueText";
 import { tabbed, validStops } from "./tabs";
 import { listEntries } from "./outline";
@@ -40,6 +41,10 @@ function inline(n: PMNode): string {
     notes.items.push({ kind: n.attrs?.kind === "endnote" ? "endnote" : "footnote", text: String(n.attrs?.text ?? "") });
     const k = n.attrs?.kind === "endnote" ? "endnote" : "footnote", num = notes.items.filter((x) => x.kind === k).length;
     return `<sup class="fn" title="${esc(n.attrs?.text)}">${k === "endnote" ? roman(num) : num}</sup>`;
+  }
+  if (n.type === "math") {
+    const a = n.attrs ?? {}, r = renderMath(String(a.latex ?? ""), !!a.display);
+    return `<span class="math-node${a.display ? " math-display" : ""}"${r.error ? ` title="${esc(r.error)}"` : ""}>${r.html || esc(`$${a.latex ?? ""}$`)}</span>`;
   }
   if (n.type === "hardBreak") return n.attrs?.page ? '<span class="pgbrk"></span>' : "<br>";
   if (n.type === "variable") {

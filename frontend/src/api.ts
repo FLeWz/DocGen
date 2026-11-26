@@ -83,3 +83,11 @@ export type RefStatus = { block_id: string; folder_name: string | null; title: s
   resolved_sha: string | null; latest_sha: string | null; newer_commits: number; update_available: boolean };
 export type LibraryGroup = { folder_id: string; folder_name: string; tags: string[]; snippets: { id: string; title: string; slug: string; head_sha: string }[] };
 export type ExportStatus = { id: string; status: "queued" | "running" | "done" | "error"; error: string | null; warnings: string[] };
+
+/** Text views of editor content (backend pandoc bridge); `format` is a mode's `format` (see editor/modes.ts). */
+export type TextError = { line: number; column: number; message: string };
+export const convert = {
+  toText: (format: string, content: unknown) => api<{ text: string; map: unknown }>("/convert/to-text", "POST", { format, content }),
+  fromText: (format: string, text: string, base_content: unknown) =>
+    api<{ content: any | null; warnings: string[]; errors: TextError[] }>("/convert/from-text", "POST", { format, text, base_content }),
+};

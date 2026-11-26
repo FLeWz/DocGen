@@ -13,6 +13,8 @@ import StarterKit from "@tiptap/starter-kit";
 import { gridGuard, moveColumn, moveRow, run as runOp, type Op } from "./tables";
 import { esc, cellCss, imgCss, listCss, pflags, pfmtCss, rowCss, runCss, safeId, tableCss } from "./fmt";
 import { ooxmlToHtml, getMedia } from "./ooxml";
+import { renderMath } from "./math";
+import "katex/dist/katex.min.css";
 import { opaqueWhy, textboxLines, visibleLines } from "./opaqueText";
 import { BlockSelect } from "./blockrange";
 import { Pages } from "./pageplugin";
@@ -41,6 +43,30 @@ export const Variable = Node.create({
   },
   parseHTML: () => [{ tag: "span[data-variable]" }],
   renderHTML: ({ node, HTMLAttributes }) => ["span", mergeAttributes(HTMLAttributes, { class: "var-chip" }), `{{ ${node.attrs.name} }}`],
+});
+
+/** Equation: LaTeX in `latex`, drawn with KaTeX; `display` puts it on its own centred line. Exported to Word as a native equation (OMML). */
+export const MathNode = Node.create({
+  name: "math", group: "inline", inline: true, atom: true, selectable: true,
+  addAttributes() { return { latex: attr("latex", "data-latex", ""), display: { default: false, parseHTML: (el: HTMLElement) => el.hasAttribute("data-display"), rendered: false } }; },
+  parseHTML: () => [{ tag: "span[data-math]" }],
+  renderHTML: ({ node }) => ["span", { "data-math": "", "data-latex": node.attrs.latex, ...(node.attrs.display ? { "data-display": "1" } : {}), class: "math-node" }, `$${node.attrs.latex}$`],
+  renderText: ({ node }) => (node.attrs.display ? `$$${node.attrs.latex}$$` : `$${node.attrs.latex}$`),
+  addNodeView() {
+    return ({ node, editor, getPos }) => {
+      const dom = document.createElement("span");
+      dom.setAttribute("contenteditable", "false");
+      const paint = (n: typeof node) => {
+        const r = renderMath(String(n.attrs.latex ?? ""), !!n.attrs.display);
+        dom.className = `math-node${n.attrs.display ? " math-display" : ""}${r.error ? " math-bad" : ""}`;
+        dom.title = r.error ?? "Equation (click to edit)";
+        if (r.error || !r.html) dom.textContent = `$${n.attrs.latex}$`; else dom.innerHTML = r.html;
+      };
+      paint(node);
+      dom.addEventListener("click", () => { const pos = getPos(); if (typeof pos === "number" && editor.isEditable) window.dispatchEvent(new CustomEvent("docgen:math", { detail: { editor, pos } })); });
+      return { dom, update: (n) => { if (n.type !== node.type) return false; node = n; paint(n); return true; } };
+    };
+  },
 });
 
 export const ImageNode = Node.create({
@@ -252,7 +278,7 @@ export const Shortcuts = Extension.create({
   name: "shortcuts",
   addKeyboardShortcuts() {
     const go = (cmd: string) => () => { window.dispatchEvent(new CustomEvent("docgen:cmd", { detail: cmd })); return true; };
-    return { "Mod-k": go("link"), "Mod-f": go("find"), "Mod-h": go("find"), "Mod-/": go("shortcuts"), "Mod-Alt-l": go("caption"), "Mod-Shift-x": () => { const e = this.editor, on = e.getAttributes("fmt").strike === true; e.chain().focus().setMark("fmt", { ...e.getAttributes("fmt"), strike: on ? null : true }).run(); return true; } };
+    return { "Mod-k": go("link"), "Mod-f": go("find"), "Mod-h": go("find"), "Mod-/": go("shortcuts"), "Mod-Alt-l": go("caption"), "Mod-Alt-e": () => { window.dispatchEvent(new CustomEvent("docgen:math", { detail: { editor: this.editor, pos: null } })); return true; }, "Mod-Shift-x": () => { const e = this.editor, on = e.getAttributes("fmt").strike === true; e.chain().focus().setMark("fmt", { ...e.getAttributes("fmt"), strike: on ? null : true }).run(); return true; } };
   },
 });
 
@@ -302,7 +328,7 @@ export const extensions = [
   }),
   Table.extend({ addAttributes() { return { ...this.parent?.(), dynamicList: attr("dynamicList", "data-dynamic-list"), dynamicRows: hidden(), dynamicCols: hidden() }; } })
     .configure({ resizable: false }),
-  TableRow, TableHeader, TableCell, Variable, ImageNode, Fmt, HardBreak, Opaque, ImportAttrs, HeadingNumbers,
+  TableRow, TableHeader, TableCell, Variable, MathNode, ImageNode, Fmt, HardBreak, Opaque, ImportAttrs, HeadingNumbers,
   Field, Footnote, Toc, SectBreak, Derived, Shortcuts, TableKeys,
 ];
 
