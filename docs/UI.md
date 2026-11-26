@@ -107,3 +107,11 @@ Stable `data-testid`s are used by `e2e/*.py`: `preview`, `word-pdf`, `save-statu
 - **Insert table / image.** The size picker, the 3×3 button and the image upload open a dialog: rows/columns (table) or file name (figure), `Add caption` checkbox (default on, remembered in `docgen.caption.add`, position per kind in `docgen.caption.pos.<kind>`), Position (tables above, figures below), Label (Table/Figure/Listing/custom), Caption text. Caption and block go in with one `insertContent` (one undo). Header/footer editors insert without the dialog. Insert caption for an existing table/image: Insert/Table tab button or Ctrl+Alt+L.
 - **Caption numbers** read as plain text (no chip, no `ARABIC`, no field code); the real `SEQ` field stays in the DOCX; tooltip "Automatic number". Numbers renumber live (`Derived` plugin) per label; an imported `Table \* ARABIC` argument counts as `Table`.
 - Login (OIDC): "You have been signed out." notice after a logout; the SSO button keeps working with `prompt=login` once.
+
+## Round 20: editing modes
+- View bar (first item): segmented switch `Word | Markdown` (`data-testid="mode-word|mode-markdown"`, `aria-pressed`). Registry in `editor/modes.ts` (adding LaTeX = one entry). Disabled with a tooltip while the Structure sidebar or the header/footer editor is open, for viewers, and while loading.
+- Default is Word on every open; the mode lives in `RichEditor` state only. Reload, restore/discard of the draft or leaving the editor = Word.
+- Markdown mode: CodeMirror 6 (`.mdsrc`, `data-testid="text-editor"`, line numbers, wrapping, search Ctrl+F, undo, theme from the CSS variables). The Word ribbon, Look, Page guides, Structure and Select blocks are hidden; Preview mode, Zoom, save status, focus mode (`?focus=1`), Commit stay. Preview (HTML or Word PDF) renders the last successfully parsed content (debounced 500 ms).
+- Error list (`data-testid="text-errors"`): `Line n, column m` buttons jump to the position; warnings only: `Switch anyway (lossy)` (`switch-lossy`). Read-only (locked by somebody else): the text editor is read-only; the lock is untouched by switching.
+- Insert > Equation / Ctrl+Alt+E / click an equation: dialog with LaTeX, Inline/Display, live KaTeX preview and the parse error (`math-latex`, `math-preview`, `math-ok`).
+
