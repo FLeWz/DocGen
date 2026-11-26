@@ -24,6 +24,7 @@ const P: Record<string, string> = {
   rowDel: "M4 5h16v8H4zM4 9h16M8 17h8", colDel: "M5 4h8v16H5zM9 4v16M16 12h5", merge: "M4 6h16v12H4zM12 6v4M12 14v4M9 12h6", split: "M4 6h16v12H4zM12 6v12M9 12h-2M17 12h-2",
   trash: "M5 7h14M10 4h4M7 7l1 13h8l1-13", edit: "M4 20h4L19 9l-4-4L4 16zM13 7l4 4", move: "M5 12h14M15 8l4 4-4 4M9 8l-4 4 4 4",
   clock: "M12 4a8 8 0 1 0 0 16 8 8 0 0 0 0-16zM12 8v4l3 2", commit: "M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zM3 12h5M16 12h5",
+  expand: "M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5", shrink: "M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5",
   eye: "M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12zM12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6z", panel: "M4 5h16v14H4zM15 5v14",
   menu: "M4 6h16M4 12h16M4 18h16", grip: "M9 5h.01M15 5h.01M9 12h.01M15 12h.01M9 19h.01M15 19h.01", mail: "M4 6h16v12H4zM4 7l8 6 8-6",
   alert: "M12 4l9 16H3zM12 10v4M12 17h.01", info: "M12 4a8 8 0 1 0 0 16 8 8 0 0 0 0-16zM12 11v5M12 8h.01", logout: "M10 4H5v16h5M15 8l4 4-4 4M9 12h10",
