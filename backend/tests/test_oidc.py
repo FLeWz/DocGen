@@ -9,6 +9,8 @@ import pytest
 import uvicorn
 
 from app import config, oidc
+from sqlalchemy import text
+
 from app.db import SessionLocal
 
 from .conftest import PW, new_client, signup, token_from
@@ -36,12 +38,22 @@ def idp_server():
 def idp(idp_server, monkeypatch):
     idp_server.user = {"sub": "u-1", "email": "ann@example.com", "email_verified": True, "name": "Ann Example"}
     idp_server.tamper, idp_server.userinfo_only = {}, set()
-    for k, v in dict(AUTH_MODE="oidc", OIDC_ISSUER=idp_server.issuer, OIDC_CLIENT_ID="docgen", OIDC_CLIENT_SECRET="shh",
+    idp_server.extra = {"access": ra("viewer")}  # every login needs a client role; tests override
+    for k, v in dict(OIDC_ROLES_CLIENT_ID="docgen", OIDC_REALM_ROLES=False, OIDC_ROLE_PREFIX="", OIDC_DEFAULT_ROLE="",
+                     OIDC_GROUPS_CLAIM="", OIDC_ROLE_MAP={}, AUTH_MODE="oidc", OIDC_ISSUER=idp_server.issuer, OIDC_CLIENT_ID="docgen", OIDC_CLIENT_SECRET="shh",
                      OIDC_REDIRECT_URI=CB).items():
         monkeypatch.setattr(config, k, v)
     oidc._disc.clear()
     oidc._jwks.clear()
     return idp_server
+
+
+def ra(*roles, client="docgen"):
+    return {"resource_access": {client: {"roles": list(roles)}}}
+
+
+def role_of(c):
+    return c.get("/api/auth/me").json()["org"]["role"]
 
 
 def go(client, return_to=None):
@@ -70,7 +82,7 @@ def test_authorize_request_has_pkce_state_nonce(idp, client):
     assert "httponly" in c and "max-age=600" in c and "path=/api/auth/oidc" in c
 
 
-def test_login_provisions_first_user_as_owner_then_viewer(idp, client):
+def test_login_provisions_first_user_as_owner_then_role_from_token(idp, client):
     r = go(client)
     assert r.status_code == 302 and r.headers["location"] == "/"
     assert "httponly" in r.headers["set-cookie"].lower()
@@ -168,30 +180,169 @@ def test_missing_email_disallowed_domain_and_fallbacks(idp, client, monkeypatch)
 
 def test_groups_map_to_roles_and_refresh_each_login(idp, client, monkeypatch):
     monkeypatch.setattr(config, "OIDC_GROUPS_CLAIM", "realm.groups")  # dotted path into a nested claim
-    monkeypatch.setattr(config, "OIDC_ROLE_MAP", {"docgen-admins": "admin", "docgen-editors": "editor"})
-    ann = dict(idp.user)
-    go(client)  # first user = owner whatever the groups say
-    assert client.get("/api/auth/me").json()["org"]["role"] == "owner"
-    idp.user = {"sub": "u-2", "email": "bob@example.com", "realm": {"groups": ["x", "docgen-editors", "docgen-admins"]}}
+    monkeypatch.setattr(config, "OIDC_ROLE_MAP", {"/docgen/admin": "admin", "docgen-editors": "editor"})
+    go(client)  # first user = owner
+    idp.extra = {}
+    idp.user = {"sub": "u-2", "email": "bob@example.com", "realm": {"groups": ["x", "docgen-editors", "/docgen/admin"]}}
     c = new_client()
     go(c)
-    assert c.get("/api/auth/me").json()["org"]["role"] == "admin"  # highest mapped role
+    assert role_of(c) == "admin"  # highest mapped role
     idp.user["realm"]["groups"] = ["docgen-editors"]
     go(c)
-    assert c.get("/api/auth/me").json()["org"]["role"] == "editor"  # refreshed (demoted)
-    idp.user["realm"]["groups"] = []
-    go(c)
-    assert c.get("/api/auth/me").json()["org"]["role"] == "viewer"  # no mapped group: OIDC_DEFAULT_ROLE
-    idp.user = {**ann, "realm": {"groups": []}}
+    assert role_of(c) == "editor"  # demoted
+    idp.user["realm"]["groups"] = ["x"]
+    denied(go(c), "no DocGen role")
+    assert role_of(c) == "editor"  # refused login leaves the membership untouched
+
+
+@pytest.mark.parametrize("role", ["owner", "admin", "editor", "viewer"])
+def test_first_login_creates_account_with_access_token_client_role(idp, client, role):
+    go(client)  # ann: owner of the fresh org
+    idp.user = {"sub": "u-2", "email": "bob@example.com", "name": "Bob"}
+    idp.extra = {"access": ra(role)}
+    c = new_client()
+    assert go(c).headers["location"] == "/" and role_of(c) == role
+
+
+@pytest.mark.parametrize("where", ["userinfo", "id"])
+def test_role_only_in_userinfo_or_id_token(idp, client, where):
     go(client)
-    assert client.get("/api/auth/me").json()["org"]["role"] == "owner"  # owners are never demoted by groups
+    idp.user = {"sub": "u-2", "email": "bob@example.com"}
+    idp.extra = {where: ra("editor")}
+    c = new_client()
+    go(c)
+    assert role_of(c) == "editor"
 
 
-def test_invite_only_mode(idp, client, monkeypatch, outbox):
-    monkeypatch.setattr(config, "OIDC_AUTO_PROVISION", False)
-    msg = denied(go(client), "invite-only", "ann@example.com")
-    assert client.get("/api/auth/me").status_code == 401
-    # an admin of an existing org invites her
+def counts():
+    with SessionLocal() as db:
+        return db.execute(text("select (select count(*) from users), (select count(*) from identities), (select count(*) from memberships)")).one()
+
+
+def test_no_role_is_refused_and_nothing_is_created(idp, client):
+    idp.extra = {}
+    before = counts()
+    msg = denied(go(client), "Signed in as ann@example.com, but no DocGen role is assigned",
+                 "owner, admin, editor or viewer client role of docgen")
+    assert client.get("/api/auth/me").status_code == 401 and counts() == before, msg
+    idp.extra = {"access": ra("viewer", client="other"), "userinfo": ra("admin", client="doc")}  # roles of other clients
+    denied(go(client), "no DocGen role")
+    idp.extra = {"access": {"resource_access": {"docgen": {"roles": ["superuser", "uma_authorization"]}}}}
+    denied(go(client), "no DocGen role")
+    assert counts() == before
+
+
+def test_client_id_with_dots_and_override(idp, client, monkeypatch):
+    monkeypatch.setattr(config, "OIDC_ROLES_CLIENT_ID", "docgen.prod")
+    idp.extra = {"access": ra("editor", client="docgen.prod")}
+    go(client)
+    assert role_of(client) == "owner"  # first user
+    idp.extra = {"access": ra("viewer", client="docgen")}
+    denied(go(client), "client role of docgen.prod")
+
+
+def test_role_case_prefix_and_highest_wins(idp, client, monkeypatch):
+    go(client)
+    idp.user = {"sub": "u-2", "email": "bob@example.com"}
+    c = new_client()
+    idp.extra = {"access": ra(" Editor ", "VIEWER")}
+    go(c)
+    assert role_of(c) == "editor"
+    monkeypatch.setattr(config, "OIDC_ROLE_PREFIX", "docgen-")
+    idp.extra = {"access": ra("docgen-Admin", "viewer", "offline_access")}
+    go(c)
+    assert role_of(c) == "admin"
+    idp.extra = {"access": ra("editor")}  # unprefixed names are still accepted
+    go(c)
+    assert role_of(c) == "editor"
+
+
+def test_roles_from_all_sources_highest_wins(idp, client):
+    go(client)
+    idp.user = {"sub": "u-2", "email": "bob@example.com"}
+    idp.extra = {"id": ra("viewer"), "access": ra("editor"), "userinfo": ra("admin")}
+    c = new_client()
+    go(c)
+    assert role_of(c) == "admin"
+
+
+def test_promotion_and_demotion_at_next_login(idp, client):
+    go(client)
+    idp.user = {"sub": "u-2", "email": "bob@example.com"}
+    c = new_client()
+    for r in ("viewer", "admin", "editor", "owner", "viewer"):
+        idp.extra = {"access": ra(r)}
+        go(c)
+        assert role_of(c) == r, r
+
+
+def test_last_owner_is_never_demoted(idp, client, caplog):
+    go(client)  # ann = only owner
+    idp.extra = {"access": ra("viewer")}
+    with caplog.at_level("WARNING"):
+        go(client)
+    assert role_of(client) == "owner" and "only owner" in caplog.text
+    idp.user = {"sub": "u-2", "email": "bob@example.com"}  # second owner: now ann can be demoted
+    idp.extra = {"access": ra("owner")}
+    c = new_client()
+    go(c)
+    idp.user = {"sub": "u-1", "email": "ann@example.com"}
+    idp.extra = {"access": ra("viewer")}
+    go(client)
+    assert role_of(client) == "viewer"
+
+
+@pytest.mark.parametrize("tamper", [{"at_bad_sig": True}, {"at_unsigned": True}, {"at_azp": "another-client"}, {"at_opaque": True}])
+def test_bad_access_token_is_ignored(idp, client, tamper, caplog):
+    go(client)
+    idp.user = {"sub": "u-2", "email": "bob@example.com"}
+    idp.extra = {"access": ra("admin")}
+    idp.tamper = tamper
+    with caplog.at_level("WARNING"):
+        denied(go(new_client()), "no DocGen role")  # claims of an unverified token never count
+    assert "access token ignored" in caplog.text
+    idp.extra["userinfo"] = ra("editor")  # userinfo (server-to-server, sub-checked) still works
+    c = new_client()
+    go(c)
+    assert role_of(c) == "editor"
+
+
+def test_realm_roles_option(idp, client, monkeypatch):
+    go(client)
+    idp.user = {"sub": "u-2", "email": "bob@example.com"}
+    idp.extra = {"access": {"realm_access": {"roles": ["admin"]}}}
+    denied(go(new_client()), "no DocGen role")  # off by default
+    monkeypatch.setattr(config, "OIDC_REALM_ROLES", True)
+    c = new_client()
+    go(c)
+    assert role_of(c) == "admin"
+
+
+def test_default_role_fallback(idp, client, monkeypatch):
+    go(client)
+    idp.user = {"sub": "u-2", "email": "bob@example.com"}
+    idp.extra = {}
+    monkeypatch.setattr(config, "OIDC_DEFAULT_ROLE", "editor")
+    c = new_client()
+    go(c)
+    assert role_of(c) == "editor"
+
+
+def test_missing_resource_access_warns_with_hint(idp, client, caplog):
+    idp.extra = {}
+    with caplog.at_level("WARNING"):
+        denied(go(client), "no DocGen role")
+    assert "client roles mapper" in caplog.text and "Full scope allowed" in caplog.text
+
+
+def test_auto_provision_zero_is_ignored_with_warning(monkeypatch, caplog):
+    monkeypatch.setenv("OIDC_AUTO_PROVISION", "0")
+    with caplog.at_level("WARNING"):
+        oidc.warn_legacy()
+    assert "OIDC_AUTO_PROVISION is ignored" in caplog.text
+
+
+def test_invite_is_still_accepted_but_not_required(idp, client, monkeypatch, outbox):
     owner = new_client()
     monkeypatch.setattr(config, "AUTH_MODE", "local")  # the test harness logs the inviting admin in with a password
     signup(owner, "owner@x.co", org="Acme")
@@ -203,9 +354,10 @@ def test_invite_only_mode(idp, client, monkeypatch, outbox):
     assert me["org"]["name"] == "Acme" and me["org"]["role"] == "editor"  # invite accepted at sign-in
     inv = [i for i in owner.get("/api/invites").json() if i["email"] == "ann@example.com"][0]
     assert inv["status"] == "accepted"
-    assert go(new_client()).status_code == 302  # known identity still logs in without any pending invite
-    idp.user = {"sub": "u-3", "email": "eve@example.com"}
-    denied(go(new_client()), "invite-only")
+    assert go(new_client()).status_code == 302  # known identity logs in again
+    idp.user = {"sub": "u-3", "email": "eve@example.com"}  # no invite needed
+    c = new_client()
+    assert go(c).headers["location"] == "/" and c.get("/api/auth/me").json()["user"]["email"] == "eve@example.com"
 
 
 def test_existing_password_user_is_not_linked_unless_enabled(idp, client, monkeypatch):

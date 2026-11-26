@@ -2,7 +2,9 @@
 current `idp.user`), token (checks PKCE + client auth), userinfo and end_session, RSA-signed tokens.
 
     python -m tests.mock_idp --port 9000 --issuer http://idp:9000     # e2e (compose profile oidc-test)
-`idp.tamper` injects faults for the negative tests: state, nonce, aud, iss, azp, exp_delta, bad_sig, drop (claims)."""
+`idp.tamper` injects faults for the negative tests: state, nonce, aud, iss, azp, exp_delta, bad_sig, drop (claims), and for
+the access token: at_bad_sig, at_unsigned, at_azp, at_opaque. `idp.extra` = {"id"|"access"|"userinfo": {claims}} adds claims to one
+place only, e.g. {"access": {"resource_access": {"docgen": {"roles": ["editor"]}}}} (the access token is a JWT, aud "account")."""
 import argparse
 import base64
 import hashlib
@@ -31,6 +33,7 @@ class Idp:
         self.tamper: dict = {}
         self.codes: dict[str, dict] = {}
         self.logouts: list[dict] = []
+        self.extra: dict[str, dict] = {}
         self.userinfo_only: set[str] = set()  # claims served only by /userinfo, never in the id_token
 
     def jwk(self):
@@ -41,12 +44,23 @@ class Idp:
         t, now = self.tamper, int(time.time())
         claims = {"iss": t.get("iss", self.issuer), "aud": t.get("aud", self.client_id), "iat": now,
                   "exp": now + t.get("exp_delta", 300), "nonce": t.get("nonce", c["nonce"]),
-                  **{k: v for k, v in self.user.items() if k not in self.userinfo_only}}
+                  **{k: v for k, v in self.user.items() if k not in self.userinfo_only}, **self.extra.get("id", {})}
         if "azp" in t:
             claims["azp"] = t["azp"]
         for k in t.get("drop", []):
             claims.pop(k, None)
         return jwt.encode(claims, self.other_key if t.get("bad_sig") else self.key, algorithm="RS256", headers={"kid": self.kid})
+
+
+    def access_token(self) -> str:
+        t, now = self.tamper, int(time.time())
+        if t.get("at_opaque"):
+            return secrets.token_urlsafe(16)
+        claims = {"iss": self.issuer, "aud": "account", "azp": t.get("at_azp", self.client_id), "sub": self.user["sub"], "iat": now,
+                  "exp": now + 300, "jti": secrets.token_hex(8), **self.extra.get("access", {})}
+        if t.get("at_unsigned"):
+            return jwt.encode(claims, None, algorithm="none")
+        return jwt.encode(claims, self.other_key if t.get("at_bad_sig") else self.key, algorithm="RS256", headers={"kid": self.kid})
 
 
 def make_app(idp: Idp) -> FastAPI:
@@ -87,7 +101,7 @@ def make_app(idp: Idp) -> FastAPI:
         if (not c or client_id != idp.client_id or (idp.client_secret and client_secret != idp.client_secret)
                 or c["challenge"] != digest or c["redirect_uri"] != redirect_uri):
             return JSONResponse({"error": "invalid_grant"}, status_code=400)
-        at = secrets.token_urlsafe(16)
+        at = idp.access_token()
         idp.codes[f"at:{at}"] = {}
         return {"access_token": at, "token_type": "Bearer", "expires_in": 300, "id_token": idp.id_token(c, at)}
 
@@ -96,7 +110,7 @@ def make_app(idp: Idp) -> FastAPI:
         at = request.headers.get("authorization", "")[7:]
         if f"at:{at}" not in idp.codes:
             return JSONResponse({"error": "invalid_token"}, status_code=401)
-        return {k: v for k, v in idp.user.items() if k not in idp.tamper.get("drop", [])}
+        return {k: v for k, v in {**idp.user, **idp.extra.get("userinfo", {})}.items() if k not in idp.tamper.get("drop", [])}
 
     @app.get("/logout")
     def logout(request: Request):
@@ -107,6 +121,7 @@ def make_app(idp: Idp) -> FastAPI:
     @app.post("/_admin/user")  # e2e: switch who the next login is
     async def set_user(request: Request):
         idp.user = await request.json()
+        idp.extra = {"access": idp.user.pop("_access", {})}
         return {"ok": True}
 
     return app
