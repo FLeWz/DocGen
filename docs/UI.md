@@ -94,7 +94,7 @@ Stable `data-testid`s are used by `e2e/*.py`: `preview`, `word-pdf`, `save-statu
 - **Notifications.** Bell in the top bar (`bell`, unread count `bell-count`, panel `bell-panel`, polls every 10 s); an email goes to the holder if SMTP works.
 - **Badges.** Amber `lock-badge` with the holder's name on folder rows, `tree-lock` icon on folders of the tree that contain a locked item (list refreshed every 15 s).
 - **History.** Rows show `+ co-author names` (`co-authors`) and the lock hand-overs (`lock-transfers`); the revision table's *Edited by* is "committer, co-author, ...".
-- **Revision table, sections.** Only headings, table captions and figure captions with the section number of the built document: `3.2.1 Heading`, `Table 4: Specs (3.2.1)`, `Figure 2: Layout (3.2.1)`, `Heading (added|removed)`; text before the first heading shows the snippet title; entries `; `-joined, at most 12, then `+N more`.
+- **Revision table, sections.** (Round 22 supersedes the text format.) Only numbers: `3.2.1` for a heading, `Table 4` / `Figure 2` (caption label + SEQ number) for a table/figure; no text, no suffixes. `, `-joined, in document order, at most 12, then `+N more`. Unnumbered headings, parts before the first heading and uncaptioned tables have no number and are left out; the cell is empty if nothing is numbered. The column header stays *Sections changed* (`pages_affected` / `pages_paragraphs_affected` are aliases of the same value).
 - Tests: `e2e/locks.py` (grant, deny, cooldown, badges, history; `locks.py timeout` runs in the throwaway stack of `make test-e2e-locks`), Vitest `lockstate.test.ts`.
 
 

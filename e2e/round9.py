@@ -185,7 +185,7 @@ def base_and_revisions(page):
     v = api(page, "GET", f"/base-documents/{bid}/versions").json()
     did = api(page, "POST", "/documents", data={"folder_id": fo, "title": "Rev doc"}).json()["id"]
     sid = api(page, "POST", f"/folders/{fo}/snippets", data={"title": "Chapter"}).json()["id"]
-    heading = {"type": "heading", "attrs": {"level": 1, "styleId": None}, "content": [{"type": "text", "text": "Chapter heading"}]}
+    heading = {"type": "heading", "attrs": {"level": 1, "styleId": None}, "content": [{"type": "text", "text": "Chapter heading {{ document_title }}"}]}
     for text, msg in (("first text", "Write chapter"), ("second text", "Reword chapter")):
         api(page, "PUT", f"/snippets/{sid}/draft", data={"content": {"type": "doc", "content": [heading, {"type": "paragraph", "content": [{"type": "text", "text": text}]}]}})
         sha = api(page, "POST", f"/folders/{fo}/commit", data={"message": msg, "snippet_ids": [sid]}).json()["sha"]
@@ -202,9 +202,9 @@ def base_and_revisions(page):
     page.wait_for_timeout(1500)  # autosave of the draft
     xml = export_docx(page, did)
     assert "Sections changed" in xml, "bumped to v3: the revision table is in the build"
-    for needle in ("Write chapter", "Reword chapter", "E2E User", "Chapter heading (added)", "Add a paragraph", "Add revision table"):
+    for needle in ("Write chapter", "Reword chapter", "E2E User", "Add a paragraph", "Add revision table"):
         assert needle in xml, needle
-    assert "{%" not in xml and "{{" not in xml
+    assert "{%" not in xml and "{{" not in xml and "Chapter heading Rev doc" in xml, "round 22: {{ document_title }} in a heading resolves (and not in the revision cell)"
     print("round9 (edit base, revision table, bump): ok")
 
 

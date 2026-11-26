@@ -1,5 +1,4 @@
-"""Round 16: revision-table `sections` = the heading / table caption / figure caption a change happened under,
-with the section number of the BUILT document."""
+"""Rounds 16, 22: revision-table `sections` = heading numbers and `Table N` / `Figure N` of the BUILT document, nothing else."""
 import io
 
 from docx import Document
@@ -49,61 +48,57 @@ def diff(old, new, num=None, title="Guide"):
     return S.diff_nodes(old, new, [title] * len(old), [title] * len(new), num or NUM())
 
 
-def test_change_in_a_paragraph_is_reported_at_its_heading_with_number():
+def test_change_in_a_paragraph_is_reported_as_its_heading_number():
     new = [*BASE[:-1], P(T("body changed"))]
-    assert diff(BASE, new) == "2.2.1 Deep"
-    assert diff(BASE, [BASE[0], P(T("intro changed")), *BASE[2:]]) == "1 One"
+    assert diff(BASE, new) == "2.2.1"
+    assert diff(BASE, [BASE[0], P(T("intro changed")), *BASE[2:]]) == "1"
     assert diff(BASE, new) == diff(BASE, new)  # deterministic
 
 
-def test_table_and_figure_changes_use_the_caption_and_the_section():
+def test_table_and_figure_changes_are_label_and_number_only():
     base = [*BASE, CAPTION("Table", 1, "Specs"), TABLE("a"), IMG("i1"), CAPTION("Figure", 1, "Layout")]
-    assert diff(base, [*base[:-3], TABLE("b"), *base[-2:]]) == "Table 1: Specs (2.2.1)"
-    assert diff(base, [*base[:-2], IMG("i2"), base[-1]]) == "Figure 1: Layout (2.2.1)"
-    # changing the caption text itself is the same entry; a table + figure change gives both, in document order
+    assert diff(base, [*base[:-3], TABLE("b"), *base[-2:]]) == "Table 1"
+    assert diff(base, [*base[:-2], IMG("i2"), base[-1]]) == "Figure 1"
     both = [*base[:-4], CAPTION("Table", 1, "Specs v2"), TABLE("b"), IMG("i2"), base[-1]]
-    assert diff(base, both) == "Table 1: Specs v2 (2.2.1); Figure 1: Layout (2.2.1)"
-    # no caption: the table's own title attribute, else the section
-    assert diff([*BASE, TABLE("a", caption="Own title")], [*BASE, TABLE("b", caption="Own title")]) == "Own title (2.2.1)"
-    assert diff([*BASE, TABLE("a")], [*BASE, TABLE("b")]) == "2.2.1 Deep"
+    assert diff(base, both) == "Table 1, Figure 1"  # caption text is never printed
+    assert diff([*BASE, TABLE("a", caption="Own")], [*BASE, TABLE("b", caption="Own")]) == ""  # no caption paragraph: no number
+    assert diff([*BASE, TABLE("a")], [*BASE, TABLE("b")]) == ""
 
 
-def test_added_removed_and_renamed_headings_and_unnumbered_first_part():
-    assert diff(BASE, [*BASE, H("Three")]) == "3 Three (added)"
-    assert diff(BASE, BASE[:3] + BASE[4:]) == "2.2 Two.2 (removed)" or "(removed)" in diff(BASE, BASE[:3] + BASE[4:])
-    assert diff(BASE, [BASE[0], BASE[1], H("Second"), *BASE[3:]]) == "2 Second"  # renamed: the new text
-    before = [P(T("preamble")), *BASE]
-    assert diff(before, [P(T("preamble 2")), *BASE]) == "Guide"  # before any heading: the snippet title, unnumbered
-    assert diff([], BASE).startswith("1 One (added); 2 Two (added); 2.1 Two.1 (added)")
-    # a vanished paragraph belongs to the section it was in
-    assert diff(BASE, BASE[:-1]) == "2.2.1 Deep"
+def test_added_removed_renamed_headings_and_unnumbered_parts():
+    assert diff(BASE, [*BASE, H("Three")]) == "3"
+    assert diff(BASE, BASE[:3] + BASE[4:]) == "2.1"  # removed: the number it had before
+    assert diff(BASE, [BASE[0], BASE[1], H("Second"), *BASE[3:]]) == "2"  # renamed: number, not text
+    assert diff([P(T("preamble")), *BASE], [P(T("preamble 2")), *BASE]) == ""  # before any heading: nothing to print
+    assert diff([], BASE) == "1, 2, 2.1, 2.2, 2.2.1"
+    assert diff(BASE, BASE[:-1]) == "2.2.1"  # a vanished paragraph belongs to its section
+    assert diff([H("A", 1, _blk=True, numbered=False)], [H("A2", 1, _blk=True, numbered=False)]) == ""  # unnumbered heading
+    shifted = [H("New"), *BASE]
+    assert diff(BASE, shifted) == "1"  # only the changed block, under its new number
 
 
 def test_numbering_unnumbered_headings_start_and_restart():
     nodes = [H("Preface", 1, _blk=True, numbered=False), H("A"), H("A.1", 2), H("B"), H("B.1", 2)]
-    na = S.anchors(nodes, ["t"] * 5, NUM())
-    assert [a["own"]["label"] for a in na] == ["Preface", "1 A", "1.1 A.1", "2 B", "2.1 B.1"]  # unnumbered ones don't count
-    na = S.anchors(nodes[1:], ["t"] * 4, NUM(start=5))
-    assert [a["own"]["label"] for a in na] == ["5 A", "5.1 A.1", "6 B", "6.1 B.1"]
-    na = S.anchors(nodes[1:], ["t"] * 4, NUM(restart_l2=0))  # lvlRestart 0: level 2 never restarts
-    assert [a["own"]["label"] for a in na] == ["1 A", "1.1 A.1", "2 B", "2.2 B.1"]
-    own = S.anchors([H("X", 1, _blk=True, numbered=True), H("Y", 2, _blk=True, numbered=True)], ["t"] * 2, S.Numbering())
-    assert [a["own"]["label"] for a in own] == ["1 X", "1.1 Y"]  # builder headings w/o a base list: our own multilevel
-    assert [a["own"]["label"] for a in S.anchors([H("Plain")], ["t"], S.Numbering())] == ["Plain"]  # numbering unknown: text only
+    lab = lambda n, num: [a["own"]["label"] for a in S.anchors(n, ["t"] * len(n), num)]
+    assert lab(nodes, NUM()) == [None, "1", "1.1", "2", "2.1"]  # unnumbered ones don't count
+    assert lab(nodes[1:], NUM(start=5)) == ["5", "5.1", "6", "6.1"]
+    assert lab(nodes[1:], NUM(restart_l2=0)) == ["1", "1.1", "2", "2.2"]  # lvlRestart 0: level 2 never restarts
+    assert lab([H("X", 1, _blk=True, numbered=True), H("Y", 2, _blk=True, numbered=True)], S.Numbering()) == ["1", "1.1"]
+    assert lab([H("Plain")], S.Numbering()) == [None]  # numbering unknown
 
 
 def test_cap_and_more():
     old = [H(f"S{i}") for i in range(15)]
     new = [H(f"S{i}x") for i in range(15)]
-    out = diff(old, new).split("; ")
-    assert len(out) == 13 and out[0] == "1 S0x" and out[11] == "12 S11x" and out[12] == "+3 more"
+    out = diff(old, new).split(", ")
+    assert len(out) == 13 and out[0] == "1" and out[11] == "12" and out[12] == "+3 more"
 
 
-def test_snippet_only_history_is_relative_and_unnumbered_without_numbering():
+def test_snippet_only_history_is_numbers_when_known():
     old = dict(title="G", content={"type": "doc", "content": BASE})
     new = dict(title="G", content={"type": "doc", "content": [*BASE[:-1], P(T("x"))]})
-    assert S.snippet_changes(old, new) == "Deep"  # numbering unknown: heading text
-    assert S.snippet_changes(old, new, NUM()) == "2.2.1 Deep"
+    assert S.snippet_changes(old, new) == ""  # numbering unknown
+    assert S.snippet_changes(old, new, NUM()) == "2.2.1"
 
 
 H2 = lambda text: H(text, 2)
@@ -123,18 +118,18 @@ def test_revision_rows_integration_numbers_over_the_built_document(ws):
     assert c.post(f"/api/folders/{fb}/commit", json={"message": "Release", "document_ids": [ws["doc"]]}).status_code == 201
     rows = c.get(f"/api/documents/{ws['doc']}/revision-history").json()
     by = {r["commit"]: r["sections"] for r in rows}
-    assert by["Edit run"] == "2.1 Run"  # chapter 1 is the builder heading, Guide's Setup is 2
-    assert by["Edit table"] == "Table 1: Opts (2.1)"
-    assert by["Write guide"].startswith("2 Setup (added); 2.1 Run (added)")
+    assert by["Edit run"] == "2.1"  # chapter 1 is the builder heading, Guide's Setup is 2
+    assert by["Edit table"] == "Table 1"
+    assert by["Write guide"].startswith("2, 2.1")
     rel = by["Release"]
-    assert "1 Manual chapter (added)" in rel and "Guide" not in rel and "install" not in rel and "go faster" not in rel
+    assert rel.split(", ")[0] == "1" and "Guide" not in rel and "install" not in rel
     assert c.get(f"/api/documents/{ws['doc']}/revision-history").json() == rows  # deterministic
     eid, st = run_export(c, ws["doc"])
     assert st["status"] == "done", st
     t = next(t for t in Document(io.BytesIO(fetch(c, eid))).tables if t.rows[0].cells[0].text == "Date")
     body = {r.cells[4].text: r.cells[3].text for r in t.rows[1:]}
-    assert body["Edit run"] == "2.1 Run" and body["Edit table"] == "Table 1: Opts (2.1)"
+    assert body["Edit run"] == "2.1" and body["Edit table"] == "Table 1"
     eid, st = run_export(c, ws["doc"], "pdf")
     assert st["status"] == "done", st
     text = "\n".join(p.extract_text() for p in PdfReader(io.BytesIO(fetch(c, eid))).pages)
-    assert "2.1 Run" in text and "Opts" in text
+    assert "Table 1" in text

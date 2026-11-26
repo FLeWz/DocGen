@@ -1,9 +1,9 @@
-"""Revision-table `sections` (round 16): which structural titles a change happened under.
+"""Revision-table `sections` (rounds 16, 22): the numbers of what changed, nothing else.
 
-A flat list of top-level nodes (the BUILT document in order, or one snippet) gets one anchor per node: the heading it is
-(or sits under) with the number Word would show, or the caption of the table/figure it is part of ('Table 4: Specs (3.2)'),
-or the snippet title before the first heading. Two versions are diffed block by block (JSON hash) and every changed block
-reports its anchor once, in document order. No paragraph text, no snippet titles (except before the first heading)."""
+A flat list of top-level nodes (the BUILT document in order, or one snippet) gets one anchor per node: the number Word shows
+for the heading it is (or sits under), or label + SEQ number of the table/figure caption it is part of ('Table 4').
+Two versions are diffed block by block (JSON hash); every changed block reports its anchor once, in document order.
+Unnumbered headings, parts before the first heading and uncaptioned tables have no number and are omitted."""
 import difflib
 import io
 import json
@@ -12,7 +12,7 @@ import zipfile
 
 from lxml import etree
 
-from .docx_rich import ptext, seq_label, seq_numbers, _walk
+from .docx_rich import seq_label, seq_numbers, _walk
 
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 CAP = 12  # entries per row, then '+N more'
@@ -132,20 +132,22 @@ def anchors(nodes: list[dict], titles: list[str], num: Numbering) -> list[dict]:
     for c, n in enumerate(nodes):
         if _cap(n) and c not in grp:  # a caption with nothing to caption stands for itself
             grp[c] = capi[c] = c
-    out, sec, pre = [], None, {}  # sec: (number or None, entry); pre: entries of the parts before the first heading
+    out, sec = [], None  # sec: the entry of the heading in force (label None = unnumbered or before the first heading)
     for i, n in enumerate(nodes):
         if n.get("type") == "heading":
             h = num.heading(n)
-            number = num.next(*h) if h else None
-            text = ptext(n, seq).strip() or "(untitled)"
-            e = dict(key=("h", i), label=f"{number} {text}" if number else text, pos=i)
-            sec = (number, e)
+            e = dict(key=("h", i), label=num.next(*h) if h else None, pos=i)
+            sec = e
             out.append(dict(own=e, sec=e, kind="h"))
             continue
-        s = sec[1] if sec else pre.setdefault(titles[i], dict(key=("t", titles[i]), label=titles[i], pos=i))
-        text = ptext(nodes[capi[i]], seq).strip() if i in capi else (
-            str((n.get("attrs") or {}).get("caption") or (n.get("attrs") or {}).get("title") or "").strip() if n.get("type") == "table" else "")
-        own = text and dict(key=("c", grp.get(i, i)), label=text + (f" ({sec[0]})" if sec and sec[0] else ""), pos=grp.get(i, i))
+        s = sec or dict(key=("t", None), label=None, pos=i)
+        if i in capi:
+            f = next(x for x in _walk(nodes[capi[i]]) if x.get("type") == "field" and (x.get("attrs") or {}).get("code") == "SEQ")
+            own = dict(key=("c", grp[i]), label=f"{_cap(nodes[capi[i]])} {seq[id(f)]}", pos=grp[i])
+        elif n.get("type") == "table":  # a table without caption has no number to report
+            own = dict(key=("c", i), label=None, pos=i)
+        else:
+            own = None
         out.append(dict(own=own or s, sec=s, kind="c" if own else "s"))
     return out
 
@@ -155,14 +157,13 @@ def _hash(nodes):
 
 
 def changes(old: list[dict], new: list[dict], new_a: list[dict], old_a: list[dict], offset: int = 0) -> str:
-    """'; '-joined entries for the blocks of `new` that differ from `old` (new_a/old_a = anchors of the two lists;
+    """', '-joined numbers (`3.2.1`, `Table 4`) for the blocks of `new` that differ from `old` (new_a/old_a = anchors of the two lists;
     `offset` shifts positions when `new` is a slice of a bigger built document)."""
     hits: dict = {}
 
-    def hit(e: dict, suffix: str = "", pos=None):
-        h = hits.get(e["key"])
-        if h is None or (suffix and not h[2]):
-            hits[e["key"]] = (offset + (e["pos"] if pos is None else pos), e["label"], suffix)
+    def hit(e: dict, pos=None):
+        if e["label"] and e["key"] not in hits:
+            hits[e["key"]] = (offset + (e["pos"] if pos is None else pos), e["label"])
 
     for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(None, _hash(old), _hash(new), autojunk=False).get_opcodes():
         if tag == "equal":
@@ -170,19 +171,17 @@ def changes(old: list[dict], new: list[dict], new_a: list[dict], old_a: list[dic
         k = min(i2 - i1, j2 - j1) if tag == "replace" else 0
         for x in range(j1, j2):
             a = new_a[x]
-            hit(a["own"], "added" if a["kind"] == "h" and x - j1 >= k else "")
+            hit(a["own"])
         for y in range(i1 + k, i2):
             a = old_a[y]
-            if a["kind"] == "h":
-                hit(dict(a["own"], key=("rm", y)), "removed", j1 - 0.5)
-            elif a["kind"] == "c":
-                hit(dict(a["own"], key=("rm", y)), "", j1 - 0.5)
+            if a["kind"] in ("h", "c"):  # removed: the number it had in the old revision
+                hit(dict(a["own"], key=("rm", y)), j1 - 0.5)
             else:  # a paragraph that vanished: it belonged to the section of its new neighbour
                 ref = new_a[j1 - 1] if j1 > 0 else new_a[j1] if j1 < len(new_a) else a
                 hit(ref["sec"])
     rows = sorted(hits.values(), key=lambda h: (h[0], h[1]))
-    out = [f"{label} ({suffix})" if suffix else label for _, label, suffix in rows]
-    return "; ".join(out[:CAP] + ([f"+{len(out) - CAP} more"] if len(out) > CAP else []))
+    out = list(dict.fromkeys(label for _, label in rows))
+    return ", ".join(out[:CAP] + ([f"+{len(out) - CAP} more"] if len(out) > CAP else []))
 
 
 def diff_nodes(old: list[dict] | None, new: list[dict], titles_old, titles_new, num: Numbering) -> str:

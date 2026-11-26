@@ -165,7 +165,7 @@ def revision_rows(ctx: Ctx, d: Document, blocks: list[dict], base: dict | None =
             sec = sections(c, commits[i + 1] if i + 1 < len(commits) else None)
             if c["sha"] in rows:
                 r = rows[c["sha"]]
-                r["sections"] = "; ".join(dict.fromkeys(x for x in [r["sections"], sec] if x))
+                r["sections"] = ", ".join(dict.fromkeys(x for v in (r["sections"], sec) for x in v.split(", ") if x))
                 continue
             c = vcs.commit_out(c, tm, nm)
             subject = c["message"].split("\n")[0]

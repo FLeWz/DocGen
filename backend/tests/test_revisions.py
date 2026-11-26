@@ -35,15 +35,15 @@ def test_sections_and_commit_per_revision(ws):
     r = c.post(f"/api/base-documents/{base}/versions", files={"file": ("b.docx", make_docx(lambda d: (d.add_heading("Intro", 1), d.add_paragraph("a2"), d.add_heading("Added part", 1), d.add_paragraph("b"))),
                                                                        "application/vnd.openxmlformats-officedocument.wordprocessingml.document")}, data={"message": "Edit base: add part"})
     assert r.status_code == 201, r.text
-    put(c, ws["doc"], [{"type": "heading", "text": "Manual chapter", "level": 1}, ref(fa, sid, "commit", v2)], base_document={"id": base})
+    put(c, ws["doc"], [{"type": "heading", "text": "Manual chapter", "level": 1, "numbered": True}, ref(fa, sid, "commit", v2)], base_document={"id": base})
     assert c.post(f"/api/folders/{fb}/commit", json={"message": "Release R9", "document_ids": [ws["doc"]]}).status_code == 201
     rows = c.get(f"/api/documents/{ws['doc']}/revision-history").json()
     by = {x["commit"]: x for x in rows}
-    assert by["Write guide"]["sections"] == "Setup (added); Usage (added)"  # round 16: headings only, numbering unknown here
-    assert by["Reword usage, add tips"]["sections"] == "Usage; Tips (added)"  # only what changed, at its heading
-    assert by["Edit base: add part"]["sections"] == "Intro; Added part (added)" and by["Edit base: add part"]["author"] == "Alice A"
+    assert by["Write guide"]["sections"] == ""  # round 22: numbers only, numbering unknown here
+    assert by["Reword usage, add tips"]["sections"] == ""
+    assert by["Edit base: add part"]["sections"] == "" and by["Edit base: add part"]["author"] == "Alice A"
     assert "Upload version 1" not in by  # the first upload is not a revision
-    assert "Manual chapter (added)" in by["Release R9"]["sections"] and "Guide" not in by["Release R9"]["sections"]
+    assert by["Release R9"]["sections"] == "1"
     assert all(x["message"] == x["commit"] and set(x) == {"version", "date", "author", "message", "sections", "commit", "status"} for x in rows)  # old keys stay
     assert all(__import__("re").fullmatch(r"\d\d\.\d\d\.\d{4}", x["date"]) for x in rows)  # round 11: DD.MM.YYYY
     assert rows == c.get(f"/api/documents/{ws['doc']}/revision-history").json()  # deterministic
@@ -63,7 +63,7 @@ def test_revision_table_filled_in_docx_and_pdf(ws):
     body = [[x.text for x in r.cells] for r in t.rows[1:]]
     assert len(body) >= 2 and not any("{%" in x for r in body for x in r)
     mine = next(r for r in body if r[4] == "Write body")
-    assert mine[2] == "Alice A" and mine[3] == "Body part (added)" and len(mine[0]) == 10
+    assert mine[2] == "Alice A" and mine[3] == "" and len(mine[0]) == 10
     eid, st = run_export(c, ws["doc"], "pdf")
     assert st["status"] == "done", st
     text = "\n".join(p.extract_text() for p in PdfReader(io.BytesIO(fetch(c, eid))).pages)
@@ -120,9 +120,9 @@ def test_hand_made_base_table_with_other_keys_and_two_commits_with_tag(ws):
             cell.text = "{{ row.%s }}" % k
         t.rows[3].cells[0].text = "{%tr endfor %}"
     base = upload(c, make_docx(mod), "Skylike").json()["id"]
-    put(c, ws["doc"], [{"type": "heading", "text": "Chapter", "level": 1}], base_document={"id": base})
+    put(c, ws["doc"], [{"type": "heading", "text": "Chapter", "level": 1, "numbered": True}], base_document={"id": base})
     assert c.post(f"/api/folders/{fb}/commit", json={"message": "First", "document_ids": [ws["doc"]]}).status_code == 201
-    put(c, ws["doc"], [{"type": "heading", "text": "Chapter", "level": 1}, {"type": "heading", "text": "More", "level": 1}], base_document={"id": base})
+    put(c, ws["doc"], [{"type": "heading", "text": "Chapter", "level": 1, "numbered": True}, {"type": "heading", "text": "More", "level": 1, "numbered": True}], base_document={"id": base})
     assert c.post(f"/api/folders/{fb}/commit", json={"message": "Second", "document_ids": [ws["doc"]]}).status_code == 201
     assert c.post(f"/api/folders/{fb}/tags", json={"name": "v1.1"}).status_code == 201
     expect = [["First", "Committed"], ["Second", "Tagged"]]
@@ -135,8 +135,8 @@ def test_hand_made_base_table_with_other_keys_and_two_commits_with_tag(ws):
             body = [[x.text for x in r.cells] for r in t.rows[1:]]
             assert len(body) == 2 and all(len(r[0]) == 10 and r[0][2] == "." for r in body)  # DD.MM.YYYY
             assert [[r[5], r[2]] for r in body] == expect and [r[1] for r in body][1] == "v1.1" and body[0][1] == body[0][1].strip() != ""
-            assert all(r[3] == "Alice A" for r in body) and "More" in body[1][4]
+            assert all(r[3] == "Alice A" for r in body) and body[1][4] == "2"
         else:
             text = "\n".join(p.extract_text() for p in PdfReader(io.BytesIO(data)).pages)
-            for needle in ("v1.1", "Alice A", "First", "Second", "Tagged", "Committed", "More"):
+            for needle in ("v1.1", "Alice A", "First", "Second", "Tagged", "Committed"):
                 assert needle in text, needle
