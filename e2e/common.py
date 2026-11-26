@@ -16,9 +16,14 @@ def user(script: str):
     return f"e2e-{tag}@example.com", os.environ["E2E_PASSWORD"], f"E2E {tag}"
 
 
+def preset_prefs(page: Page):
+    """The app defaults to no preview at 100%; scripts that read/assert the live preview pick it like a user would (remembered per browser)."""
+    page.add_init_script("localStorage.setItem('docgen.editor.preview','live');localStorage.setItem('docgen.editor.zoom','0.45')")
+
+
 def login(page: Page, email: str, password: str, prefs=True):
-    if prefs:  # the app defaults to no preview at 100%; these scripts read/assert the live preview, so they pick it like a user would (remembered per browser)
-        page.add_init_script("localStorage.setItem('docgen.editor.preview','live');localStorage.setItem('docgen.editor.zoom','0.45')")
+    if prefs:
+        preset_prefs(page)
     page.goto(BASE + "/login")
     page.get_by_label("Email").fill(email)
     page.get_by_label("Password").fill(password)

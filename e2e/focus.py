@@ -33,7 +33,7 @@ with sync_playwright() as pw:
             page.set_viewport_size({"width": w, "height": h})
             page.wait_for_timeout(300)  # layout settle after resize (no UI condition to wait on)
             b = box(page, STAGE)
-            assert b["y"] + b["height"] >= h - 20, f"stage ends at {b['y'] + b['height']} of {h}"
+            assert b["y"] + b["height"] >= h - 50, f"stage ends at {b['y'] + b['height']} of {h}"
             pass
             assert page.evaluate("document.documentElement.scrollHeight") <= h, "page itself scrolls"
             assert page.evaluate("(()=>{const m=document.querySelector('.main');return m.scrollHeight<=m.clientHeight+1})()"), "double scroll: .main scrolls"

@@ -10,7 +10,7 @@ import urllib.request
 
 from playwright.sync_api import expect, sync_playwright
 
-from common import BASE, EDITOR, ART, commit_from_editor, login, saved, type_into, user
+from common import BASE, EDITOR, ART, commit_from_editor, login, preset_prefs, saved, type_into, user
 
 MODE = sys.argv[1] if len(sys.argv) > 1 else "grant"
 MAIL = os.environ.get("MAIL_URL", "http://localhost:8025")
@@ -44,6 +44,7 @@ with sync_playwright() as pw:
         login(a, owner, pwd)
         api(a, "POST", "/invites", {"email": guest, "role": "editor"})
         token = re.search(r"token=([\w\-.]+)", mail_to(guest)).group(1)
+        preset_prefs(b)
         b.goto(f"{BASE}/accept-invite?token={token}")
         b.get_by_label("Your name").fill("Bob Builder")
         b.get_by_label("Password").fill(pwd)

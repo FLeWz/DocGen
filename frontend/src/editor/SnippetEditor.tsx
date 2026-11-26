@@ -183,17 +183,13 @@ export function RichEditor({ qkey, load, save, keyOf, me, idleSaved, notices = [
         {!lookSrc && <label>Look <select aria-label="Look" value={src.base_doc ?? ""} onChange={(e) => { setPick(e.target.value); localStorage.setItem(`docgen.look.${me.org?.id}`, e.target.value); }}>
           <option value="">Organization styles</option>{bases.data?.map((b) => <option key={b.id} value={b.id}>Base: {b.name}</option>)}</select></label>}
         <label>Preview <select aria-label="Preview mode" value={pv} onChange={(e) => { setPv(e.target.value as PvMode); localStorage.setItem(PV_KEY, e.target.value); }}>
-          <option value="off">No preview</option><option value="live">Live (HTML)</option><option value="word">Render as Word does (PDF)</option></select></label>
+          <option value="off">No preview</option><option value="live">Live (HTML)</option><option value="word">Word (PDF)</option></select></label>
         <label>Zoom <select aria-label="Zoom" value={zoom} onChange={(e) => { setZoom(+e.target.value); localStorage.setItem(ZOOM_KEY, e.target.value); }}>
           {ZOOMS.map((z) => <option key={z} value={z}>{z * 100}%</option>)}</select></label>
         <button type="button" className={`btn sm ${guides ? "on" : ""}`} aria-pressed={guides} onClick={() => setGuides(!guides)}>Page guides</button>
         <button type="button" className={`btn sm ${struct ? "on" : ""}`} aria-pressed={struct} title="Outline of headings, marked sections, lists and captions" onClick={() => setStruct(!struct)}>Structure</button>
         {pv === "word" && <button type="button" className="btn sm" disabled={pdf.busy} onClick={renderWord}>{pdf.busy ? "Rendering…" : "Re-render PDF"}</button>}
-        <span className="muted small" data-testid="page-count" title="Estimated page count (browser layout; Word/LibreOffice may differ)">{lay ? `${lay.total} page${lay.total === 1 ? "" : "s"} (est.)` : ""}</span>
         <button type="button" className={`btn sm ${st?.selMode ? "on" : ""}`} aria-pressed={!!st?.selMode} title="Show a handle on every block: click selects one block, Shift+click a range (works across pages)" onMouseDown={(e) => e.preventDefault()} onClick={() => setSelectMode(editor, !st?.selMode)}>Select blocks</button>
-        <span className="small" data-testid="sel-count" aria-live="polite">{st?.nsel ? <b>{st.nsel} block{st.nsel === 1 ? "" : "s"} selected</b> : ""}</span>
-        <span className="spacer" />
-        <span className="muted small vb-info">Styles: {extractStyles(doc).join(", ") || "—"} · Variables: {extractVariables(doc).join(", ") || "—"}</span>
       </div>
       <div className={`panes ${pv === "off" && !src.import ? "single" : ""}`}>
         {struct && <Structure editor={editor} doc={doc} ro={ro} />}
@@ -205,6 +201,11 @@ export function RichEditor({ qkey, load, save, keyOf, me, idleSaved, notices = [
         {pv === "word" && <section className="pane" aria-label="Word rendering pane"><div className="pane-h">Rendered as Word does</div>
           {pdf.err && <ErrorBanner e={new Error(pdf.err)} />}
           {pdf.url ? <iframe className="word-pdf" title="Word rendering (PDF)" src={pdf.url} data-testid="word-pdf" /> : <div className="pane-msg">{pdf.busy ? <><Spinner /> Rendering with LibreOffice…</> : ""}</div>}</section>}
+      </div>
+      <div className="statusbar muted small">
+        <span data-testid="sel-count" aria-live="polite">{st?.nsel ? <b>{st.nsel} block{st.nsel === 1 ? "" : "s"} selected</b> : ""}</span>
+        <span data-testid="page-count" title="Estimated page count (browser layout; Word/LibreOffice may differ)">{lay ? `${lay.total} page${lay.total === 1 ? "" : "s"} (est.)` : ""}</span>
+        <span className="vb-info">Styles: {extractStyles(doc).join(", ") || "—"} · Variables: {extractVariables(doc).join(", ") || "—"}</span>
       </div>
       {hfT && (hfq.data ? <HeaderFooterEditor look={look} parts={hfq.data.parts} docs={hfDocs} target={hfT} setTarget={setHfT} onChange={onHf} onClose={() => setHfT(null)} styles={styles} ro={ro} />
         : <Modal title="Edit header/footer" onClose={() => setHfT(null)}>{hfq.error ? <ErrorBanner e={hfq.error} /> : <><Spinner /> Loading…</>}</Modal>)}
