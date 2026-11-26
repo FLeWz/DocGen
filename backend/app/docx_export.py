@@ -24,7 +24,7 @@ from jinja2.exceptions import SecurityError
 from jinja2.sandbox import SandboxedEnvironment
 from PIL import Image as PILImage
 
-from . import fmt
+from . import fmt, omml
 from .base_docs import CONTENT_RE, SLOT_RE
 from .docx_vars import clean_rows, clip_tables, fix_fields, text_width
 from .docx_rich import Rich, bm_name, seq_numbers
@@ -322,6 +322,7 @@ class Builder(Rich):
 
     def nodes(self, nodes, cont, ctx) -> None:
         top = cont is self.doc
+        omml.prepare(omml.collect(nodes))  # one pandoc run for all equations that are not cached yet
         if top and not self.whole:  # `whole` = the builder pre-computed lists/SEQ numbers over the whole document
             self.top_blocks = list(nodes or [])
             self.seq = seq_numbers(self.top_blocks)
@@ -466,6 +467,18 @@ class Builder(Rich):
                 self.field(p, c.get("attrs") or {}, c.get("marks") or [])
             elif t == "footnote":
                 self.note(p, c.get("attrs") or {}, c.get("marks") or [])
+            elif t == "math":
+                self.math(p, c.get("attrs") or {})
+
+    def math(self, p, a: dict) -> None:
+        """LaTeX -> a native Word equation (inline m:oMath, or m:oMathPara for display math); the source text when it cannot be typeset"""
+        latex, display = str(a.get("latex") or ""), bool(a.get("display"))
+        el = omml.get(latex, display)
+        if el is None:
+            self.warn.append(f"equation could not be converted: {latex[:40]!r}")
+            self.run(p, f"${latex}$", [])
+        else:
+            p._p.append(el)
 
     def apply_marks(self, r, marks: list) -> str | None:
         """bold/italic/underline/fmt marks onto run `r`; returns the link target when there is one."""
@@ -701,6 +714,7 @@ def build(spec: dict, base: bytes, load_content, load_asset) -> tuple[bytes, lis
     b.whole = True
     b.top_blocks, per = _whole_blocks(spec, load_content)
     b.seq = seq_numbers(b.top_blocks)
+    omml.prepare(omml.collect(b.top_blocks))
     holders = {}
     for p in body.iter(qn("w:p")):
         t = "".join(x.text or "" for x in p.iter(qn("w:t"))).strip()

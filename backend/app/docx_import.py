@@ -22,6 +22,7 @@ from docx.oxml.ns import qn
 from lxml import etree
 
 from . import fmt
+from . import omml
 from .docx_style import Look
 from .tblstyle import TableEff
 from .base_docs import CONTENT_RE, BadDocx, W, parse_styles
@@ -584,6 +585,7 @@ def export(orig: bytes, content: dict, load_asset, render: dict | None = None) -
     b.bm_id = max([b.bm_id] + [int(x.get(qn("w:id"))) for k in kept for x in k.iter(qn("w:bookmarkStart")) if (x.get(qn("w:id")) or "").isdigit()])
     blocks = (content or {}).get("content") or []
     b.top_blocks, b.seq = blocks, seq_numbers(blocks)
+    omml.prepare(omml.collect(blocks))
     for n in blocks:
         b.sec_track(n)
         if (same := _original(n, kept)) is None:

@@ -7,7 +7,7 @@ from sqlalchemy import text
 
 from .db import engine
 from . import config, locks, oidc as oidc_lib
-from .routers import (auth, oidc, base_documents, commits, documents, exports, folders, images, imports, invites, library,
+from .routers import (auth, oidc, base_documents, commits, convert, documents, exports, folders, images, imports, invites, library,
                       locks as locks_router, maintenance, members, orgs, overview, render, snippets, styles)
 from .security import valid_csrf
 
@@ -46,7 +46,7 @@ async def locked(request: Request, e: locks.Locked):
     return JSONResponse({**e.body, "detail": {**e.body, "message": f"Locked by {e.body['holder']['name']}"}}, status_code=409)
 
 
-for r in (auth, oidc, orgs, members, invites, folders, snippets, commits, styles, images, base_documents, documents, exports, library, imports, maintenance, render, overview, locks_router):
+for r in (auth, oidc, orgs, members, invites, folders, snippets, commits, styles, images, base_documents, documents, exports, library, imports, maintenance, render, overview, locks_router, convert):
     app.include_router(r.router, prefix="/api")
 
 

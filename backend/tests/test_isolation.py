@@ -118,6 +118,7 @@ def test_every_org_id_table_has_rls_and_not_null(owner_engine):
 
 
 COVERED = {  # every API route must be listed: a new endpoint forces a new isolation test
+    "POST /api/convert/to-text", "POST /api/convert/from-text",  # round 20: stateless, no org data: test_convert
     "POST /api/auth/signup", "POST /api/auth/login", "POST /api/auth/logout", "GET /api/auth/me",
     "GET /api/auth/csrf", "GET /api/auth/config", "GET /api/auth/oidc/login", "GET /api/auth/oidc/callback",  # user/session scoped, no tenant data
     "GET /api/orgs", "POST /api/orgs", "GET /api/orgs/current", "POST /api/orgs/switch", "DELETE /api/orgs/current",
