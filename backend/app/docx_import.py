@@ -44,7 +44,11 @@ KINDS = [("txbxContent", "text box"), ("oMath", "equation"), ("oMathPara", "equa
          ("commentRangeStart", "comment"), ("commentRangeEnd", "comment"), ("commentReference", "comment"),
          ("relIds", "SmartArt"), ("chart", "chart"), ("footnoteReference", "footnote"), ("endnoteReference", "footnote"),
          ("fldSimple", "field"), ("fldChar", "field"), ("instrText", "field"), ("pict", "legacy drawing"),
-         ("object", "embedded object"), ("drawing", "drawing"), ("sectPr", "section break"), ("tbl", "table")]
+         ("object", "embedded object"), ("drawing", "drawing"), ("sectPr", "section break"), ("tbl", "table"),
+         ("bookmarkStart", "bookmark"), ("bookmarkEnd", "bookmark")]
+# why a kind stays opaque + what the user can do (import warnings); default text below
+WHY = {"text box": "shape kept, its text is editable (Edit text); the block itself is not editable",
+       "bookmark": "invisible marker kept as is, not editable", "embedded object": "embedded document kept as is"}
 RUN_IGNORED = {"rPr", "t", "tab", "br", "drawing", "lastRenderedPageBreak"}
 LIST_STYLE = {"decimal": "decimal", "lowerLetter": "lower-alpha", "upperLetter": "upper-alpha", "lowerRoman": "lower-roman",
               "upperRoman": "upper-roman", "decimalZero": "decimal-leading-zero"}
@@ -82,7 +86,7 @@ def _kind(el) -> str:
     return k
 
 
-FOLD_CODES = FIELD_CODES - {"REF", "PAGEREF"}  # fields the editor can hold as `field` nodes
+FOLD_CODES = FIELD_CODES  # fields the editor can hold as `field` nodes (REF/PAGEREF: a bookmark name, optional \\h)
 HF_VARS = {"TITLE": "doc.title", "AUTHOR": "author", "DATE": "doc.date", "SAVEDATE": "doc.date", "CREATEDATE": "doc.date"}  # header/footer only
 FLD_RE = re.compile(r"\s*([A-Z]+)\s*(.*)")
 
@@ -90,6 +94,47 @@ FLD_RE = re.compile(r"\s*([A-Z]+)\s*(.*)")
 def _instr(s: str):
     m = FLD_RE.match(s or "")
     return (m[1], m[2].strip()) if m else (None, "")
+
+
+def _arg(code: str, arg: str) -> str | None:
+    """Field argument as the editor stores it: SEQ keeps only the label (the exporter writes \\* ARABIC), REF/PAGEREF the
+    bookmark; None = switches we would lose, so the paragraph stays opaque."""
+    t = arg.split()
+    if code == "SEQ":
+        rest = " ".join(t[1:])
+        return t[0] if t and re.fullmatch(r"(\\\* (ARABIC|MERGEFORMAT) ?)*", rest + " " if rest else "") else arg
+    if code in ("REF", "PAGEREF"):
+        return t[0] if t and bm_name(t[0]) and set(t[1:]) <= {"\\h", "\\*", "MERGEFORMAT"} else None
+    return arg
+
+
+def unwrap(p, kinds: Counter):
+    """Copy of paragraph `p` with inline wrappers that carry no text of their own (smartTag, customXml, plain inline content
+    controls, inserted text = accept view) replaced by their children and deleted text / comment markers dropped; None when
+    there is nothing to do. The wrappers are lost only if the paragraph is edited (unedited ones are written back verbatim)."""
+    changed = False
+
+    def flat(el, out):
+        nonlocal changed
+        for c in el:
+            t = loc(c)
+            if t in ("smartTag", "customXml", "ins") or (t == "sdt" and c.find(W + "sdtContent") is not None and c.find(f"{W}sdtPr/{W}dataBinding") is None
+                                                       and c.find(f"{W}sdtPr/{W}docPartObj") is None and c.find(f"{W}sdtContent/{W}p") is None):
+                kinds["tracked insertion" if t == "ins" else "content control" if t == "sdt" else t] += 1
+                changed = True
+                flat(c.find(W + "sdtContent") if t == "sdt" else c, out)
+            elif t == "del" or t in ("commentRangeStart", "commentRangeEnd") or (t == "r" and c.find(W + "commentReference") is not None):
+                kinds["tracked deletion" if t == "del" else "comment"] += 1
+                changed = True
+            else:
+                out.append(c)
+    res = etree.Element(p.tag, nsmap=p.nsmap)
+    res.attrib.update(p.attrib)
+    kids: list = []
+    flat(p, kids)
+    for k in kids:
+        res.append(copy.deepcopy(k))
+    return res if changed else None
 
 
 def fold_fields(p, hf: bool = False):
@@ -110,7 +155,7 @@ def fold_fields(p, hf: bool = False):
                 cur["sep"] = True
             elif kind == "end":
                 code, arg = _instr(cur["instr"])
-                if code not in ok:
+                if code not in ok or (arg := _arg(code, arg)) is None:
                     return None
                 res.append(_marker(code, arg, cur["text"], cur["rpr"]))
                 depth, found = 0, True
@@ -122,7 +167,7 @@ def fold_fields(p, hf: bool = False):
             continue
         if t == "fldSimple":
             code, arg = _instr(el.get(W + "instr"))
-            if code not in ok:
+            if code not in ok or (arg := _arg(code, arg)) is None:
                 return None
             r = el.find(W + "r")
             res.append(_marker(code, arg, "".join(x.text or "" for x in el.iter(W + "t")), r.find(W + "rPr") if r is not None else None))
@@ -166,13 +211,15 @@ class _Parser:
         self.theme = fmt.load_theme(zf, parse)
         self.look = Look(data) if data else None  # table styles (conditional formats) are resolved per cell, see tblstyle.py
         self.rel_ids = set(self.rels)
-        self.opaque, self.dropped, self.blocked, self.images = Counter(), Counter(), [], {}
+        self.opaque, self.dropped, self.blocked, self.images, self.unwrapped = Counter(), Counter(), [], {}, Counter()
         self.hf = False  # header/footer parts: TITLE/AUTHOR/DATE fields become variable chips
         self.root = parse("word/document.xml")
 
     # ---- opaque ----
     def keep(self, el, kind: str | None = None) -> dict:
         kind = (kind or _kind(el))[:60]
+        if kind == "field" and any("FORMTEXT" in (x.text or "") for x in el.iter(W + "instrText")):
+            kind = "form field"
         xml = etree.tostring(el, encoding="unicode", with_tail=False)
         try:
             opaque_element(xml, self.rel_ids)
@@ -254,12 +301,14 @@ class _Parser:
     def para(self, p):
         """-> (nodes, list_info). nodes = [paragraph|heading|opaque, image...]; list_info = (numId, ilvl) for list items."""
         ppr = p.find(W + "pPr")
-        if any(loc(x) in REVISION for x in p.iter()):
+        if any(loc(x) in REVISION - {"ins", "del"} for x in p.iter()):
             return [self.keep(p, "tracked changes")], None
         if ppr is not None and ppr.find(W + "sectPr") is not None:
             return [self.keep(p, "section break")], None
         out, images = [], []
         orig_p = p
+        u = unwrap(p, self.unwrapped)
+        p = p if u is None else u
         folded = fold_fields(p, self.hf)
         p = p if folded is None else folded  # PAGE/SEQ/... become `field` nodes; `keep` below still stores the original XML
         for c in p:
@@ -275,9 +324,9 @@ class _Parser:
             elif t == "hyperlink":
                 rel = self.rels.get(c.get(R + "id"))
                 href = rel.get("Target") if rel is not None and rel.get("TargetMode") == "External" else None
-                if href is None:
-                    return [self.keep(orig_p, "internal link")], None
-                if not re.match(r"(https?://|mailto:)", href, re.I):
+                if href is None:  # internal link (w:anchor): text stays editable, the jump target is lost only on edit
+                    self.dropped["internal links"] += 1
+                elif not re.match(r"(https?://|mailto:)", href, re.I):
                     self.dropped["links to non-web targets"] += 1
                     href = None
                 for r in c.findall(W + "r"):
@@ -496,7 +545,8 @@ def parse(data: bytes, store_image) -> tuple[dict, list[str]]:
             content = ps.blocks(ps.root.find(W + "body"))
         except (etree.XMLSyntaxError, KeyError, ValueError, RecursionError) as e:
             raise BadDocx(f"cannot parse document: {type(e).__name__}")
-    warn = [f"{n}× {k}: " + ("embedded document kept as is" if k == "embedded object" else "not editable, kept as an opaque block and written back unchanged") for k, n in ps.opaque.items()]
+    warn = [f"{n}× {k}: " + WHY.get(k, "not editable, kept as an opaque block and written back unchanged") for k, n in ps.opaque.items()]
+    warn += [f"{n}× {k}: shown as editable text; the wrapper is dropped only if you edit that paragraph" for k, n in ps.unwrapped.items()]
     warn += [f"blocked {b}" for b in ps.blocked]
     warn += [f"{n} {k}: not kept (editor has no support); styles are kept" for k, n in ps.dropped.items()]
     return {"type": "doc", "content": content or [{"type": "paragraph", "attrs": {"styleId": None}}]}, warn

@@ -64,8 +64,9 @@ def test_parse_shapes(imported):
     r = team["editor"].get(f"/api/imports/{iid}").json()
     blocks = r["content"]["content"]
     kinds = [b["type"] for b in blocks]
-    assert kinds.count("table") == 2 and kinds.count("image") == 2 and kinds.count("opaque") == 3
-    assert {b["attrs"]["kind"] for b in blocks if b["type"] == "opaque"} == {"content control", "text box", "tracked changes"}
+    assert kinds.count("table") == 2 and kinds.count("image") == 2 and kinds.count("opaque") == 2
+    assert {b["attrs"]["kind"] for b in blocks if b["type"] == "opaque"} == {"content control", "text box"}  # block-level SDT and text box stay opaque
+    assert any("INSERTED-MARKER" in D.block_text(b) for b in blocks if b["type"] == "paragraph")  # tracked insertion: accept view = editable text
     assert any(b["type"] == "paragraph" and b["attrs"]["styleId"] == "Callout" for b in blocks)  # custom style id kept
     h = [b for b in blocks if b["type"] == "heading"]
     assert [(x["attrs"]["level"], x["attrs"]["styleId"]) for x in h] == [(1, "Heading1"), (2, "Heading2"), (1, "Heading1"), (1, "Heading1"), (1, "Heading1")]
