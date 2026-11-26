@@ -166,10 +166,16 @@ def test_errors_have_line_numbers_and_no_content():
     assert r["errors"][0]["line"] == 1 and "opaque" in r["errors"][0]["message"]
 
 
-def test_lossy_constructs_warn_instead_of_failing():
-    r = B.from_text("para\n\n---\n\n```\ncode\n```\n\n> quoted\n", {"type": "doc", "content": [P(T("x"))]})
-    assert not r["errors"] and any("horizontal" in w for w in r["warnings"]) and any("code block" in w for w in r["warnings"])
-    assert ("paragraph", "Quote") in [(b["type"], b["attrs"].get("styleId")) for b in r["content"]["content"]]
+def test_code_quote_and_rule_become_real_nodes():  # round 21: formerly plain paragraphs / dropped with warnings
+    r = B.from_text("para\n\n---\n\n```\ncode\n  more\n```\n\n> quoted\n", {"type": "doc", "content": [P(T("x"))]})
+    assert not r["errors"] and not r["warnings"]
+    got = r["content"]["content"]
+    assert got[1]["attrs"]["pfmt"] == B.HR_P and "content" not in got[1]
+    assert got[2]["attrs"]["styleId"] == "Code" and [x["type"] for x in got[2]["content"]] == ["text", "hardBreak", "text"] and got[2]["content"][2]["text"] == "  more"
+    assert got[3]["attrs"]["styleId"] == "Quote"
+    t = B.to_text(r["content"])["text"]  # and back to the same constructs
+    assert "------" in t and "> quoted" in t and "code" in t and "custom-style" not in t
+    assert strip(B.from_text(t, None)["content"]["content"]) == strip(got)
 
 
 def test_markdown_never_passes_raw_html_tex_or_includes():
@@ -247,7 +253,7 @@ def test_routes_roles_and_shapes(client, outbox):
     assert set(r2) == {"content", "warnings", "errors"} and r2["content"] == SAMPLE
     bad = editor.post("/api/convert/from-text", json={"format": "markdown", "text": ":::\n"}).json()
     assert bad["errors"] and bad["content"] is None
-    assert editor.post("/api/convert/to-text", json={"format": "latex", "content": SAMPLE}).status_code == 422
+    assert editor.post("/api/convert/to-text", json={"format": "docx", "content": SAMPLE}).status_code == 422
     assert editor.post("/api/convert/from-text", json={"format": "markdown", "text": "x" * (B.MAX_TEXT + 1)}).status_code == 413
     anon = type(client)(client.app)
     assert anon.post("/api/convert/to-text", json=body).status_code in (401, 403)
