@@ -18,7 +18,7 @@ def user(script: str):
 
 def preset_prefs(page: Page):
     """The app defaults to no preview at 100%; scripts that read/assert the live preview pick it like a user would (remembered per browser)."""
-    page.add_init_script("localStorage.setItem('docgen.editor.preview','live');localStorage.setItem('docgen.editor.zoom','0.45')")
+    page.add_init_script("localStorage.setItem('docgen.editor.v2.preview','live');localStorage.setItem('docgen.editor.v2.zoom','0.45')")
 
 
 def login(page: Page, email: str, password: str, prefs=True):
