@@ -12,6 +12,8 @@ import { effectiveStyle, NAME_RE } from "./doc";
 import { revisionTableJSON } from "./revisionTable";
 import { findAll, replaceMatches, countWords, type Query } from "./find";
 import { captionLabel, entryText } from "./outline";
+import { captionExisting, defaultLabel, insertWithCaption, loadCap, saveCap, tableJSON, type CapKind, type CapOpts } from "./captions";
+import { textboxLines, withTextboxLines } from "./opaqueText";
 import { blockRange } from "./blockrange";
 import { insertList, markList, markSection, type ListKind } from "./sections";
 import { tableActions, TableTab } from "./TableTools";
@@ -40,7 +42,7 @@ const HF_FIELDS: [string, Record<string, unknown>][] = [
   ["Document title", { type: "variable", attrs: { name: "doc.title", default: "", filter: null } }], ["Version", { type: "variable", attrs: { name: "doc.version", default: "", filter: null } }],
   ["Author", { type: "variable", attrs: { name: "author", default: "", filter: null } }]];
 const SHORTCUTS: [string, string][] = [["Bold / italic / underline", "Ctrl+B / I / U"], ["Strikethrough", "Ctrl+Shift+X"], ["Undo / redo", "Ctrl+Z / Ctrl+Y"], ["Select all blocks", "Ctrl+A"], ["Link", "Ctrl+K"],
-  ["Find and replace", "Ctrl+F"], ["Line break", "Shift+Enter"], ["Indent / outdent list item", "Tab / Shift+Tab"], ["Insert {{ CONTENT }} (imports)", "Ctrl+Alt+C"], ["This list", "Ctrl+/"]];
+  ["Find and replace", "Ctrl+F"], ["Line break", "Shift+Enter"], ["Indent / outdent list item", "Tab / Shift+Tab"], ["Insert {{ CONTENT }} (imports)", "Ctrl+Alt+C"], ["Insert caption", "Ctrl+Alt+L"], ["This list", "Ctrl+/"]];
 export const BORDERS_SIDE = (val: string) => ({ val, sz: 4, color: "000000" });
 const BORDERS_ON = Object.fromEntries(["top", "left", "bottom", "right"].map((k) => [k, BORDERS_SIDE("single")]));
 const BORDERS_OFF = Object.fromEntries(["top", "left", "bottom", "right"].map((k) => [k, { val: "nil", sz: 0 }]));
@@ -96,11 +98,27 @@ export function Ribbon({ editor, ro, styles, mode = "body", onErr, structure, on
 
   // shortcuts that open dialogs (Ctrl+K, Ctrl+F, Ctrl+/) come from the editor as `docgen:cmd`
   useEffect(() => {
-    const h = (e: Event) => { const c = (e as CustomEvent).detail; if (!editor.isFocused) return; if (c === "link") setDlg("link"); else if (c === "find") setDlg("find"); else if (c === "shortcuts") setDlg("shortcuts"); else if (c === "dynamic") openDynamic(); };
+    const h = (e: Event) => { const c = (e as CustomEvent).detail; if (!editor.isFocused) return; if (c === "link") setDlg("link"); else if (c === "find") setDlg("find"); else if (c === "shortcuts") setDlg("shortcuts"); else if (c === "dynamic") openDynamic(); else if (c === "caption") openCaption(); };
     window.addEventListener("docgen:cmd", h);
     return () => window.removeEventListener("docgen:cmd", h);
   }, [editor]);
   useEffect(() => { editor.view.dom.setAttribute("spellcheck", String(spell)); }, [editor, spell]);
+  const [tb, setTb] = useState<{ pos: number; text: string } | null>(null);  // "Edit text box content" (raised by the opaque node view)
+  useEffect(() => {
+    const h = (e: Event) => {
+      const d = (e as CustomEvent).detail as { editor: Editor; pos: number };
+      const n = d.editor === editor ? editor.state.doc.nodeAt(d.pos) : null, lines = n && textboxLines(String(n.attrs.xml ?? ""));
+      if (lines) setTb({ pos: d.pos, text: lines.join("\n") });
+    };
+    window.addEventListener("docgen:textbox", h);
+    return () => window.removeEventListener("docgen:textbox", h);
+  }, [editor]);
+  const saveTextbox = () => {
+    const n = tb && editor.state.doc.nodeAt(tb.pos), xml = n && withTextboxLines(String(n.attrs.xml ?? ""), tb!.text.split("\n"));
+    if (!n || !xml) { onErr("The text box could not be updated"); setTb(null); return; }
+    editor.view.dispatch(editor.state.tr.setNodeMarkup(tb!.pos, undefined, { ...n.attrs, xml }));
+    setTb(null);
+  };
 
   // ---- dialog state ----
   const [vf, setVf] = useState({ name: "", default: "", kind: "" as "" | "upper" | "date", format: "DD.MM.YYYY", existing: false });
@@ -109,7 +127,7 @@ export function Ribbon({ editor, ro, styles, mode = "body", onErr, structure, on
   const [q, setQ] = useState<Query & { repl: string; idx: number }>({ find: "", regex: false, matchCase: false, repl: "", idx: 0 });
   const [sec, setSec] = useState({ brk: "nextPage", orient: "portrait", top: "", bottom: "", left: "", right: "" });
   const [lst, setLst] = useState({ kind: "toc" as ListKind, title: "", levels: "1-3", label: "Figure" });
-  const [cap, setCap] = useState({ label: "Figure", text: "" });
+  const [cap, setCap] = useState<{ label: string; text: string; pos: "above" | "below" }>({ label: "Figure", text: "", pos: "below" });
   const [mark, setMark] = useState({ kind: "section" as "section" | "appendix" | ListKind, title: "" });
   const [xref, setXref] = useState<{ kind: "REF" | "PAGEREF"; targets: { index: number; text: string; bm: string | null; what: string }[] }>({ kind: "REF", targets: [] });
   const err = (e: unknown) => onErr((e as Error).message ?? String(e));
@@ -170,7 +188,7 @@ export function Ribbon({ editor, ro, styles, mode = "body", onErr, structure, on
     try {
       const fd = new FormData(); fd.append("file", f);
       const img = await api<{ id: string }>("/images", "POST", fd);
-      onErr(""); run().insertContent({ type: "image", attrs: { imageId: img.id, alt: f.name, width: null } }).run();
+      onErr(""); if (hf) run().insertContent({ type: "image", attrs: { imageId: img.id, alt: f.name, width: null } }).run(); else openIns({ kind: "figure", id: img.id, name: f.name });
     } catch (e) { err(e); }
   };
   const cellFmt = (patch: Record<string, unknown>) => {
@@ -231,12 +249,18 @@ export function Ribbon({ editor, ro, styles, mode = "body", onErr, structure, on
     run().insertContent({ type: "field", attrs: { code: xref.kind, arg: bm, text: xref.kind === "REF" ? t.text : "1" } }).run();
     setDlg(null);
   };
-  const insertCaption = () => {
-    const label = cap.label, isTable = label === "Table", $f = editor.state.selection.$from;
-    const pos = $f.depth === 0 ? $f.pos : isTable ? $f.before(1) : $f.after(1);  // table captions above, figure captions below
-    editor.chain().focus().insertContentAt(pos, { type: "paragraph", attrs: { styleId: "Caption" }, content: [{ type: "text", text: `${label} ` },
-      { type: "field", attrs: { code: "SEQ", arg: label, text: "1" } }, ...(cap.text.trim() ? [{ type: "text", text: `: ${cap.text.trim()}` }] : [])] }).run();
-    setDlg(null);
+  const openCaption = () => { const k: CapKind = st.table || editor.isActive("table") ? "table" : "figure"; setCap({ label: defaultLabel(k), text: "", pos: loadCap(k).pos }); setDlg("caption"); };
+  const insertCaption = () => { captionExisting(editor, cap); setDlg(null); };
+  // Insert > Table / Image: a dialog with the size or file and the caption options (the checkbox lives here, not in the editor area)
+  const [ins, setIns] = useState<null | { kind: "table"; rows: number; cols: number } | { kind: "figure"; id: string; name: string }>(null);
+  const [copt, setCopt] = useState<CapOpts>(() => loadCap("table"));
+  const openIns = (i: NonNullable<typeof ins>) => { setCopt(loadCap(i.kind)); setIns(i); };
+  const doInsert = () => {
+    if (!ins) return;
+    const k: CapKind = ins.kind;
+    if (!hf) saveCap(k, copt);
+    insertWithCaption(editor, ins.kind === "table" ? tableJSON(Math.min(Math.max(ins.rows, 1), 50), Math.min(Math.max(ins.cols, 1), 20)) : { type: "image", attrs: { imageId: ins.id, alt: ins.name, width: null } }, { ...copt, on: copt.on && !hf });
+    setIns(null);
   };
   const insertSection = () => {
     const tw = (s: string) => { const n = Math.round(Number(s) * 567); return s.trim() && Number.isFinite(n) && n >= 0 && n <= 10000 ? n : null; }; // cm -> twips
@@ -312,8 +336,8 @@ export function Ribbon({ editor, ro, styles, mode = "body", onErr, structure, on
 
   const insert = <>
     <G label="Tables">
-      <I i="table" t="Insert table 3×3" fn={() => run().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()} />
-      <select className="tb-sel tb-size" aria-label="Insert table with size" disabled={off} value="" onChange={(e) => { const [r, c] = e.target.value.split("x").map(Number); if (r) run().insertTable({ rows: r, cols: c, withHeaderRow: true }).run(); }}>
+      <I i="table" t="Insert table 3×3" fn={() => hf ? run().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run() : openIns({ kind: "table", rows: 3, cols: 3 })} />
+      <select className="tb-sel tb-size" aria-label="Insert table with size" disabled={off} value="" onChange={(e) => { const [r, c] = e.target.value.split("x").map(Number); if (r) hf ? run().insertTable({ rows: r, cols: c, withHeaderRow: true }).run() : openIns({ kind: "table", rows: r, cols: c }); }}>
         <option value="">Rows × cols</option>{["2x2", "3x2", "3x3", "4x3", "5x4", "6x5", "8x6", "10x4"].map((v) => <option key={v} value={v}>{v.replace("x", " × ")}</option>)}</select>
       <I i="table" t="Convert the selected paragraphs to a table (columns split at tabs)" label="Text to table" fn={() => { if (!tableActions(editor, ui).r(textToTable)) onErr("Select some paragraphs outside a table first"); }} />
       {dynBtn}
@@ -381,7 +405,7 @@ export function Ribbon({ editor, ro, styles, mode = "body", onErr, structure, on
       {st.toc && <I i="edit" t="Options of the selected list" label="List options" fn={() => { const a = (editor.state.selection as NodeSelection).node.attrs; setLst({ kind: a.kind, title: a.title ?? "", levels: a.levels ?? "1-3", label: a.label ?? "Figure" }); setDlg("list"); }} />}
     </G>}
     <G label="Captions">
-      <I i="caption" t="Insert caption (Figure/Table, SEQ numbering, style Caption)" label="Caption" fn={() => { setCap({ label: st.table || editor.isActive("table") ? "Table" : "Figure", text: "" }); setDlg("caption"); }} />
+      <I i="caption" t="Insert caption (Figure/Table, SEQ numbering, style Caption)" label="Caption" fn={openCaption} />
     </G>
     <G label="Links">
       <I i="xref" t="Cross-reference to a heading, caption or bookmark" label="Cross-reference" off={off || hf} fn={openXref} />
@@ -408,7 +432,7 @@ export function Ribbon({ editor, ro, styles, mode = "body", onErr, structure, on
   </>;
 
   const tabs = st.table && !ro ? [...TABS, TABLE_TAB] : TABS, shown = tab === "table" && !(st.table && !ro) ? "home" : tab;
-  const table = <TableTab editor={editor} ui={ui} off={off} styles={styles} onCaption={() => { setCap({ label: "Table", text: "" }); setDlg("caption"); }} />;
+  const table = <TableTab editor={editor} ui={ui} off={off} styles={styles} onCaption={() => { setCap({ label: "Table", text: "", pos: loadCap("table").pos }); setDlg("caption"); }} />;
   const body = { home, insert, layout, refs, review, table }[shown];
   return (
     <div className="ribbon" data-testid="ribbon" onKeyDown={(e) => e.stopPropagation()}>
@@ -463,10 +487,28 @@ export function Ribbon({ editor, ro, styles, mode = "body", onErr, structure, on
           <div className="row"><button type="button" className={`btn sm ${xref.kind === "REF" ? "on" : ""}`} onClick={() => setXref({ ...xref, kind: "REF" })}>Text</button><button type="button" className={`btn sm ${xref.kind === "PAGEREF" ? "on" : ""}`} onClick={() => setXref({ ...xref, kind: "PAGEREF" })}>Page number</button></div>
           {xref.targets.length === 0 ? <p className="muted">No headings, captions or bookmarks yet.</p> : <ul className="structure">{xref.targets.map((t) => <li key={t.index}><span className="kind">{t.what}</span><button type="button" className="grow btn ghost" onClick={() => insertXref(t)}>{t.text}</button></li>)}</ul>}
         </div></Modal>}
+      <datalist id="cap-labels"><option value="Table" /><option value="Figure" /><option value="Listing" /></datalist>
+      {ins && <Modal title={ins.kind === "table" ? "Insert table" : "Insert figure"} size="sm" onClose={() => setIns(null)} actions={<><button className="btn" type="button" onClick={() => setIns(null)}>Cancel</button><button className="btn primary" form="ins-form">Insert</button></>}>
+        <form id="ins-form" className="stack" onSubmit={(e) => { e.preventDefault(); doInsert(); }}>
+          {ins.kind === "table" ? <div className="row">
+            <Field label="Rows">{(id) => <input id={id} type="number" min={1} max={50} value={ins.rows} onChange={(e) => setIns({ ...ins, rows: Number(e.target.value) })} />}</Field>
+            <Field label="Columns">{(id) => <input id={id} type="number" min={1} max={20} value={ins.cols} onChange={(e) => setIns({ ...ins, cols: Number(e.target.value) })} />}</Field></div>
+            : <p className="muted">{ins.name}</p>}
+          {!hf && <label className="check"><input type="checkbox" checked={copt.on} onChange={(e) => setCopt({ ...copt, on: e.target.checked })} /> Add caption</label>}
+          {copt.on && !hf && <>
+            <div className="row">
+              <Field label="Position">{(id) => <select id={id} value={copt.pos} onChange={(e) => setCopt({ ...copt, pos: e.target.value as CapOpts["pos"] })}><option value="above">Above</option><option value="below">Below</option></select>}</Field>
+              <Field label="Label" hint="Table, Figure, Listing…">{(id) => <input id={id} list="cap-labels" value={copt.label} onChange={(e) => setCopt({ ...copt, label: e.target.value })} maxLength={30} />}</Field></div>
+            <Field label="Caption text" hint="Numbered with a SEQ field, style Caption: lists of tables/figures find it.">{(id) => <input id={id} value={copt.text} onChange={(e) => setCopt({ ...copt, text: e.target.value })} autoFocus />}</Field></>}
+        </form></Modal>}
+      {tb && <Modal title="Edit text box content" onClose={() => setTb(null)} actions={<><button className="btn" type="button" onClick={() => setTb(null)}>Cancel</button><button className="btn primary" form="tb-form">Save text</button></>}>
+        <form id="tb-form" className="stack" onSubmit={(e) => { e.preventDefault(); saveTextbox(); }}>
+          <Field label="Text" hint="One paragraph per line. The shape, its position and the paragraph formatting stay as they are.">{(id) => <textarea id={id} rows={10} value={tb.text} onChange={(e) => setTb({ ...tb, text: e.target.value })} autoFocus style={{ fontFamily: "monospace" }} />}</Field></form></Modal>}
       {dlg === "caption" && <Modal title="Insert caption" onClose={() => setDlg(null)} actions={<><button className="btn" type="button" onClick={() => setDlg(null)}>Cancel</button><button className="btn primary" form="cap-form">Insert caption</button></>}>
         <form id="cap-form" className="stack" onSubmit={(e) => { e.preventDefault(); insertCaption(); }}>
-          <Field label="Label">{(id) => <select id={id} value={cap.label} onChange={(e) => setCap({ ...cap, label: e.target.value })}><option>Figure</option><option>Table</option></select>}</Field>
-          <Field label="Caption text" hint="Numbered with a SEQ field, style Caption. Tables get it above, figures below.">{(id) => <input id={id} value={cap.text} onChange={(e) => setCap({ ...cap, text: e.target.value })} autoFocus />}</Field></form></Modal>}
+          <div className="row"><Field label="Label">{(id) => <input id={id} list="cap-labels" value={cap.label} onChange={(e) => setCap({ ...cap, label: e.target.value, pos: e.target.value === "Table" ? "above" : e.target.value === "Figure" ? "below" : cap.pos })} maxLength={30} />}</Field>
+            <Field label="Position">{(id) => <select id={id} value={cap.pos} onChange={(e) => setCap({ ...cap, pos: e.target.value as CapOpts["pos"] })}><option value="above">Above</option><option value="below">Below</option></select>}</Field></div>
+          <Field label="Caption text" hint="Numbered with a SEQ field, style Caption. Default: tables above, figures below.">{(id) => <input id={id} value={cap.text} onChange={(e) => setCap({ ...cap, text: e.target.value })} autoFocus />}</Field></form></Modal>}
       {dlg === "section" && <Modal title="Section break" onClose={() => setDlg(null)} actions={<><button className="btn" type="button" onClick={() => setDlg(null)}>Cancel</button><button className="btn primary" form="sec-form">Insert section break</button></>}>
         <form id="sec-form" className="stack" onSubmit={(e) => { e.preventDefault(); insertSection(); }}>
           <p className="muted">The settings apply to the section that <b>ends</b> at this break (OOXML keeps a section's page setup in the break after it).</p>

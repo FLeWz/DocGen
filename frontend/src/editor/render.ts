@@ -6,6 +6,7 @@ import { effectiveStyle, PMNode } from "./doc";
 import { cellStyle, esc, imgCss, listCss, pflags, pfmtCss, rowCss, runCss, safeId, tableCss } from "./fmt";
 import { applyDateFilter, todayIso } from "../dates";
 import { ooxmlToHtml } from "./ooxml";
+import { opaqueWhy } from "./opaqueText";
 import { tabbed, validStops } from "./tabs";
 import { listEntries } from "./outline";
 
@@ -120,8 +121,9 @@ export function contentBlocks(doc: PMNode | null | undefined, styles: Style[], m
       case "opaque": {
         const html = ooxmlToHtml(String(n.attrs?.xml ?? ""), media);
         if (!html && n.attrs?.kind === "section break") return '<div class="sectbrk"><br></div>'; // an empty paragraph in Word, no chip
-        return html ? `<div class="opaque-view" title="Not editable: kept as-is in the exported DOCX">${html}</div>`
-          : `<div class="opaque-chip" title="Not editable: kept as-is in the exported DOCX">⬚ ${esc(n.attrs?.kind ?? "unknown")}</div>`;
+        if (n.attrs?.kind === "bookmark") return "";
+        const why = esc(opaqueWhy(String(n.attrs?.kind ?? "unknown")));
+        return html ? `<div class="opaque-view" title="${why}">${html}</div>` : `<div class="opaque-chip" title="${why}">⬚ ${esc(n.attrs?.kind ?? "unknown")}</div>`;
       }
       default: return kids(n, inList);
     }

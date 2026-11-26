@@ -18,11 +18,14 @@ export function entryText(n: PMNode): string {
   return s;
 }
 
+/** "Table \\* ARABIC" (imported SEQ argument) -> "Table". */
+export const normLabel = (arg: unknown) => String(arg ?? "").split(/\s*\\/)[0].trim() || "Figure";
+
 /** The label of a caption paragraph (its SEQ field argument), or null. */
 export function captionLabel(n: PMNode): string | null {
   let label: string | null = null;
   if (n.type !== "paragraph" && n.type !== "heading") return null;
-  walk(n, (x) => { if (label === null && x.type === "field" && x.attrs?.code === "SEQ") label = String(x.attrs?.arg ?? "").split(/\s*\\/)[0].trim() || "Figure"; });
+  walk(n, (x) => { if (label === null && x.type === "field" && x.attrs?.code === "SEQ") label = normLabel(x.attrs?.arg); });
   return label;
 }
 
@@ -63,7 +66,7 @@ export const nextSecId = (doc: PMNode | null | undefined) =>
 export function seqNumbers(blocks: PMNode[]): number[] {
   const count: Record<string, number> = {}, out: number[] = [];
   blocks.forEach((b) => walk(b, (x) => {
-    if (x.type === "field" && x.attrs?.code === "SEQ") { const l = String(x.attrs.arg ?? "").trim() || "Figure"; out.push((count[l] = (count[l] ?? 0) + 1)); }
+    if (x.type === "field" && x.attrs?.code === "SEQ") { const l = normLabel(x.attrs.arg); out.push((count[l] = (count[l] ?? 0) + 1)); }
   }));
   return out;
 }

@@ -13,6 +13,7 @@ import StarterKit from "@tiptap/starter-kit";
 import { gridGuard, moveColumn, moveRow, run as runOp, type Op } from "./tables";
 import { esc, cellCss, imgCss, listCss, pflags, pfmtCss, rowCss, runCss, safeId, tableCss } from "./fmt";
 import { ooxmlToHtml, getMedia } from "./ooxml";
+import { opaqueWhy, textboxLines, visibleLines } from "./opaqueText";
 import { BlockSelect } from "./blockrange";
 import { Pages } from "./pageplugin";
 import { entryText, listEntries, seqNumbers } from "./outline";
@@ -84,16 +85,33 @@ export const Opaque = Node.create({
   name: "opaque", group: "block", atom: true, selectable: true, draggable: true,
   addAttributes() { return { kind: attr("kind", "data-kind", "unknown"), xml: attr("xml", "data-xml", "") }; },
   parseHTML: () => [{ tag: "div[data-opaque]" }],
-  renderHTML: ({ node, HTMLAttributes }) => ["div", mergeAttributes(HTMLAttributes, { "data-opaque": "", class: "opaque-chip", contenteditable: "false", title: "Not editable: kept as-is in the exported DOCX" }), `⬚ ${node.attrs.kind}`],
+  renderHTML: ({ node, HTMLAttributes }) => ["div", mergeAttributes(HTMLAttributes, { "data-opaque": "", class: "opaque-chip", contenteditable: "false", title: opaqueWhy(String(node.attrs.kind)) }), `⬚ ${node.attrs.kind}`],
   addNodeView() {
-    return ({ node }) => {
-      const dom = document.createElement("div");
+    return ({ node, editor, getPos }) => {
+      const dom = document.createElement("div"), body = document.createElement("div"), bar = document.createElement("div");
       dom.setAttribute("contenteditable", "false");
+      bar.className = "opaque-bar";
+      dom.append(body, bar);
+      const btn = (label: string, title: string, fn: () => void) => {
+        const b = document.createElement("button"); b.type = "button"; b.textContent = label; b.title = title;
+        b.addEventListener("mousedown", (e) => e.preventDefault()); b.addEventListener("click", (e) => { e.stopPropagation(); fn(); }); bar.appendChild(b);
+      };
+      const at = () => { const pos = getPos(); return typeof pos === "number" ? pos : null; };
       const paint = (n: typeof node) => {
-        const html = ooxmlToHtml(String(n.attrs.xml ?? ""), getMedia());
-        dom.className = html ? "opaque-view" : "opaque-chip";
-        dom.title = `Not editable (${n.attrs.kind}): kept as-is in the exported DOCX`;
-        if (html) dom.innerHTML = html; else dom.textContent = `⬚ ${n.attrs.kind}`;
+        const xml = String(n.attrs.xml ?? ""), html = ooxmlToHtml(xml, getMedia());
+        dom.className = n.attrs.kind === "bookmark" ? "opaque-hidden" : html ? "opaque-view" : "opaque-chip";
+        dom.title = opaqueWhy(String(n.attrs.kind));
+        if (html) body.innerHTML = html; else body.textContent = `⬚ ${n.attrs.kind}`;
+        bar.replaceChildren();
+        if (!editor.isEditable || n.attrs.kind === "bookmark") return;
+        if (textboxLines(xml)) btn("✎ Edit text", "Edit the text of this text box (the shape stays)", () => { const pos = at(); if (pos !== null) window.dispatchEvent(new CustomEvent("docgen:textbox", { detail: { editor, pos } })); });
+        btn("Convert to text", "Replace this block by plain paragraphs holding its text (the drawing, shape and formatting are lost; undo brings it back)", () => {
+          const pos = at(); if (pos === null) return;
+          if (!window.confirm("Convert to plain paragraphs? The drawing/shape/field and its formatting are lost (Ctrl+Z undoes it).")) return;
+          const ls = visibleLines(String(n.attrs.xml ?? ""));
+          const paras = (ls.length ? ls : [{ text: "", style: null }]).map((l) => ({ type: "paragraph", attrs: { styleId: l.style && /^[A-Za-z0-9_-]{1,60}$/.test(l.style) ? l.style : null }, ...(l.text ? { content: [{ type: "text", text: l.text }] } : {}) }));
+          editor.chain().focus().insertContentAt({ from: pos, to: pos + n.nodeSize }, paras).run();
+        });
       };
       paint(node);
       return { dom, update: (n) => { if (n.type !== node.type) return false; paint(n); return true; } };
@@ -136,7 +154,7 @@ export const Field = Node.create({
   name: "field", group: "inline", inline: true, atom: true, selectable: true,
   addAttributes() { return { code: attr("code", "data-field", "PAGE"), arg: attr("arg", "data-arg", ""), text: attr("text", "data-text", "") }; },
   parseHTML: () => [{ tag: "span[data-field]" }],
-  renderHTML: ({ node, HTMLAttributes }) => ["span", mergeAttributes(HTMLAttributes, { class: `fld fld-${safeId(node.attrs.code) ?? "x"}`, title: `Field ${node.attrs.code} ${node.attrs.arg ?? ""}`.trim() }), fieldLabel(node.attrs)],
+  renderHTML: ({ node, HTMLAttributes }) => ["span", mergeAttributes(HTMLAttributes, { class: `fld fld-${safeId(node.attrs.code) ?? "x"}`, title: node.attrs.code === "SEQ" ? "Automatic number: follows the order of the captions" : node.attrs.code === "REF" ? "Cross-reference (updates with its target)" : `Field ${node.attrs.code} ${node.attrs.arg ?? ""}`.trim() }), fieldLabel(node.attrs)],
   renderText: ({ node }) => fieldLabel(node.attrs),
 });
 
@@ -234,7 +252,7 @@ export const Shortcuts = Extension.create({
   name: "shortcuts",
   addKeyboardShortcuts() {
     const go = (cmd: string) => () => { window.dispatchEvent(new CustomEvent("docgen:cmd", { detail: cmd })); return true; };
-    return { "Mod-k": go("link"), "Mod-f": go("find"), "Mod-h": go("find"), "Mod-/": go("shortcuts"), "Mod-Shift-x": () => { const e = this.editor, on = e.getAttributes("fmt").strike === true; e.chain().focus().setMark("fmt", { ...e.getAttributes("fmt"), strike: on ? null : true }).run(); return true; } };
+    return { "Mod-k": go("link"), "Mod-f": go("find"), "Mod-h": go("find"), "Mod-/": go("shortcuts"), "Mod-Alt-l": go("caption"), "Mod-Shift-x": () => { const e = this.editor, on = e.getAttributes("fmt").strike === true; e.chain().focus().setMark("fmt", { ...e.getAttributes("fmt"), strike: on ? null : true }).run(); return true; } };
   },
 });
 
