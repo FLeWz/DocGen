@@ -263,3 +263,13 @@
 
 **Gaps.** Imports/base-edit sessions are not locked; the heartbeat/poll is plain polling (no SSE); `Take over` does not wait for the old holder's pending save; notifications are never deleted; a request answered by closing the editor is recorded as `granted` with transfer kind `released`.
 
+## Round 17: OIDC roles from Keycloak client roles, always auto-provision
+
+**Why.** A Keycloak deployment ran with `OIDC_AUTO_PROVISION=0` and users got "DocGen is invite-only"; the admin wanted accounts created automatically and the role taken from client roles (groups carry the roles named like DocGen's).
+
+**Policy.** In `AUTH_MODE=oidc` a missing account is always created (user, identity, membership in `OIDC_DEFAULT_ORG`); `OIDC_AUTO_PROVISION` is gone (still set to 0: warning at startup, ignored). Authorisation moved from "has an invite" to "has a role in the token". Role = highest of `resource_access.<OIDC_ROLES_CLIENT_ID or OIDC_CLIENT_ID>.roles` (exact dict key), `realm_access.roles` (`OIDC_REALM_ROLES=1`), `OIDC_GROUPS_CLAIM`+`OIDC_ROLE_MAP`; names trimmed, case-insensitive, optional `OIDC_ROLE_PREFIX`. No role = refused before any DB write (message names the client), unless `OIDC_DEFAULT_ROLE` (now empty by default) is set. Role refreshed at every login both ways; the only owner is never demoted (warning). Invites still accepted at login, not required, and do not replace a role.
+
+**Tokens.** Keycloak puts `resource_access` in the access token and userinfo, usually not the id token, so claims come from three sources: id_token (verified as before), access token (decoded only after signature via the same JWKS, issuer, exp with leeway; `aud` deliberately not checked since Keycloak sets it to resource servers/`account`; `azp` must equal the client id when present; `sub` must match; failure = ignored + warning, never trusted unverified; opaque tokens likewise) and userinfo (sub-checked). userinfo is now fetched at every login (one extra request).
+
+**Gaps.** Only tested against the mock IdP (`tests/mock_idp.py` now signs an access token and can put claims in id/access/userinfo separately), never a real Keycloak. A user removed from the group is refused at the next login but an existing DocGen session lives until it expires (no back-channel logout, no removal of the membership). Roles are not synced on a schedule, only at login. A user with an invite but no role is refused.
+

@@ -127,7 +127,7 @@ For production remove the `mail` service and point `SMTP_*` at a real server. Em
 ## Sign-in with OpenID Connect
 
 `AUTH_MODE=oidc` replaces the built-in passwords with your company's identity provider (Authorization Code + PKCE). Setup, every
-`OIDC_*` variable, the callback URL to register (`<PUBLIC_URL>/api/auth/oidc/callback`), provisioning rules, Keycloak / Entra ID / Okta /
+`OIDC_*` variable, the callback URL to register (`<PUBLIC_URL>/api/auth/oidc/callback`), provisioning rules (accounts are auto-created; the role comes from the Keycloak client roles `owner/admin/editor/viewer` in the token; no role = refused), Keycloak / Entra ID / Okta /
 Authentik / ADFS examples and troubleshooting: **[docs/OIDC.md](docs/OIDC.md)**. Default stays `AUTH_MODE=local`.
 
 ## Mail (SMTP)
