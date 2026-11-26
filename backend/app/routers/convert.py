@@ -26,12 +26,12 @@ def guard(ctx: Ctx) -> None:
 
 
 class ToText(BaseModel):
-    format: Literal["markdown"] = "markdown"
+    format: Literal["markdown", "latex"] = "markdown"
     content: dict
 
 
 class FromText(BaseModel):
-    format: Literal["markdown"] = "markdown"
+    format: Literal["markdown", "latex"] = "markdown"
     text: str
     base_content: dict | None = None
 
