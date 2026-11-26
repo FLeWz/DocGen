@@ -271,3 +271,11 @@ textarea, pre, .difftext { scrollbar-color: var(--border-strong) var(--surface-2
 .bellwrap { position: relative; } .bellcount { position: absolute; top: 2px; right: 2px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: var(--danger); color: #fff; font-size: 10px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; }
 .bellpanel { position: absolute; right: 0; top: 100%; width: 340px; max-height: 60vh; overflow: auto; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: 0 8px 24px rgb(0 0 0 / 18%); padding: var(--sp-2); z-index: 40; }
 .bellpanel ul { list-style: none; margin: 0; padding: 0; } .bellpanel li { display: flex; flex-direction: column; gap: 2px; padding: 6px; border-radius: var(--radius-s); font-size: 13px; } .bellpanel li.unread { background: var(--primary-soft); }
+
+/* editor: single-line view bar, no preview pane header; focus mode (?focus=1) hides the shell and keeps only the editor toolbar */
+.viewbar { flex-wrap: nowrap; overflow-x: auto; white-space: nowrap; } .viewbar .vb-info { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; text-align: right; }
+.ed-focus .topbar, .ed-focus .sidebar, .ed-focus .rpanel, .ed-focus .pagehead, .ed-focus .skip { display: none !important; }
+.ed-focus .body { grid-template-columns: minmax(0, 1fr) !important; }
+.ed-focus .page.fill { padding: var(--sp-2) var(--sp-3); }
+.panes.single .pane-h { display: none; }
+.edhead .titleinput { flex: 1 1 120px; width: auto; min-width: 120px; max-width: 420px; } .edhead .actions { display: flex; gap: var(--sp-2); align-items: center; }

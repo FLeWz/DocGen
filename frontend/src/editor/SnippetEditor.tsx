@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Editor } from "@tiptap/core";
 import { EditorContent, useEditor, useEditorState } from "@tiptap/react";
+import { useSearchParams } from "react-router-dom";
 import { ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, ApiError, apiBlob, BaseDoc, Doc, Draft, Me, Style } from "../api";
 import { EditorHandle, LockBar, useEditLock } from "../locks";
@@ -18,6 +19,7 @@ import { EditorLayout, pageState } from "./pageplugin";
 import { normalize, pageKind, pageParts } from "./pagelayout";
 import { PagedView } from "./pages";
 import { contentBlocks } from "./render";
+import { loadPrefs, PV_KEY, PvMode, ZOOM_KEY, ZOOMS } from "./prefs";
 
 /** Style set for the dropdown/numbering: org styles, overridden by a base document's (?base_doc=). */
 export const useStyles = (me: Me, baseDoc?: string | null) =>
@@ -48,8 +50,20 @@ export function RichEditor({ qkey, load, save, keyOf, me, idleSaved, notices = [
   const ro = me.org?.role === "viewer" || !!locked;
   const d = useQuery({ queryKey: qkey, queryFn: load, gcTime: 0 }); // no stale cache on reopen: its refetch would reload (wipe) the editor after typing started
   const [pick, setPick] = useState(() => localStorage.getItem(`docgen.look.${me.org?.id}`) ?? "");
-  const [pv, setPv] = useState<"live" | "word" | "off">("live");
-  const [zoom, setZoom] = useState(innerWidth >= 1600 ? 0.6 : 0.45), [guides, setGuides] = useState(false), [struct, setStruct] = useState(false);
+  const [prefs] = useState(() => loadPrefs(localStorage));
+  const [pv, setPv] = useState<PvMode>(prefs.pv), [zoom, setZoom] = useState(prefs.zoom);
+  const [sp, setSp] = useSearchParams(), focus = sp.get("focus") === "1"; // focus mode: shell hidden by a class on <html> (app.css)
+  const setFocus = useCallback((on: boolean) => setSp((p) => { const n = new URLSearchParams(p); if (on) n.set("focus", "1"); else n.delete("focus"); return n; }, { replace: true }), [setSp]);
+  useEffect(() => {
+    document.documentElement.classList.toggle("ed-focus", focus);
+    const h = (e: KeyboardEvent) => {
+      if (e.ctrlKey && e.shiftKey && e.code === "KeyF") { e.preventDefault(); setFocus(!focus); }
+      else if (focus && e.key === "Escape" && !document.querySelector("dialog[open], [role=menu]")) setFocus(false);
+    };
+    window.addEventListener("keydown", h, true); // capture: the ribbon and ProseMirror swallow keys in the bubble phase
+    return () => { window.removeEventListener("keydown", h, true); document.documentElement.classList.remove("ed-focus"); };
+  }, [focus, setFocus]);
+  const [guides, setGuides] = useState(false), [struct, setStruct] = useState(false);
   const [pdf, setPdf] = useState<{ url: string; busy: boolean; err: string }>({ url: "", busy: false, err: "" });
   const bases = useQuery({ queryKey: ["base-docs", me.org?.id], queryFn: () => api<BaseDoc[]>("/base-documents"), enabled: !lookSrc });
   const src: LookSrc = lookSrc ?? (pick && bases.data?.some((b) => b.id === pick) ? { base_doc: pick } : {});
@@ -100,7 +114,7 @@ export function RichEditor({ qkey, load, save, keyOf, me, idleSaved, notices = [
   useEffect(() => { editor?.view.dispatch(editor.state.tr); }, [editor, orgStyles, lk.data]); // redraw heading numbers when the style set arrives
   // page gaps: the plugin measures the editor DOM and reports the layout back (header of page 1 and footer of the last page live in the frame)
   pageState.look = look; pageState.zoom = zoom; pageState.onLayout = setLay;
-  useEffect(() => { pageState.tick++; editor?.view.dispatch(editor.state.tr); }, [editor, look, zoom]);
+  useEffect(() => { pageState.tick++; editor?.view.dispatch(editor.state.tr); }, [editor, look, zoom, focus]);
 
   // Reload the editor only when the server draft changes identity (restore/discard/resolve), not per autosave.
   const loaded = useRef("");
@@ -156,17 +170,22 @@ export function RichEditor({ qkey, load, save, keyOf, me, idleSaved, notices = [
         <span className={`savestatus ${status}`} data-testid="save-status" data-status={status} role="status">
           {status === "saving" ? <Spinner /> : <Icon n={status === "error" ? "alert" : "check"} size={14} />}{status === "idle" && idleSaved ? "Draft saved" : label}</span>
         {status === "error" && <button className="btn sm" onClick={() => flush()}>Retry</button>}
-        <div className="actions">{actions?.({ editor, flush })}</div>
+        <div className="actions">
+          <button type="button" className={`btn icon ${focus ? "on" : ""}`} data-testid="focus-toggle" aria-pressed={focus} aria-label={focus ? "Exit fullscreen editor" : "Fullscreen editor"}
+            title={focus ? "Exit fullscreen editor (Esc or Ctrl+Shift+F)" : "Fullscreen editor (F11-like, Esc to exit) · Ctrl+Shift+F"} onClick={() => setFocus(!focus)}><Icon n={focus ? "shrink" : "expand"} /></button>
+          {document.documentElement.requestFullscreen && <button type="button" className="btn sm" data-testid="browser-fullscreen" aria-label="Browser fullscreen" title="Browser fullscreen (hides the browser chrome too)"
+            onClick={() => (document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen())}>F11</button>}
+          {actions?.({ editor, flush })}</div>
       </div>
       <Ribbon editor={editor} ro={ro} styles={styles} onErr={setErr} structure={struct} onStructure={() => setStruct(!struct)} />
       <NoticeBar bar={noticeBar} testid={noticeTestId} notices={[...notices, ...(err ? [{ id: "err", kind: "err" as const, text: err }] : [])]} />
       <div className="viewbar" role="group" aria-label="View options">
         {!lookSrc && <label>Look <select aria-label="Look" value={src.base_doc ?? ""} onChange={(e) => { setPick(e.target.value); localStorage.setItem(`docgen.look.${me.org?.id}`, e.target.value); }}>
           <option value="">Organization styles</option>{bases.data?.map((b) => <option key={b.id} value={b.id}>Base: {b.name}</option>)}</select></label>}
-        <label>Preview <select aria-label="Preview mode" value={pv} onChange={(e) => setPv(e.target.value as typeof pv)}>
-          <option value="live">Live (HTML)</option><option value="word">Render as Word does (PDF)</option><option value="off">Off</option></select></label>
-        <label>Zoom <select aria-label="Zoom" value={zoom} onChange={(e) => setZoom(+e.target.value)}>
-          {[0.4, 0.45, 0.5, 0.6, 0.75, 1, 1.5].map((z) => <option key={z} value={z}>{z * 100}%</option>)}</select></label>
+        <label>Preview <select aria-label="Preview mode" value={pv} onChange={(e) => { setPv(e.target.value as PvMode); localStorage.setItem(PV_KEY, e.target.value); }}>
+          <option value="off">No preview</option><option value="live">Live (HTML)</option><option value="word">Render as Word does (PDF)</option></select></label>
+        <label>Zoom <select aria-label="Zoom" value={zoom} onChange={(e) => { setZoom(+e.target.value); localStorage.setItem(ZOOM_KEY, e.target.value); }}>
+          {ZOOMS.map((z) => <option key={z} value={z}>{z * 100}%</option>)}</select></label>
         <button type="button" className={`btn sm ${guides ? "on" : ""}`} aria-pressed={guides} onClick={() => setGuides(!guides)}>Page guides</button>
         <button type="button" className={`btn sm ${struct ? "on" : ""}`} aria-pressed={struct} title="Outline of headings, marked sections, lists and captions" onClick={() => setStruct(!struct)}>Structure</button>
         {pv === "word" && <button type="button" className="btn sm" disabled={pdf.busy} onClick={renderWord}>{pdf.busy ? "Rendering…" : "Re-render PDF"}</button>}
@@ -174,9 +193,9 @@ export function RichEditor({ qkey, load, save, keyOf, me, idleSaved, notices = [
         <button type="button" className={`btn sm ${st?.selMode ? "on" : ""}`} aria-pressed={!!st?.selMode} title="Show a handle on every block: click selects one block, Shift+click a range (works across pages)" onMouseDown={(e) => e.preventDefault()} onClick={() => setSelectMode(editor, !st?.selMode)}>Select blocks</button>
         <span className="small" data-testid="sel-count" aria-live="polite">{st?.nsel ? <b>{st.nsel} block{st.nsel === 1 ? "" : "s"} selected</b> : ""}</span>
         <span className="spacer" />
-        <span className="muted small">Styles: {extractStyles(doc).join(", ") || "—"} · Variables: {extractVariables(doc).join(", ") || "—"}</span>
+        <span className="muted small vb-info">Styles: {extractStyles(doc).join(", ") || "—"} · Variables: {extractVariables(doc).join(", ") || "—"}</span>
       </div>
-      <div className="panes">
+      <div className={`panes ${pv === "off" && !src.import ? "single" : ""}`}>
         {struct && <Structure editor={editor} doc={doc} ro={ro} />}
         <section className="pane" aria-label="Editor pane" ref={paneRef} onMouseDown={(e) => { downAt.current = [e.clientX, e.clientY]; }}
           onClick={(e) => { const d0 = downAt.current; if (d0 && Math.hypot(e.clientX - d0[0], e.clientY - d0[1]) > 4) return; if (!(window.getSelection()?.isCollapsed ?? true)) return; openHfAt(e.clientX, e.clientY); }}>
