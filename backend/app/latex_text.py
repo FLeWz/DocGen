@@ -27,7 +27,7 @@ sin cos tan log ln exp min max sup inf lim det dim ker arg gcd mod bmod pmod qua
 textbackslash textbar textasciitilde textasciicircum textless textgreater textquotedbl textquoteleft textquoteright textendash textemdash textbullet
 ldots dots S P copyright pounds dag ddag today LaTeX TeX tag nonumber notag displaystyle textstyle scriptstyle limits nolimits big Big bigg Bigg
 langle rangle lfloor rfloor lceil rceil lbrace rbrace vert Vert mid colon prime star ast circ bullet oplus otimes angle perp parallel degree
-tightlist labelenumi labelenumii labelenumiii labelenumiv alph Alph roman Roman arabic rule hrule vline toprule midrule bottomrule noalign tabcolsep arraystretch endnote selectfont fontsize""".split())
+tightlist texorpdfstring nolinkurl hypertarget phantomsection textquotesingle ensuremath protect labelenumi labelenumii labelenumiii labelenumiv alph Alph roman Roman arabic rule hrule vline toprule midrule bottomrule noalign tabcolsep arraystretch endnote selectfont fontsize""".split())
 IGNORED = {"documentclass", "usepackage", "hypersetup", "bibliographystyle", "bibliography", "newcommand", "renewcommand", "providecommand", "def", "let",
            "newenvironment", "setcounter", "addtocounter", "tabcolsep", "arraystretch", "selectfont", "fontsize", "noindent", "indent", "centering",
            "raggedright", "raggedleft", "hspace", "vspace", "hfill", "vfill", "thanks", "limits", "nolimits", "tightlist"}
@@ -86,7 +86,7 @@ def scan(text: str, store: dict) -> tuple[list[dict], list[str]]:
         spec = re.sub(r"\*\{(\d+)\}\{([^{}]*)\}", lambda x: x.group(2) * int(x.group(1)), spec)
         ncol, pos = len(re.findall(r"[lcrXpmb]", re.sub(r"[pmb]\{[^{}]*\}", "p", spec))), mm.start(2)
         for row in re.split(r"\\\\(?:\[[^\]]*\])?", mm.group(2)):
-            cells = [c.strip() for c in row.replace("\\hline", "").split("&")]
+            cells = [c.strip() for c in re.split(r"(?<!\\)&", row.replace("\\hline", ""))]
             span = sum(int(x.group(1)) if (x := re.match(r"\\multicolumn\{(\d+)\}", c)) else 1 for c in cells)
             if any(cells) and span > ncol:
                 errs.append({"line": line_of(pos + len(row) - len(row.lstrip())), "column": 1, "message": f"row has {span} cells but the column specification has {ncol}: add a column letter to \\begin{{tabular}}"})
