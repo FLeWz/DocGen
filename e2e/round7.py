@@ -80,6 +80,7 @@ with sync_playwright() as pw:
         type_into(page, "Team table", end=False)
         page.get_by_role("tab", name="Insert").click()
         page.get_by_label("Insert table with size").select_option("3x2")
+        page.get_by_role("button", name="Insert", exact=True).click()  # Insert table dialog (caption option on by default)
         tbl = page.locator(".ProseMirror table")
         expect(tbl).to_have_count(1)
         page.get_by_role("tab", name="Insert").click()  # (the cursor is in the new table: the Table tab was selected)
