@@ -14,6 +14,7 @@ from .security import valid_csrf
 @asynccontextmanager
 async def lifespan(app):
     if config.AUTH_MODE == "oidc":  # non-fatal startup check, retried in the background with clear log lines
+        oidc_lib.warn_legacy()
         threading.Thread(target=oidc_lib.warmup, daemon=True).start()
     stop = threading.Event()  # sweeper: pending lock requests time out even when nobody's tab is open
     threading.Thread(target=locks.sweeper_loop, args=(stop,), daemon=True).start()

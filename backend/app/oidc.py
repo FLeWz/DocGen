@@ -7,6 +7,7 @@ import hashlib
 import hmac
 import json
 import logging
+import os
 import secrets
 import ssl
 import threading
@@ -148,21 +149,25 @@ def exchange(code: str, verifier: str) -> dict:
     return body
 
 
+def _signing_key(token: str):
+    d = discovery()
+    with _lock:
+        cli = _jwks.setdefault(d["jwks_uri"], PyJWKClient(d["jwks_uri"], ssl_context=_ssl(), timeout=10))
+        cli.refreshed = getattr(cli, "refreshed", 0)
+    try:
+        return cli.get_signing_key_from_jwt(token).key
+    except jwt.PyJWKClientError:  # unknown kid: the IdP may have rotated its keys, refetch (rate-limited) and retry
+        if time.monotonic() - getattr(cli, "refreshed", 0) < JWKS_REFRESH_MIN_S:
+            raise
+        cli.refreshed = time.monotonic()
+        cli.get_signing_keys(refresh=True)
+        return cli.get_signing_key_from_jwt(token).key
+
+
 def verify_id_token(token: str, nonce: str) -> dict:
     d = discovery()
     try:
-        with _lock:
-            cli = _jwks.setdefault(d["jwks_uri"], PyJWKClient(d["jwks_uri"], ssl_context=_ssl(), timeout=10))
-            cli.refreshed = getattr(cli, "refreshed", 0)
-        try:
-            key = cli.get_signing_key_from_jwt(token).key
-        except jwt.PyJWKClientError:  # unknown kid: the IdP may have rotated its keys, refetch (rate-limited) and retry
-            if time.monotonic() - getattr(cli, "refreshed", 0) < JWKS_REFRESH_MIN_S:
-                raise
-            cli.refreshed = time.monotonic()
-            cli.get_signing_keys(refresh=True)
-            key = cli.get_signing_key_from_jwt(token).key
-        claims = jwt.decode(token, key, algorithms=ALGS, audience=config.OIDC_CLIENT_ID, issuer=d["issuer"],
+        claims = jwt.decode(token, _signing_key(token), algorithms=ALGS, audience=config.OIDC_CLIENT_ID, issuer=d["issuer"],
                             leeway=LEEWAY_S, options={"require": ["exp", "iss", "aud", "sub"]})
     except jwt.PyJWTError as e:
         log.error("OIDC id_token rejected: %s: %s", type(e).__name__, e)
@@ -173,6 +178,30 @@ def verify_id_token(token: str, nonce: str) -> dict:
     if (len(aud) > 1 or "azp" in claims) and claims.get("azp") != config.OIDC_CLIENT_ID:
         raise OidcError("the identity provider's token was rejected: azp does not match the client id")
     return claims
+
+
+def verify_access_token(token: str, sub: str) -> dict:
+    """Claims of a JWT access token, or {} (logged) when it is opaque or fails verification: never trust unverified claims.
+    aud is NOT checked (Keycloak sets it to the resource servers / `account`); azp must be our client when present."""
+    if not token:
+        return {}
+    try:
+        claims = jwt.decode(token, _signing_key(token), algorithms=ALGS, issuer=discovery()["issuer"], leeway=LEEWAY_S,
+                            options={"require": ["exp", "iss"], "verify_aud": False})
+        if "azp" in claims and claims["azp"] != config.OIDC_CLIENT_ID:
+            raise jwt.InvalidTokenError("azp does not match the client id")
+        if claims.get("sub", sub) != sub:
+            raise jwt.InvalidTokenError("sub differs from the id_token")
+    except (jwt.PyJWTError, OidcError) as e:
+        log.warning("OIDC access token ignored for role lookup: %s: %s", type(e).__name__, e)
+        return {}
+    return claims
+
+
+def warn_legacy() -> None:
+    if os.environ.get("OIDC_AUTO_PROVISION", "").strip().lower() in ("0", "false", "no", "off"):
+        log.warning("OIDC_AUTO_PROVISION is ignored: accounts are always created at first login; access is controlled "
+                    "by the client roles in the token (see docs/OIDC.md)")
 
 
 def userinfo(access_token: str, sub: str) -> dict:

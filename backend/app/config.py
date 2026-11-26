@@ -58,12 +58,14 @@ OIDC_ALLOWED_EMAIL_DOMAINS = {d.strip().lower().lstrip("@") for d in _e("OIDC_AL
 OIDC_VERIFY_TLS = _flag("OIDC_VERIFY_TLS", "true")
 OIDC_CA_BUNDLE = _e("OIDC_CA_BUNDLE", "").strip()
 OIDC_END_SESSION = _flag("OIDC_END_SESSION", "true")
-OIDC_AUTO_PROVISION = _flag("OIDC_AUTO_PROVISION", "1")
 OIDC_LINK_BY_EMAIL = _flag("OIDC_LINK_BY_EMAIL", "0")
 OIDC_DEFAULT_ORG = _e("OIDC_DEFAULT_ORG", "DocGen").strip() or "DocGen"
-OIDC_DEFAULT_ROLE = _e("OIDC_DEFAULT_ROLE", "viewer").strip().lower()
-if OIDC_DEFAULT_ROLE not in ("owner", "admin", "editor", "viewer"):
-    raise RuntimeError(f"OIDC_DEFAULT_ROLE must be owner, admin, editor or viewer, got {OIDC_DEFAULT_ROLE!r}")
+OIDC_ROLES_CLIENT_ID = _e("OIDC_ROLES_CLIENT_ID", "").strip() or OIDC_CLIENT_ID  # key under resource_access
+OIDC_REALM_ROLES = _flag("OIDC_REALM_ROLES", "0")  # also read realm_access.roles
+OIDC_ROLE_PREFIX = _e("OIDC_ROLE_PREFIX", "").strip().lower()  # e.g. "docgen-": docgen-editor == editor
+OIDC_DEFAULT_ROLE = _e("OIDC_DEFAULT_ROLE", "").strip().lower()  # empty = users without a role claim are refused
+if OIDC_DEFAULT_ROLE and OIDC_DEFAULT_ROLE not in ("owner", "admin", "editor", "viewer"):
+    raise RuntimeError(f"OIDC_DEFAULT_ROLE must be empty, owner, admin, editor or viewer, got {OIDC_DEFAULT_ROLE!r}")
 if AUTH_MODE == "oidc" and not (OIDC_ISSUER and OIDC_CLIENT_ID):
     raise RuntimeError("AUTH_MODE=oidc needs OIDC_ISSUER and OIDC_CLIENT_ID")
 REPOS_ROOT = _e("REPOS_ROOT", "/repos")
