@@ -91,7 +91,7 @@ def test_export_docx_content(ws):
     c = ws["c"]
     eid, st = run_export(c, ws["doc"])
     assert st["status"] == "done", st
-    assert st["warnings"] == ["undefined variables: missing_one"]
+    assert st["warnings"][0] == "undefined variables: missing_one" and len(st["warnings"]) == 2 and "{{ missing_one }}" in st["warnings"][1]  # round 22: + where it is left
     data = fetch(c, eid)
     doc = Document(io.BytesIO(data))
     texts = [p.text for p in doc.paragraphs]

@@ -221,7 +221,11 @@ def context(spec: dict) -> dict:
         if d.get("type") == "date" and "." not in d["name"] and d["name"] in ctx:
             ctx[d["name"]] = dmy(ctx[d["name"]])
     bi = spec["built_ins"]
-    ctx.update({"doc": {"title": bi["doc.title"], "version": bi["doc.version"], "date": dmy(bi["doc.date"])},
+    doc = {"title": bi["doc.title"], "version": bi["doc.version"], "date": dmy(bi["doc.date"])}
+    for alias, val in (("document_title", doc["title"]), ("document_version", doc["version"]), ("document_date", doc["date"]),
+                       ("document_author", bi["author"])):  # round 22: imported covers say {{ document_title }}; a declared variable wins
+        ctx.setdefault(alias, val)
+    ctx.update({"doc": doc,
                 "org": {"name": bi["org.name"]}, "author": bi["author"],
                 "linked_documents": [_clean(l, id=l.get("doc_id"), link=l.get("url")) for l in spec.get("links", [])],
                 "revision_history": revision_rows(spec)})
@@ -771,6 +775,13 @@ def build(spec: dict, base: bytes, load_content, load_asset) -> tuple[bytes, lis
     render_texts(roots, ctx, missing, warnings, done)
     if missing:
         warnings.append("undefined variables: " + ", ".join(sorted(missing)))
+    parts = [("document", body)] + [(r.target_part.partname.lstrip("/"), r.target_part.element) for r in doc.part.rels.values()
+                                    if r.reltype in (RT.HEADER, RT.FOOTER)]
+    for part, root in parts:  # whatever is still a placeholder in the final XML, and where
+        for p in root.iter(qn("w:p")):
+            t = "".join(x.text or "" for x in p.iter(qn("w:t")))
+            if "{{" in t or "{%" in t:
+                warnings.append(f"unresolved placeholder in {part}: {t.strip()[:60]!r}")
     _fix_settings(doc)
     cp, bi = doc.core_properties, spec["built_ins"]
     cp.title, cp.author, cp.last_modified_by, cp.revision = bi["doc.title"], bi["author"], bi["author"], 1
