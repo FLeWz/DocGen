@@ -19,8 +19,11 @@ def set_idp_user(page, roles=None, **claims):
 
 def sign_in(page):
     page.goto(BASE + "/login")
+    sso = any(c["name"] == "idp_sso" for c in page.context.cookies())  # the IdP's own session (survives a refused login)
+    after_logout = any(c["name"] == "docgen_signed_out" for c in page.context.cookies())
     page.get_by_role("link", name="Sign in with Mock IdP").click()
-    page.get_by_role("button", name="Sign in at the IdP").click()  # mock IdP asks unless its SSO cookie is set
+    if not sso or after_logout:  # mock IdP asks for the sign-in unless its SSO cookie is set (always after a logout: prompt=login)
+        page.get_by_role("button", name="Sign in at the IdP").click()
 
 
 def log_out(page):
