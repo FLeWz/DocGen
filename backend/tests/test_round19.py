@@ -74,3 +74,20 @@ def test_unedited_round_trip_is_byte_identical_and_edit_changes_only_that_paragr
     a, b = body_children(orig), body_children(out2)
     assert b"SDT-CHANGED" in b[2] and b"SDT-TEXT" not in b[2]
     assert [x for i, x in enumerate(b) if i != 2][:-1] == [x for i, x in enumerate(a) if i != 2][:-1]  # all other blocks untouched
+
+
+def test_inserted_caption_exports_seq_field_caption_style_keepnext_and_feeds_the_list():
+    from docx.oxml.ns import qn
+    from .test_rich import F, H, P, T, body, export, instrs, part
+    table = {"type": "table", "content": [{"type": "tableRow", "content": [{"type": "tableHeader", "content": [P(T("h"))]}]}]}
+    cap = lambda label, n, txt: {**P(T(f"{label} "), F("SEQ", label, str(n)), T(f": {txt}"), styleId="Caption"), "attrs": {"styleId": "Caption", "pfmt": {"keepNext": True}}}
+    out, _ = export([H("Intro"), cap("Table", 1, "Sizes"), table, cap("Listing", 1, "Code"), P(T("x")),
+                     {"type": "toc", "attrs": {"kind": "tot", "title": "", "label": "Table"}}, {"type": "toc", "attrs": {"kind": "tof", "title": "", "label": "Listing"}}])
+    b = body(out)
+    assert instrs(b).count("SEQ Table \\* ARABIC") == 1 and instrs(b).count("SEQ Listing \\* ARABIC") == 1  # custom label too
+    cp = [p for p in b.iter(qn("w:p")) if p.find(f"{qn('w:pPr')}/{qn('w:pStyle')}") is not None and p.find(f"{qn('w:pPr')}/{qn('w:pStyle')}").get(qn("w:val")) == "Caption"]
+    assert len(cp) == 2 and all(p.find(f"{qn('w:pPr')}/{qn('w:keepNext')}") is not None for p in cp)
+    text = "".join(t.text or "" for t in b.iter(qn("w:t")))
+    assert text.count("Table 1: Sizes") == 2 and text.count("Listing 1: Code") == 2  # caption + its list entry (cached numbers)
+    assert "ARABIC" not in text  # the switch lives in the field code, never in visible text
+    assert "Caption" in {s.get(qn("w:styleId")) for s in part(out, "word/styles.xml").iter(qn("w:style"))}
