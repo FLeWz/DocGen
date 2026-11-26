@@ -460,3 +460,42 @@ def test_cli_creates_sso_only_admin_who_is_linked_at_first_login(idp, client, mo
     go(client)
     me = client.get("/api/auth/me").json()
     assert me["user"]["name"] == "Ann" and "Acme" in {o["name"] for o in client.get("/api/orgs").json()}
+
+
+def test_logout_ends_sso_and_next_login_asks_for_credentials(idp, client):
+    idp.interactive = True
+    try:
+        sso = httpx.Client(follow_redirects=False)  # the browser's cookie jar at the IdP
+        r = client.get("/api/auth/oidc/login", follow_redirects=False)
+        assert "prompt=login" not in r.headers["location"]
+        page = sso.get(r.headers["location"])
+        assert page.status_code == 200 and "Sign in at the IdP" in page.text  # no SSO cookie: interaction required
+        a = sso.post(r.headers["location"])
+        assert a.status_code == 302 and "idp_sso" in sso.cookies
+        client.get(a.headers["location"].split("testserver", 1)[1], follow_redirects=False)
+        assert client.get("/api/auth/me").status_code == 200
+        lo = client.post("/api/auth/logout")
+        url = lo.json()["redirect"]
+        assert "id_token_hint=" in url and "docgen_signed_out=1" in lo.headers["set-cookie"]
+        assert client.get("/api/auth/me").status_code == 401  # DocGen session row is gone
+        assert sso.get(url).status_code == 302 and "idp_sso" not in sso.cookies  # IdP SSO session ended
+        nxt = client.get("/api/auth/oidc/login", follow_redirects=False)
+        assert "prompt=login" in nxt.headers["location"]  # right after a logout
+        assert "Sign in at the IdP" in sso.get(nxt.headers["location"]).text
+        assert "prompt=login" not in client.get("/api/auth/oidc/login", follow_redirects=False).headers["location"]  # one-shot
+    finally:
+        idp.interactive = False
+
+
+def test_logout_survives_unreachable_idp_and_no_session(idp, client):
+    go(client)
+    oidc._disc.clear()
+    idp_url = config.OIDC_ISSUER
+    config.OIDC_ISSUER = "http://127.0.0.1:1"
+    try:
+        r = client.post("/api/auth/logout")
+    finally:
+        config.OIDC_ISSUER = idp_url
+    assert r.status_code == 200 and r.json() == {"redirect": None}
+    assert client.get("/api/auth/me").status_code == 401
+    assert client.post("/api/auth/logout").status_code == 200  # second tab: already gone

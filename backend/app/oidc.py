@@ -115,7 +115,7 @@ def safe_return(path: str | None) -> str:
     return path
 
 
-def begin(return_to: str | None) -> tuple[str, str]:
+def begin(return_to: str | None, prompt_login: bool = False) -> tuple[str, str]:
     """-> (IdP authorize URL, sealed cookie value)"""
     d = discovery()
     state, nonce, verifier = secrets.token_urlsafe(24), secrets.token_urlsafe(24), secrets.token_urlsafe(48)
@@ -123,6 +123,8 @@ def begin(return_to: str | None) -> tuple[str, str]:
     q = urlencode({"response_type": "code", "client_id": config.OIDC_CLIENT_ID, "redirect_uri": config.OIDC_REDIRECT_URI,
                    "scope": config.OIDC_SCOPES, "state": state, "nonce": nonce, "code_challenge": challenge,
                    "code_challenge_method": "S256"})
+    if prompt_login:
+        q += "&prompt=login"
     sep = "&" if "?" in d["authorization_endpoint"] else "?"
     return d["authorization_endpoint"] + sep + q, seal({"s": state, "n": nonce, "v": verifier, "r": safe_return(return_to)})
 

@@ -14,7 +14,7 @@ from ..db import get_db, set_ctx
 from ..models import RANK, Identity, Invite, Membership, Organization, Role, Style, User
 from ..passwords import normalize_email
 from ..scoping import OrgRepo
-from .auth import start_session
+from .auth import SIGNED_OUT_COOKIE, start_session
 
 log = logging.getLogger(__name__)
 def ctx(db: Session, **kw) -> None:
@@ -39,12 +39,13 @@ def to_login(msg: str) -> RedirectResponse:
 
 
 @router.get("/login", dependencies=[Depends(need_oidc)])
-def login(return_to: str | None = None):
-    try:
-        url, sealed = oidc.begin(return_to)
+def login(request: Request, return_to: str | None = None):
+    try:  # right after a logout the IdP must ask for credentials even if its SSO session survived
+        url, sealed = oidc.begin(return_to, prompt_login=config.OIDC_FORCE_REAUTH or SIGNED_OUT_COOKIE in request.cookies)
     except oidc.OidcError as e:
         return to_login(str(e))
     r = RedirectResponse(url, status_code=302)
+    r.delete_cookie(SIGNED_OUT_COOKIE)
     # lax: the IdP's redirect back is a top-level GET, which lax cookies accompany
     r.set_cookie(STATE_COOKIE, sealed, max_age=oidc.STATE_TTL_S, httponly=True, samesite="lax",
                  secure=config.COOKIE_SECURE, path=COOKIE_PATH)

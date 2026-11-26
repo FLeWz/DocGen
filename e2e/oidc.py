@@ -20,6 +20,7 @@ def set_idp_user(page, roles=None, **claims):
 def sign_in(page):
     page.goto(BASE + "/login")
     page.get_by_role("link", name="Sign in with Mock IdP").click()
+    page.get_by_role("button", name="Sign in at the IdP").click()  # mock IdP asks unless its SSO cookie is set
 
 
 def log_out(page):
@@ -48,6 +49,11 @@ with sync_playwright() as pw:
         assert me["user"]["email"] == "ann@example.com" and me["org"]["role"] == "owner", me  # first user owns the org
         log_out(page)
         assert page.request.get(BASE + "/api/auth/me").status == 401
+        expect(page.get_by_text("You have been signed out.")).to_be_visible()
+        assert not any(c["name"] == "idp_sso" for c in page.context.cookies()), "IdP SSO session must end with the logout"
+        sign_in(page)  # after a logout the IdP asks for credentials again (the helper clicks its sign-in button)
+        expect(page.get_by_role("heading", name=re.compile("Welcome back, Ann"))).to_be_visible()
+        log_out(page)
 
         set_idp_user(page, sub="e2e-2", email="bob@example.com", name="Bob Viewer", roles=["viewer"])
         sign_in(page)

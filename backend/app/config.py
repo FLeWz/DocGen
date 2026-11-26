@@ -58,6 +58,7 @@ OIDC_ALLOWED_EMAIL_DOMAINS = {d.strip().lower().lstrip("@") for d in _e("OIDC_AL
 OIDC_VERIFY_TLS = _flag("OIDC_VERIFY_TLS", "true")
 OIDC_CA_BUNDLE = _e("OIDC_CA_BUNDLE", "").strip()
 OIDC_END_SESSION = _flag("OIDC_END_SESSION", "true")
+OIDC_FORCE_REAUTH = _flag("OIDC_FORCE_REAUTH", "0")  # always send prompt=login (otherwise only right after a logout)
 OIDC_LINK_BY_EMAIL = _flag("OIDC_LINK_BY_EMAIL", "0")
 OIDC_DEFAULT_ORG = _e("OIDC_DEFAULT_ORG", "DocGen").strip() or "DocGen"
 OIDC_ROLES_CLIENT_ID = _e("OIDC_ROLES_CLIENT_ID", "").strip() or OIDC_CLIENT_ID  # key under resource_access

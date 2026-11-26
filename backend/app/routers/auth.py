@@ -19,6 +19,7 @@ from ..security import DUMMY_HASH, hash_pw, make_csrf, new_token, sha, valid_csr
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 CSRF_COOKIE = "docgen_csrf"
+SIGNED_OUT_COOKIE = "docgen_signed_out"  # readable by the SPA on purpose
 
 
 def start_session(db: Session, resp: Response, user: User, org_id: UUID | None, id_token: str | None = None) -> None:
@@ -117,14 +118,21 @@ def logout(request: Request, db: Session = Depends(get_db)):
     if tok:
         s = db.scalar(select(AuthSession).where(AuthSession.token_hash == sha(tok)))
         id_token = s.id_token if s else None
-        if s and s.active_org_id:  # a logged-out user holds no edit locks
-            set_ctx(db, user_id=s.user_id, org_id=s.active_org_id)
-            locks.release_all(db, s.active_org_id, db.get(User, s.user_id))
-        db.execute(delete(AuthSession).where(AuthSession.token_hash == sha(tok)))
+        uid, org = (s.user_id, s.active_org_id) if s else (None, None)
+        db.execute(delete(AuthSession).where(AuthSession.token_hash == sha(tok)))  # first: logout never fails on the rest
         db.commit()
+        if org:  # a logged-out user holds no edit locks
+            try:
+                set_ctx(db, user_id=uid, org_id=org)
+                locks.release_all(db, org, db.get(User, uid))
+                db.commit()
+            except Exception:  # noqa: BLE001 - locks expire on their own
+                db.rollback()
     resp = (JSONResponse({"redirect": oidc.end_session_url(id_token)}) if config.AUTH_MODE == "oidc"
             else Response(status_code=204))
     resp.delete_cookie(SESSION_COOKIE)
+    if config.AUTH_MODE == "oidc":  # tells the login page to say "signed out" and the next SSO login to use prompt=login
+        resp.set_cookie(SIGNED_OUT_COOKIE, "1", max_age=3600, samesite="lax", secure=config.COOKIE_SECURE)
     return resp
 
 

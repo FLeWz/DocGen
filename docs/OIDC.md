@@ -54,6 +54,7 @@ returns `{mode, provider_name, allow_signup}` for the login screen.
 | `OIDC_VERIFY_TLS` | `true` | `false` disables certificate checks (tests only) |
 | `OIDC_CA_BUNDLE` | empty | PEM file for a private CA, e.g. `/certs/company-ca.pem` (put it in `./certs/`, mounted at `/certs`) |
 | `OIDC_END_SESSION` | `true` | log out at the IdP too when it advertises `end_session_endpoint` |
+| `OIDC_FORCE_REAUTH` | `0` | `1` = always send `prompt=login`; otherwise only on the login that follows a logout (cookie `docgen_signed_out`) |
 | `OIDC_AUTO_PROVISION` | removed | ignored (warning at startup if set to 0): accounts are always created |
 | `OIDC_DEFAULT_ORG` | `DocGen` | org that SSO users join |
 | `OIDC_DEFAULT_ROLE` | empty | optional fallback role for users with no role in the token; empty = such logins are refused |
@@ -78,6 +79,18 @@ returns `{mode, provider_name, allow_signup}` for the login screen.
 * An existing password user with the same email is **not** linked unless `OIDC_LINK_BY_EMAIL=1` and the IdP does not say `email_verified: false`.
   Bootstrap alternative: `python -m app.manage create-user --email .. --name .. --org ..` plus `OIDC_LINK_BY_EMAIL=1`.
 * Logs (INFO): where roles were found and the chosen role (never tokens). WARNING when `resource_access` is in none of the tokens.
+
+## Logout
+
+`POST /api/auth/logout` first deletes the DocGen session row and the cookie (never fails, even if the IdP is down or a second tab already
+logged out), then returns `{redirect}` = the IdP's `end_session_endpoint` with `id_token_hint` (stored in `sessions.id_token`), `client_id`
+and `post_logout_redirect_uri=<PUBLIC_URL>/login`; the SPA navigates the whole page there so the IdP's SSO session ends too (otherwise the
+next *Sign in* is silent and looks like "never logged out", typical with passkeys/remembered SSO). The login page then shows "You have been
+signed out" (no auto-redirect into the IdP) and the next login sends `prompt=login` once.
+**Keycloak must accept the redirect**: *Clients > docgen > Valid post logout redirect URIs* = `<PUBLIC_URL>/login` (or `<PUBLIC_URL>/*`; `+` copies
+the redirect URIs, which does not cover `/login`). If it is missing Keycloak shows an error page and may leave the SSO session alive; sessions
+without a stored id_token (created before this was added) make Keycloak ask "Do you want to log out?". Back-/front-channel logout (IdP -> DocGen)
+is not implemented. Tested only against the mock IdP, not a real Keycloak.
 
 ## Security notes
 

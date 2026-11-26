@@ -18,7 +18,7 @@ import jwt
 import uvicorn
 from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi import FastAPI, Form, Request
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 
 def _key():
@@ -33,6 +33,7 @@ class Idp:
         self.tamper: dict = {}
         self.codes: dict[str, dict] = {}
         self.logouts: list[dict] = []
+        self.interactive = False  # True: no `idp_sso` cookie (or prompt=login) -> a sign-in page instead of auto-approve, like Keycloak
         self.extra: dict[str, dict] = {}
         self.userinfo_only: set[str] = set()  # claims served only by /userinfo, never in the id_token
 
@@ -84,6 +85,19 @@ def make_app(idp: Idp) -> FastAPI:
         q = request.query_params
         if q.get("client_id") != idp.client_id or q.get("response_type") != "code" or q.get("code_challenge_method") != "S256":
             return JSONResponse({"error": "invalid_request"}, status_code=400)
+        if idp.interactive and ("idp_sso" not in request.cookies or q.get("prompt") == "login"):
+            return HTMLResponse(f'<form method="post" action="{idp.issuer}/authorize?{urlencode(dict(q))}">'
+                                '<button type="submit">Sign in at the IdP</button></form>')
+        return approve(request)
+
+    @app.post("/authorize")
+    def authorize_post(request: Request):
+        r = approve(request)
+        r.set_cookie("idp_sso", "1", path="/")  # the IdP's own SSO session
+        return r
+
+    def approve(request: Request):
+        q = request.query_params
         code = secrets.token_urlsafe(16)
         idp.codes[code] = {"nonce": q["nonce"], "challenge": q["code_challenge"], "redirect_uri": q["redirect_uri"],
                            "scope": q["scope"]}
@@ -116,7 +130,9 @@ def make_app(idp: Idp) -> FastAPI:
     def logout(request: Request):
         q = dict(request.query_params)
         idp.logouts.append(q)
-        return RedirectResponse(q.get("post_logout_redirect_uri", "/"), status_code=302)
+        r = RedirectResponse(q.get("post_logout_redirect_uri", "/"), status_code=302)
+        r.delete_cookie("idp_sso", path="/")
+        return r
 
     @app.post("/_admin/user")  # e2e: switch who the next login is
     async def set_user(request: Request):
@@ -132,5 +148,7 @@ if __name__ == "__main__":
     p.add_argument("--port", type=int, default=9000)
     p.add_argument("--issuer", default=os.environ.get("MOCK_IDP_ISSUER", "http://idp:9000"))
     a = p.parse_args()
-    uvicorn.run(make_app(Idp(a.issuer, os.environ.get("OIDC_CLIENT_ID", "docgen"), os.environ.get("OIDC_CLIENT_SECRET", "mock-secret"))),
+    idp = Idp(a.issuer, os.environ.get("OIDC_CLIENT_ID", "docgen"), os.environ.get("OIDC_CLIENT_SECRET", "mock-secret"))
+    idp.interactive = True
+    uvicorn.run(make_app(idp),
                 host="0.0.0.0", port=a.port, log_level="warning")

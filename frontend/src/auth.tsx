@@ -17,8 +17,10 @@ const useAuthConfig = () => useQuery({ queryKey: ["auth-config"], queryFn: () =>
 /** AUTH_MODE=oidc: the only way in. return_to is a relative path; the server re-checks it. */
 function SsoButton({ name, returnTo }: { name: string | null; returnTo: string }) {
   const err = useSearchParams()[0].get("error");
+  const out = document.cookie.includes("docgen_signed_out=1"); // set by POST /auth/logout, cleared by the next SSO login
   return (
     <div className="stack">
+      {out && !err && <div className="banner" role="status">You have been signed out.</div>}
       {err && <div className="banner err" role="alert">{err}</div>}
       <a className="btn primary block" href={`/api/auth/oidc/login?return_to=${encodeURIComponent(returnTo)}`}>Sign in with {name ?? "SSO"}</a>
     </div>
@@ -58,7 +60,7 @@ export function AcceptInvite({ me }: { me?: Me }) {
   const token = useSearchParams()[0].get("token") ?? "";
   const lk = useQuery({ queryKey: ["invite", token], queryFn: () => api<Lookup>("/invites/lookup", "POST", { token }), retry: false });
   const accept = useMutation({ mutationFn: (d?: FormData) => api("/invites/accept", "POST", { token, ...(d ? Object.fromEntries(d) : {}) }), onSuccess: async () => { await qc.invalidateQueries(); nav("/", { replace: true }); } });
-  const logout = useMutation({ mutationFn: () => api("/auth/logout", "POST"), onSuccess: () => qc.invalidateQueries() });
+  const logout = useMutation({ mutationFn: () => api<{ redirect?: string | null } | undefined>("/auth/logout", "POST"), onSuccess: (r) => { if (r?.redirect) location.href = r.redirect; else qc.invalidateQueries(); } });
   const cfg = useAuthConfig();
   if (lk.isLoading) return <Card title="Checking your invitation…"><Skeleton rows={3} /></Card>;
   if (lk.error) return <Card title="Invitation not available"><ErrorBanner e={(lk.error as ApiError).status === 404 ? new Error("This invite link is invalid.") : lk.error} /></Card>;
