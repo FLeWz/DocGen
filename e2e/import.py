@@ -50,7 +50,8 @@ with sync_playwright() as pw:
         expect(w.locator("li").first).to_be_visible()
         for kind in ("text box", "content control", "tracked insertion"):
             expect(w).to_contain_text(kind)
-        expect(ed.locator(".opaque-view")).to_have_count(3)  # drawn from their OOXML, not grey chips
+        expect(ed.locator(".opaque-view")).to_have_count(2)  # text box + block content control (the tracked insertion is plain text now), drawn from their OOXML
+        expect(ed.get_by_text("INSERTED-MARKER")).to_be_visible()
         expect(ed.get_by_text("TEXTBOX-MARKER")).to_be_visible()
         expect(ed.get_by_text("SDT-CONTENT-MARKER")).to_be_visible()
         expect(page.locator(".docx-hdr").first).to_contain_text("HEADER-MARKER")  # header/footer of the DOCX on the page
