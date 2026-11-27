@@ -123,6 +123,7 @@ export function contentBlocks(doc: PMNode | null | undefined, styles: Style[], m
         return `<div class="toc-block toc-${safeId(a.kind) ?? "toc"}"><div class="toc-h"><span class="toc-kind">${name}</span>${a.title ? ` <b>${esc(a.title)}</b>` : ""}</div>${body}</div>`;
       }
       case "sectBreak": return `<div class="sectbrk"><br></div>`;
+      case "sdtBlock": return `<div class="sdtb">${kids(n, inList)}</div>`;
       case "textbox": return `<div class="txbx">${kids(n, inList)}</div>`;
       case "opaque": {
         const html = ooxmlToHtml(String(n.attrs?.xml ?? ""), media);

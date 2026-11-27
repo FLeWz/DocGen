@@ -152,9 +152,9 @@ export const ImportAttrs = Extension.create({
   addGlobalAttributes() {
     return [
       // orig = {s,e,h}: the body children this block was parsed from + a hash; unchanged blocks are exported as that original XML
-      { types: ["paragraph", "heading", "table", "bulletList", "orderedList", "textbox", "sectBreak"], attributes: { orig: hidden() } },
+      { types: ["paragraph", "heading", "table", "bulletList", "orderedList", "textbox", "sdtBlock", "sectBreak"], attributes: { orig: hidden() } },
       // sec = {id, kind: section|appendix, title}: the block belongs to a marked section (a bookmark range in the DOCX); bm = bookmark name (REF target)
-      { types: ["paragraph", "heading", "table", "bulletList", "orderedList", "image", "opaque", "toc", "sectBreak", "textbox"], attributes: {
+      { types: ["paragraph", "heading", "table", "bulletList", "orderedList", "image", "opaque", "toc", "sectBreak", "textbox", "sdtBlock"], attributes: {
         sec: json("sec", (a): Record<string, string> => (a.sec ? { class: `in-sec sec-${safeId(a.sec.kind) ?? "section"}` } : {})) } },
       { types: ["paragraph", "heading"], attributes: { bm: attr("bm", "data-bm") } },
       { types: ["orderedList"], attributes: { continue: hidden() } },
@@ -235,6 +235,14 @@ export const Textbox = Node.create({
   addAttributes() { return { xml: hidden() }; },
   parseHTML: () => [{ tag: "div[data-textbox]" }],
   renderHTML: ({ HTMLAttributes }) => ["div", mergeAttributes(HTMLAttributes, { "data-textbox": "", class: "txbx", title: "Text box: the text is editable, the shape keeps its size and position" }), 0],
+});
+
+/** Block-level content control (SDT): editable blocks inside, sdtPr (alias, tag, binding, date/dropdown/checkbox settings) verbatim in `xml`. */
+export const SdtBlock = Node.create({
+  name: "sdtBlock", group: "block", content: "block+", defining: true,
+  addAttributes() { return { xml: hidden() }; },
+  parseHTML: () => [{ tag: "div[data-sdtblock]" }],
+  renderHTML: ({ HTMLAttributes }) => ["div", mergeAttributes(HTMLAttributes, { "data-sdtblock": "", class: "sdtb", title: "Content control" }), 0],
 });
 
 /** Section break: ends a section; orientation/margins/start type describe the section that ends here (as in OOXML). */
@@ -341,7 +349,7 @@ export const extensions = [
   Table.extend({ addAttributes() { return { ...this.parent?.(), dynamicList: attr("dynamicList", "data-dynamic-list"), dynamicRows: hidden(), dynamicCols: hidden() }; } })
     .configure({ resizable: false }),
   TableRow, TableHeader, TableCell, Variable, MathNode, ImageNode, Fmt, HardBreak, Opaque, ImportAttrs, HeadingNumbers,
-  Field, Footnote, Toc, SectBreak, Textbox, Derived, Shortcuts, TableKeys,
+  Field, Footnote, Toc, SectBreak, Textbox, SdtBlock, Derived, Shortcuts, TableKeys,
 ];
 
 /** The editor of the page view: the schema above plus page-gap decorations (the conflict resolver edits without them). */

@@ -194,3 +194,4 @@
 /* text box imported as editable content (round 24) */
 .docx .txbx { border: 1px solid #94a3b8; border-radius: 2px; padding: 4px 6px; margin: 4px 0; background: #fbfcfe; position: relative; }
 .docx .txbx::before { content: "Text box"; position: absolute; top: -9px; left: 6px; font-size: 9px; color: #64748b; background: var(--bg, #fff); padding: 0 3px; line-height: 1; }
+.docx .sdtb { outline: 1px dotted #cbd5e1; outline-offset: 2px; }

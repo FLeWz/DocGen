@@ -17,6 +17,13 @@ test("textbox, sdtBlock-free sectBreak and FORMTEXT fields keep their verbatim a
   expect(j[2].content[0].attrs).toMatchObject({ code: "FORMTEXT", text: "T", ff: "<w:ffData/>", bm: "Bm", bmo: true });
 });
 
+test("a block content control holds editable blocks and keeps its sdtPr", () => {
+  const e = mk({ type: "sdtBlock", attrs: { xml: "<w:sdt/>" }, content: [p("one"), p("two")] });
+  const j: any = e.getJSON().content![0];
+  expect(j.type).toBe("sdtBlock"); expect(j.attrs.xml).toBe("<w:sdt/>"); expect(j.content).toHaveLength(2);
+  expect(contentToHtml({ type: "doc", content: [j] } as any, [])).toContain('class="sdtb"');
+});
+
 test("a text box is editable content: typing inside it changes the nested paragraph only", () => {
   const e = mk(p("a"), { type: "textbox", attrs: { xml: "<w:p/>" }, content: [p("box")] });
   let hit = -1; e.state.doc.descendants((n, pos) => { if (n.isText && n.text === "box") hit = pos + 1; });
