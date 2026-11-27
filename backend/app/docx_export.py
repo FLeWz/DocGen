@@ -18,6 +18,8 @@ from docx.opc.constants import RELATIONSHIP_TYPE as RT
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Emu, RGBColor, Twips
+from docx.blkcntnr import BlockItemContainer
+from docx.table import _Cell
 from jinja2 import Undefined
 from lxml import etree
 from jinja2.exceptions import SecurityError
@@ -355,10 +357,7 @@ class Builder(Rich):
         elif t in ("bulletList", "orderedList"):
             self.list(n, cont, ctx, 0)
         elif t == "table":
-            if any(cont is c for c in self.top):
-                self.table(n, ctx, cont)
-            else:
-                self.warn.append("nested table skipped")
+            self.table(n, ctx, cont)
         elif t == "image":
             self.image(a, cont, ctx)
         elif t == "opaque":
@@ -537,7 +536,12 @@ class Builder(Rich):
                 placed.append((ri, ci, cs, rs, cell))
                 ci += cs
                 ncols = max(ncols, ci)
-        t = self.doc.add_table(len(rows), ncols) if cont is self.doc else cont.add_table(len(rows), ncols, Twips(9000))  # header/footer part
+        if cont is self.doc:
+            t = self.doc.add_table(len(rows), ncols)
+        elif isinstance(cont, _Cell):  # nested: not _Cell.add_table, its empty paragraph would land before the cell's next block
+            t = BlockItemContainer.add_table(cont, len(rows), ncols, cont.width or Twips(9000))
+        else:
+            t = cont.add_table(len(rows), ncols, Twips(9000))  # header/footer part
         ta = n.get("attrs") or {}
         try:  # tables from an import keep their own properties (style, borders, width) and column grid, in snippets too
             pr = opaque_element(ta["tblPr"], self.rels, {"tblPr"}) if ta.get("tblPr") else None
@@ -582,7 +586,7 @@ class Builder(Rich):
             if cell.get("attrs", {}).get("cfmt"):
                 fmt.write_cell(m._tc.get_or_add_tcPr(), cell["attrs"]["cfmt"])
             self.nodes(cell.get("content"), m, ctx)
-            if m._tc.find(qn("w:p")) is None:
+            if not len(m._tc) or m._tc[-1].tag != qn("w:p"):  # a cell ends with a paragraph (also after a nested table)
                 m._tc.append(OxmlElement("w:p"))
         if grid:  # vMerge continuation cells too: every tc is as wide as the grid columns it covers
             for tr in t._tbl.findall(qn("w:tr")):

@@ -36,6 +36,7 @@ NS = {"r": "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
 R = "{%s}" % NS["r"]
 MAX_DOC_XML = 30 * 1024 * 1024
 MAX_IMAGES = 300
+MAX_NEST = 8  # tables inside table cells deeper than this stay opaque
 IMG_FORMATS = (".png", ".jpg", ".jpeg", ".gif", ".webp")
 REVISION = {"ins", "del", "moveFrom", "moveTo", "pPrChange", "rPrChange", "sectPrChange", "tblPrChange", "trPrChange",
             "tcPrChange", "tblGridChange", "moveFromRangeStart", "moveToRangeStart", "cellIns", "cellDel", "cellMerge"}
@@ -440,7 +441,7 @@ class _Parser:
                     out.extend(nodes)
             elif t == "tbl":
                 stack.clear()
-                out.append(self.keep(ch, "nested table") if depth else self.table(ch))
+                out.append(self.keep(ch, "nested table") if depth > MAX_NEST else self.table(ch, depth))
                 span(out[-1], i)
             elif t in ("sectPr", "tcPr"):
                 continue
@@ -476,7 +477,14 @@ class _Parser:
             stack.append((lvl, lst, num))
         lst["content"].append({"type": "listItem", "content": [para]})
 
-    def table(self, tbl):
+    def cell_blocks(self, tc, depth) -> list:
+        """Cell content; the empty paragraph Word requires after a trailing nested table is not content (the exporter re-adds it)."""
+        out = self.blocks(tc, depth + 1)
+        if len(out) > 1 and out[-2]["type"] == "table" and out[-1] == {"type": "paragraph", "attrs": {"styleId": None}}:
+            out.pop()
+        return out or [{"type": "paragraph", "attrs": {"styleId": None}}]
+
+    def table(self, tbl, depth=0):
         trs = tbl.findall(W + "tr")
         if any(loc(x) in ROW_REVISION and not any(loc(a) == "p" for a in x.iterancestors())
                for x in tbl.iter()) or any(tr.find(f"{W}trPr/{W}gridBefore") is not None
@@ -502,7 +510,7 @@ class _Parser:
                         "attrs": {"colspan": span, "rowspan": 1,
                                   "colwidth": [round(w / 15) for w in widths] if len(widths) == span else None,
                                   **({"cfmt": cf} if cf else {})},
-                        "content": self.blocks(tc, 1) or [{"type": "paragraph", "attrs": {"styleId": None}}]}
+                        "content": self.cell_blocks(tc, depth)}
                 placed.append((cell, ri, col, span, pr))
                 if vm is not None:
                     new_origin[col] = (cell,)
