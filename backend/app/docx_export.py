@@ -597,7 +597,7 @@ class Builder(Rich):
                     cs = int(gs.get(qn("w:val"))) if gs is not None else 1
                     pr_.width = Twips(sum(grid[ci:ci + cs]))
                     ci += cs
-        name = (n.get("attrs") or {}).get("dynamicList")
+        name = (n.get("attrs") or {}).get("dynamicList") if not isinstance(cont, _Cell) else None  # dynamic tables are top-level only
         if name and not re.fullmatch(r"[A-Za-z_]\w*", str(name)):
             self.warn.append(f"dynamic table: invalid list name {name!r}")
             name = None

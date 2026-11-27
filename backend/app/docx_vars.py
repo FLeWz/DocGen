@@ -347,16 +347,16 @@ def table_decls(content) -> list[dict]:
     """List-variable declarations (name, columns, default rows) for the dynamic tables of editor content that carry default rows."""
     out: dict = {}
 
-    def rec(n):
+    def rec(n, nested=False):
         if not isinstance(n, dict):
             return
         a = n.get("attrs") or {}
-        if n.get("type") == "table" and isinstance(a.get("dynamicList"), str) and re.fullmatch(r"[A-Za-z_]\w*", a["dynamicList"]) and (rows := clean_rows(a.get("dynamicRows"))) is not None:
+        if n.get("type") == "table" and not nested and isinstance(a.get("dynamicList"), str) and re.fullmatch(r"[A-Za-z_]\w*", a["dynamicList"]) and (rows := clean_rows(a.get("dynamicRows"))) is not None:
             cols = [c for c in (a.get("dynamicCols") or []) if isinstance(c, str) and COL_RE.fullmatch(c)][:20]
             cols += [k for r in rows for k in r if k not in cols][:max(20 - len(cols), 0)]
             out.setdefault(a["dynamicList"], dict(name=a["dynamicList"], type="list", columns=cols, default=rows))
         for c in n.get("content") or []:
-            rec(c)
+            rec(c, nested or n.get("type") == "table")  # dynamic tables are top-level only
     rec(content)
     return list(out.values())
 

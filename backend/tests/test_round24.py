@@ -115,3 +115,17 @@ def test_forced_reserialisation_keeps_text_and_does_not_grow_trailing_paragraphs
     text = lambda d: "".join(etree.fromstring(zipfile.ZipFile(io.BytesIO(d)).read("word/document.xml")).itertext())
     assert text(data) == text(once) == text(twice)
     assert once == twice or children(once) == children(twice)  # the empty trailing paragraph is dropped on import and re-added once
+
+
+@pytest.mark.parametrize("fmt", ["markdown", "latex"])
+def test_markdown_and_latex_keep_nested_tables_as_placeholders_and_restore_them(fmt):
+    from app import pandoc_bridge as B
+    data = package(P("before") + nest(3) + P("after"))
+    content, _ = D.parse(data, lambda b: None)
+    r = B.to_text(content, fmt)
+    assert "opaque" in r["text"].lower() and "R3" not in r["text"]  # the outer table is one placeholder: nothing editable is lost
+    back = B.from_text(r["text"], content, fmt)
+    assert not back["errors"] and back["content"] == content
+    assert children(export(data, back["content"])) == children(data)
+    edited = B.from_text(r["text"].replace("before", "BEFORE"), content, fmt)["content"]
+    assert edited["content"][1] == content["content"][1]  # the table comes back verbatim
