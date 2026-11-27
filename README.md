@@ -344,7 +344,7 @@ The e2e scripts log in as throwaway users created through the CLI (`scripts/e2e-
 
 ## Known limits
 
-* Markdown/LaTeX modes (rounds 20, 21): an edited table keeps the attributes of the most similar original table (new rows/columns clone a neighbour; a table nothing like an original gets defaults), untouched tables are kept. In LaTeX, font size/font/highlight/character styles and the cached number of a SEQ field survive only in untouched blocks; starred sections, `\color`, `\label` of new text, `\appendix` and unknown commands are not mapped (warnings). Tables with nested tables or opaque cells appear as one opaque placeholder. The pandoc layer adds about 170 MB to the api image.
+* Markdown/LaTeX modes (rounds 20, 21): an edited table keeps the attributes of the most similar original table (new rows/columns clone a neighbour; a table nothing like an original gets defaults), untouched tables are kept. In LaTeX, font size/font/highlight/character styles and the cached number of a SEQ field survive only in untouched blocks; starred sections, `\color`, `\label` of new text, `\appendix` and unknown commands are not mapped (warnings). Tables with nested tables or opaque cells appear as one opaque placeholder (restored verbatim; the nested tables are editable in Word mode, round 24). The pandoc layer adds about 170 MB to the api image.
 * Not opened in real Microsoft Word by the developers: DOCX output is checked with python-docx, structural tests and
   LibreOffice (PDF conversion). Word will ask to update fields (TOC, page numbers) on open.
 * Sign-up is off by default; when enabled it reveals whether an email is registered (409); login is throttled but sign-up is not. The throttle is
@@ -357,7 +357,7 @@ The e2e scripts log in as throwaway users created through the CLI (`scripts/e2e-
   draws opaque blocks (text boxes, fields, TOC, content controls) from their OOXML, but the HTML view is an
   approximation of Word, not Word: see "Fidelity limits" in `docs/DECISIONS.md` (floating objects, first-page headers,
   real pagination, bookmarks, tab stops, list restarts...). "Render as Word does" shows the LibreOffice PDF of the same
-  export. No nested tables in snippets.
+  export. Round 24: tables inside table cells (up to 8 levels), form fields, section breaks, single text boxes and block content controls are editable; still opaque: text boxes that share a paragraph with text, embedded documents, equations, SmartArt/charts, complex fields other than PAGE/NUMPAGES/SEQ/REF/FORMTEXT (see `docs/DECISIONS.md`, round 24). Edited tables are re-generated from the editor model, which is not pixel-exact (see "Known limit found" there).
 * Org deletion removes its repos/files; folder deletion removes its history. Uploaded images are only removed by the
   admin cleanup endpoint (24 h grace; images that ever entered a commit are kept).
 * Base documents can be deleted (admin) only while no document or draft uses them; the file stays in `_base.git` history. No password reset or email verification; Mailpit is dev only.
