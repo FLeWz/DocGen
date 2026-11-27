@@ -169,6 +169,7 @@
 
 /* caption numbers and cross-references read as ordinary text (the real field stays in the DOCX); only a faint hover hint */
 .docx .fld-SEQ, .docx .fld-REF { background: none; padding: 0; border-radius: 2px; }
+.docx .fld-FORMTEXT { background: none; border-bottom: 1px dotted #94a3b8; cursor: text; }
 .docx .fld-SEQ:hover, .docx .fld-REF:hover { background: #f1f3f5; }
 
 /* editing modes (round 20): segmented switch, text editor, parse errors, equations */
@@ -189,3 +190,7 @@
 .docx-stage .pv-follow { animation: pvflash 1s ease-out; }
 @keyframes pvflash { from { background: color-mix(in srgb, var(--primary, #2f6fed) 28%, transparent); } to { background: transparent; } }
 @media (prefers-reduced-motion: reduce) { .docx-stage .pv-follow { animation: none; } }
+
+/* text box imported as editable content (round 24) */
+.docx .txbx { border: 1px solid #94a3b8; border-radius: 2px; padding: 4px 6px; margin: 4px 0; background: #fbfcfe; position: relative; }
+.docx .txbx::before { content: "Text box"; position: absolute; top: -9px; left: 6px; font-size: 9px; color: #64748b; background: var(--bg, #fff); padding: 0 3px; line-height: 1; }

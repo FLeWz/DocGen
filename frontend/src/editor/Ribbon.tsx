@@ -83,7 +83,7 @@ export function Ribbon({ editor, ro, styles, mode = "body", onErr, structure, on
         strike: fmt.strike === true, sup: fmt.va === "superscript", sub: fmt.va === "subscript", font: (fmt.font as string) ?? "", size: fmt.size ? String(fmt.size / 2) : "", color: (fmt.color as string) ?? "", hl: (fmt.hl as string) ?? "",
         jc: (pf.jc as string) ?? "left", line: pf.line ? String(pf.line) : "", before: pf.before != null ? String(Math.round(pf.before / 20)) : "", after: pf.after != null ? String(Math.round(pf.after / 20)) : "",
         bullet: e.isActive("bulletList"), ordered: e.isActive("orderedList"), listStyle: (list?.listStyle as string) ?? "", table: e.isActive("table"), headerRow: e.isActive("tableHeader"),
-        dynamic: (e.getAttributes("table").dynamicList as string | null) ?? null, variable: nodeSel?.type.name === "variable", footnote: nodeSel?.type.name === "footnote",
+        dynamic: (e.getAttributes("table").dynamicList as string | null) ?? null, variable: nodeSel?.type.name === "variable", footnote: nodeSel?.type.name === "footnote", formField: nodeSel?.type.name === "field" && nodeSel.attrs.code === "FORMTEXT",
         toc: nodeSel?.type.name === "toc", image: nodeSel?.type.name === "image" ? (nodeSel.attrs as Record<string, any>) : null, canUndo: e.can().undo(), canRedo: e.can().redo(),
         words: countWords(text), chars: text.length, styleBq: p.attrs.styleId === "Quote", styleCode: p.attrs.styleId === "Code" };
     },
@@ -99,7 +99,7 @@ export function Ribbon({ editor, ro, styles, mode = "body", onErr, structure, on
 
   // shortcuts that open dialogs (Ctrl+K, Ctrl+F, Ctrl+/) come from the editor as `docgen:cmd`
   useEffect(() => {
-    const h = (e: Event) => { const c = (e as CustomEvent).detail; if (!editor.isFocused) return; if (c === "link") setDlg("link"); else if (c === "find") setDlg("find"); else if (c === "shortcuts") setDlg("shortcuts"); else if (c === "dynamic") openDynamic(); else if (c === "caption") openCaption(); };
+    const h = (e: Event) => { const c = (e as CustomEvent).detail; if (!editor.isFocused) return; if (c === "link") setDlg("link"); else if (c === "find") setDlg("find"); else if (c === "shortcuts") setDlg("shortcuts"); else if (c === "dynamic") openDynamic(); else if (c === "caption") openCaption(); else if (c === "editfield") editField(); };
     window.addEventListener("docgen:cmd", h);
     return () => window.removeEventListener("docgen:cmd", h);
   }, [editor]);
@@ -231,6 +231,12 @@ export function Ribbon({ editor, ro, styles, mode = "body", onErr, structure, on
     const t = await ui.prompt({ title: existing ? "Edit note" : kind === "footnote" ? "Insert footnote" : "Insert endnote", label: "Note text", value: cur, ok: existing ? "Save" : "Insert" });
     if (t === null || !t.trim()) return;
     if (existing) run().updateAttributes("footnote", { text: t.trim() }).run(); else run().insertContent({ type: "footnote", attrs: { kind, text: t.trim() } }).run();
+  };
+  const editField = async () => {
+    const sel = editor.state.selection;
+    if (!(sel instanceof NodeSelection) || sel.node.type.name !== "field" || sel.node.attrs.code !== "FORMTEXT") return;
+    const t = await ui.prompt({ title: "Edit form field", label: "Text", value: String(sel.node.attrs.text ?? ""), ok: "Save" });
+    if (t !== null) run().updateAttributes("field", { text: t }).run();
   };
   const bookmark = async () => {
     const t = editor.state.selection.$from.parent;
@@ -374,6 +380,7 @@ export function Ribbon({ editor, ro, styles, mode = "body", onErr, structure, on
     <G label={hf ? "Fields" : "Notes and fields"}>
       {!hf && <><I i="footnote" t="Insert footnote" label="Footnote" fn={() => footnote("footnote")} /><I i="footnote" t="Insert endnote" label="Endnote" fn={() => footnote("endnote")} />
         {st.footnote && <I i="edit" t="Edit selected note" label="Edit note" fn={() => footnote("footnote", true)} />}</>}
+      {st.formField && <I i="edit" t="Edit the text of the selected form field (or double-click it)" label="Edit field" fn={editField} />}
       <select aria-label="Insert field" title="Insert field: page number, total pages, date, document title, version, author" disabled={off} value="" onChange={(e) => { const f = HF_FIELDS[Number(e.target.value)]; if (f) run().insertContent(f[1]).run(); }}>
         <option value="">Field…</option>{HF_FIELDS.map(([l], i) => <option key={l} value={i}>{l}</option>)}</select>
       <I i="var" t="Make variable" label="Variable" on={st.variable} fn={openVariable} />

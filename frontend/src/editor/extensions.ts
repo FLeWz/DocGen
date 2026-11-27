@@ -152,9 +152,9 @@ export const ImportAttrs = Extension.create({
   addGlobalAttributes() {
     return [
       // orig = {s,e,h}: the body children this block was parsed from + a hash; unchanged blocks are exported as that original XML
-      { types: ["paragraph", "heading", "table", "bulletList", "orderedList"], attributes: { orig: hidden() } },
+      { types: ["paragraph", "heading", "table", "bulletList", "orderedList", "textbox", "sectBreak"], attributes: { orig: hidden() } },
       // sec = {id, kind: section|appendix, title}: the block belongs to a marked section (a bookmark range in the DOCX); bm = bookmark name (REF target)
-      { types: ["paragraph", "heading", "table", "bulletList", "orderedList", "image", "opaque", "toc", "sectBreak"], attributes: {
+      { types: ["paragraph", "heading", "table", "bulletList", "orderedList", "image", "opaque", "toc", "sectBreak", "textbox"], attributes: {
         sec: json("sec", (a): Record<string, string> => (a.sec ? { class: `in-sec sec-${safeId(a.sec.kind) ?? "section"}` } : {})) } },
       { types: ["paragraph", "heading"], attributes: { bm: attr("bm", "data-bm") } },
       { types: ["orderedList"], attributes: { continue: hidden() } },
@@ -178,9 +178,12 @@ const fieldLabel = (a: Record<string, any>) => (a.code === "SEQ" || a.code === "
 /** Word field: PAGE / NUMPAGES / SECTIONPAGES (value per page), SEQ (caption number), REF / PAGEREF (cross reference). */
 export const Field = Node.create({
   name: "field", group: "inline", inline: true, atom: true, selectable: true,
-  addAttributes() { return { code: attr("code", "data-field", "PAGE"), arg: attr("arg", "data-arg", ""), text: attr("text", "data-text", "") }; },
+  addAttributes() { return { code: attr("code", "data-field", "PAGE"), arg: attr("arg", "data-arg", ""), text: attr("text", "data-text", ""), ff: hidden(), bm: hidden(), bmo: hidden() }; }, // ff/bm/bmo: FORMTEXT form field data, bookmark name and where it sits (kept verbatim)
+  addProseMirrorPlugins() {
+    return [new Plugin({ props: { handleDoubleClickOn: (_v, _p, node) => { if (node.type.name === "field" && node.attrs.code === "FORMTEXT") { window.dispatchEvent(new CustomEvent("docgen:cmd", { detail: "editfield" })); return true; } return false; } } })];
+  },
   parseHTML: () => [{ tag: "span[data-field]" }],
-  renderHTML: ({ node, HTMLAttributes }) => ["span", mergeAttributes(HTMLAttributes, { class: `fld fld-${safeId(node.attrs.code) ?? "x"}`, title: node.attrs.code === "SEQ" ? "Automatic number: follows the order of the captions" : node.attrs.code === "REF" ? "Cross-reference (updates with its target)" : `Field ${node.attrs.code} ${node.attrs.arg ?? ""}`.trim() }), fieldLabel(node.attrs)],
+  renderHTML: ({ node, HTMLAttributes }) => ["span", mergeAttributes(HTMLAttributes, { class: `fld fld-${safeId(node.attrs.code) ?? "x"}`, title: node.attrs.code === "SEQ" ? "Automatic number: follows the order of the captions" : node.attrs.code === "FORMTEXT" ? "Form field: double-click to edit its text" : node.attrs.code === "REF" ? "Cross-reference (updates with its target)" : `Field ${node.attrs.code} ${node.attrs.arg ?? ""}`.trim() }), fieldLabel(node.attrs)],
   renderText: ({ node }) => fieldLabel(node.attrs),
 });
 
@@ -225,11 +228,20 @@ export const Toc = Node.create({
 });
 const TOC_NAME: Record<string, string> = { toc: "Table of contents", tof: "List of figures", tot: "List of tables" };
 
+/** Text box (round 24): a paragraph that holds one DrawingML/VML text box. Its blocks are normal editable content; the shape (anchor, size,
+ *  position, fallback) is `xml`, written back verbatim with the edited blocks in every txbxContent. Drawn as a framed block in the flow. */
+export const Textbox = Node.create({
+  name: "textbox", group: "block", content: "block+", defining: true, isolating: true,
+  addAttributes() { return { xml: hidden() }; },
+  parseHTML: () => [{ tag: "div[data-textbox]" }],
+  renderHTML: ({ HTMLAttributes }) => ["div", mergeAttributes(HTMLAttributes, { "data-textbox": "", class: "txbx", title: "Text box: the text is editable, the shape keeps its size and position" }), 0],
+});
+
 /** Section break: ends a section; orientation/margins/start type describe the section that ends here (as in OOXML). */
 export const SectBreak = Node.create({
   name: "sectBreak", group: "block", atom: true, selectable: true, draggable: true,
   addAttributes() {
-    return { brk: attr("brk", "data-brk", "nextPage"), orient: attr("orient", "data-orient", "portrait"), top: attr("top", "data-top"), right: attr("right", "data-right"), bottom: attr("bottom", "data-bottom"), left: attr("left", "data-left") };
+    return { brk: attr("brk", "data-brk", "nextPage"), orient: attr("orient", "data-orient", "portrait"), top: attr("top", "data-top"), right: attr("right", "data-right"), bottom: attr("bottom", "data-bottom"), left: attr("left", "data-left"), xml: hidden() }; // xml: the imported paragraph with its sectPr, written back verbatim (brk/orient/margins are patched in)
   },
   parseHTML: () => [{ tag: "div[data-sectbreak]" }],
   renderHTML: ({ node, HTMLAttributes }) => ["div", mergeAttributes(HTMLAttributes, { "data-sectbreak": "", class: "sectbrk-edit", contenteditable: "false" }),
@@ -329,7 +341,7 @@ export const extensions = [
   Table.extend({ addAttributes() { return { ...this.parent?.(), dynamicList: attr("dynamicList", "data-dynamic-list"), dynamicRows: hidden(), dynamicCols: hidden() }; } })
     .configure({ resizable: false }),
   TableRow, TableHeader, TableCell, Variable, MathNode, ImageNode, Fmt, HardBreak, Opaque, ImportAttrs, HeadingNumbers,
-  Field, Footnote, Toc, SectBreak, Derived, Shortcuts, TableKeys,
+  Field, Footnote, Toc, SectBreak, Textbox, Derived, Shortcuts, TableKeys,
 ];
 
 /** The editor of the page view: the schema above plus page-gap decorations (the conflict resolver edits without them). */
