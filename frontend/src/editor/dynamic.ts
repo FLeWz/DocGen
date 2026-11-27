@@ -34,6 +34,9 @@ export function analyzeTable(table: PMNode): Plan {
     if (row.childCount !== width) ragged = true;
     row.forEach((c) => { if ((c.attrs.colspan ?? 1) > 1 || (c.attrs.rowspan ?? 1) > 1) merged = true; });
   });
+  let nested = false;
+  table.descendants((n) => { if (n.type.name === "table") nested = true; return !nested; });
+  if (nested) return { ok: false, reason: "A cell holds a nested table: dynamic tables are top-level, flat tables only." };
   if (merged) return { ok: false, reason: "The header or body rows have merged cells: converting them to list rows is refused. Split the cells first (the template row can still be made by hand)." };
   if (ragged) return { ok: false, reason: "The rows have different numbers of cells." };
   const rows: string[][] = [];

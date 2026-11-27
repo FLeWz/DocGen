@@ -88,7 +88,16 @@ export function gridOf(table: PMNode, map: TableMap): number[] | null {
 /** Visual px of CSS `zoom`: rect size / layout size of the same element. */
 export const zoomOf = (el: HTMLElement) => (el.offsetWidth ? el.getBoundingClientRect().width / el.offsetWidth : 1) || 1;
 /** Text width of the page in twips (editor surface width). */
-export const textWidth = (view: EditorView) => (view.dom.clientWidth ? view.dom.clientWidth * 15 : 9638);
+export const textWidth = (view: EditorView, tablePos?: number) => {
+  const cell = tablePos === undefined ? null : (view.nodeDOM(tablePos) as HTMLElement | null)?.parentElement?.closest("td,th") as HTMLElement | null;
+  if (cell) { // a nested table fits the inner width of the cell it sits in
+    const cs = getComputedStyle(cell), w = cell.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+    if (w > 0) return Math.round(w * 15);
+  }
+  return view.dom.clientWidth ? view.dom.clientWidth * 15 : 9638;
+};
+/** Nesting depth of the table at `pos` (0 = top level). */
+export const tableDepth = (state: EditorState, pos: number) => { const $p = state.doc.resolve(pos); let d = 0; for (let i = $p.depth; i > 0; i--) if ($p.node(i).type.name === "table") d++; return d; };
 /** Column widths (twips) from the drawn table; widest single-column cell per column, spanning cells share what is left. */
 export function domGrid(view: EditorView, c: Ctx): number[] {
   const dom = view.nodeDOM(c.pos) as HTMLElement | null, z = dom ? zoomOf(dom) : 1, w: number[] = Array(c.map.width).fill(0);
@@ -98,7 +107,7 @@ export function domGrid(view: EditorView, c: Ctx): number[] {
     const el = view.nodeDOM(c.start + k.pos) as HTMLElement | null, have = sum(w.slice(k.col, k.col + k.cs)), tot = el ? el.getBoundingClientRect().width / z * 15 : 0;
     if (tot > have) for (let i = 0; i < k.cs; i++) w[k.col + i] += (tot - have) / k.cs;
   }
-  const fill = textWidth(view) / c.map.width;
+  const fill = textWidth(view, c.pos) / c.map.width;
   return w.map((x) => Math.max(Math.round(x) || Math.round(fill), MIN_COL));
 }
 export const ensureGrid = (view: EditorView | null, c: Ctx) => gridOf(c.table, c.map) ?? (view ? domGrid(view, c) : split(9638, c.map.width));
@@ -107,11 +116,12 @@ export function autofitGrid(view: EditorView, c: Ctx): number[] {
   const dom = view.nodeDOM(c.pos) as HTMLElement | null;
   if (!dom?.parentElement) return ensureGrid(view, c);
   const clone = dom.cloneNode(true) as HTMLElement;
-  clone.querySelectorAll("colgroup, .pgsep-row, tr.rep").forEach((e) => e.remove());
+  const top = (clone.tagName === "TABLE" ? clone : clone.querySelector("table")) as HTMLTableElement; // not the rows/cells of nested tables
+  top.querySelectorAll("colgroup, .pgsep-row, tr.rep").forEach((e) => e.remove());
   clone.style.cssText += ";table-layout:auto;width:auto;min-width:0;position:absolute;visibility:hidden;left:0;top:0";
-  clone.querySelectorAll<HTMLElement>("td,th").forEach((e) => { e.style.width = "auto"; });
+  Array.from(top.rows).forEach((r) => Array.from(r.cells).forEach((e) => { e.style.width = "auto"; }));
   dom.parentElement.appendChild(clone);
-  const z = zoomOf(dom), w: number[] = Array(c.map.width).fill(0), rows = Array.from(clone.querySelectorAll("tr"));
+  const z = zoomOf(dom), w: number[] = Array(c.map.width).fill(0), rows = Array.from(top.rows);
   cellsOf(c.table, c.map).forEach((k) => { const el = rows[k.row]?.children[cellIndex(c, k)] as HTMLElement | undefined; if (el && k.cs === 1) w[k.col] = Math.max(w[k.col], el.getBoundingClientRect().width / z * 15); });
   clone.remove();
   const base = ensureGrid(view, c);
@@ -306,7 +316,7 @@ export const tableToText: Op = (state) => {
   const c = ctxOf(state);
   if (!c) return null;
   const S = state.schema, paras: PMNode[] = [];
-  c.table.forEach((row) => { const cells: string[] = []; row.forEach((cell) => cells.push(cell.textContent.replace(/\s+/g, " ").trim())); const line = cells.join("\t").replace(/\t+$/, ""); paras.push(S.nodes.paragraph.create(null, line ? S.text(line) : null)); });
+  c.table.forEach((row) => { const cells: string[] = []; row.forEach((cell) => cells.push(cell.textBetween(0, cell.content.size, " ").replace(/\s+/g, " ").trim())  /* nested tables: their cells read as words, not glued */); const line = cells.join("\t").replace(/\t+$/, ""); paras.push(S.nodes.paragraph.create(null, line ? S.text(line) : null)); });
   return state.tr.replaceWith(c.pos, c.pos + c.table.nodeSize, paras);
 };
 /** Selected top-level paragraphs -> table, one row per paragraph, columns split at tabs. */
@@ -421,7 +431,7 @@ export type WidthMode = { mode: "auto" } | { mode: "window" } | { mode: "fixed";
 export const setWidth = (w: WidthMode): Op => (state, view) => {
   const c = ctxOf(state);
   if (!c) return null;
-  const tw = view ? textWidth(view) : 9638, tr = state.tr;
+  const tw = view ? textWidth(view, c.pos) : 9638, tr = state.tr;
   if (w.mode === "auto") return applyGrid(tr, c.pos, view ? autofitGrid(view, c) : ensureGrid(null, c), { width: { type: "auto", w: 0 }, layout: "autofit" });
   const g = ensureGrid(view ?? null, c);
   if (w.mode === "window") return applyGrid(tr, c.pos, scaleGrid(g, tw), { width: { type: "pct", w: 5000 }, layout: "autofit" });
@@ -442,6 +452,34 @@ export const selectColumns = (from: number, to: number): Op => (state) => {
 export const selectRows = (from: number, to: number): Op => (state) => {
   const c = ctxOf(state), W = c?.map.width ?? 0;
   return c ? state.tr.setSelection(CellSelection.rowSelection(state.doc.resolve(c.start + c.map.map[from * W]), state.doc.resolve(c.start + c.map.map[to * W + W - 1]))) : null;
+};
+
+// ---- nested tables: commands act on the innermost table at the selection; these two move between levels ----------
+/** Where the selection sits: `depth` = tables around the innermost one; `inner` = a selected cell that holds a table. */
+export function nesting(state: EditorState): { depth: number; inner: boolean } | null {
+  const c = ctxOf(state);
+  if (!c) return null;
+  const sel = state.selection, cell = sel instanceof CellSelection && sel.ranges.length === 1 ? sel.$anchorCell.nodeAfter : null;
+  let inner = false;
+  cell?.forEach((n) => { if (n.type.name === "table") inner = true; });
+  return { depth: tableDepth(state, c.pos), inner };
+}
+/** Alt+Up: select the cell of the enclosing table that holds the current table, so table commands now act on the outer table. */
+export const selectOuterTable: Op = (state) => {
+  const c = ctxOf(state);
+  if (!c) return null;
+  const $t = state.doc.resolve(c.pos);
+  for (let d = $t.depth; d > 0; d--) if ($t.node(d).type.name === "tableCell" || $t.node(d).type.name === "tableHeader") return state.tr.setSelection(CellSelection.create(state.doc, $t.before(d)));
+  return null;
+};
+/** Alt+Down: from a selected cell that holds a table, put the caret into that table's first cell (commands act on it again). */
+export const selectInnerTable: Op = (state) => {
+  const sel = state.selection;
+  if (!(sel instanceof CellSelection) || sel.ranges.length !== 1) return null;
+  let pos = -1;
+  const start = sel.$anchorCell.pos + 1;
+  sel.$anchorCell.nodeAfter?.forEach((n, off) => { if (pos < 0 && n.type.name === "table") pos = start + off; });
+  return pos < 0 ? null : state.tr.setSelection(TextSelection.near(state.doc.resolve(pos + 3)));
 };
 
 /** What the ribbon shows about the table under the cursor. */
@@ -468,8 +506,7 @@ export const gridGuard = () => new Plugin({
       state.doc.nodesBetween(Math.min(from, state.doc.content.size), Math.min(Math.max(to, from), state.doc.content.size), (n, pos) => {
         if (n.type.name !== "table") return;
         const g = n.attrs.grid;
-        if (Array.isArray(g)) { const map = TableMap.get(n); if (g.length !== map.width) fixes.set(pos, gridOf(n, map)); }
-        return false;
+        if (Array.isArray(g)) { const map = TableMap.get(n); if (g.length !== map.width) fixes.set(pos, gridOf(n, map)); } // no `return false`: nested tables are checked too
       });
     }));
     if (!fixes.size) return null;

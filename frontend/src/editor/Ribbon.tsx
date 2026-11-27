@@ -18,7 +18,7 @@ import { textboxLines, withTextboxLines } from "./opaqueText";
 import { blockRange } from "./blockrange";
 import { insertList, markList, markSection, type ListKind } from "./sections";
 import { tableActions, TableTab } from "./TableTools";
-import { ctxOf, run as runOp, textToTable } from "./tables";
+import { ctxOf, run as runOp, tableDepth, textToTable } from "./tables";
 import { analyzeTable, columnNames, LIST_RE, makeDynamicFromRows, undoDynamic } from "./dynamic";
 
 /** Fields (`row.x` chips) used in the table around the cursor; the last row's chips are the template. */
@@ -152,12 +152,14 @@ export function Ribbon({ editor, ro, styles, mode = "body", onErr, structure, on
   };
   /** Opens the Make dynamic dialog; a table that already has content proposes header cells -> variables, body rows -> default values. */
   const openDynamic = () => {
-    const c = ctxOf(editor.state), plan = c && !c.table.attrs.dynamicList ? analyzeTable(c.table) : null;
+    const c = ctxOf(editor.state), plan = c && tableDepth(editor.state, c.pos) > 0 ? { ok: false as const, reason: "This table is inside another table: dynamic tables are top-level only. Select the outer table (Alt+Up) or move this one out." } : c && !c.table.attrs.dynamicList ? analyzeTable(c.table) : null;
     setDynName(st.dynamic ?? ""); setDynFields("");
     setDynCols(plan?.ok ? { names: columnNames(plan.headers), rows: plan.rows, convert: plan.headers.some(Boolean) || plan.rows.some((r) => r.some(Boolean)), refused: "" } : plan ? { names: [], rows: [], convert: false, refused: plan.reason } : null);
     setDlg("dyn");
   };
   const makeDynamic = () => {
+    const c0 = ctxOf(editor.state);
+    if (c0 && tableDepth(editor.state, c0.pos) > 0) { onErr("Dynamic tables are top-level only: this table is inside another table."); return; }
     const v = dynName.trim(), fields = dynFields.split(",").map((x) => x.trim()).filter(Boolean);
     if (v && !/^[A-Za-z_][A-Za-z0-9_]*$/.test(v)) { onErr("List variable name: letters, digits, _"); return; }
     if (fields.some((f) => !/^[A-Za-z_]\w*$/.test(f))) { onErr("Row fields: letters, digits, _"); return; }

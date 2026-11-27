@@ -64,7 +64,7 @@ function compute(view: import("@tiptap/pm/view").EditorView): { deco: Decoration
     let rp = pos + 1;
     for (let r = 0; r < from.row; r++) rp += node.child(r).nodeSize;
     const cols = Array.from({ length: node.child(0).childCount }, (_, i) => Number(node.child(0).child(i).attrs.colspan) || 1).reduce((x, y) => x + y, 0);
-    const dom = view.nodeDOM(pos) as Element, rows = Array.from(dom.querySelectorAll("tr")).filter((r) => !r.classList.contains("pgsep-row") && !r.classList.contains("rep"));
+    const dom = view.nodeDOM(pos) as Element, rows = Array.from((dom.tagName === "TABLE" ? dom as HTMLTableElement : dom.querySelector("table")!).rows).filter((r) => !r.classList.contains("pgsep-row") && !r.classList.contains("rep"));
     out.push(Decoration.widget(rp, () => gapRow(look, lay, k, total, cols), { side: -1, key: `pg${k}-${lay.pages[k].label}-${total}-${Math.round(lay.pages[k - 1].body - lay.spans[k - 1].used)}-${hfHash(look, lay, k, total)}` }));
     for (let h = 0; h < lay.spans[k].repeat; h++) {
       const src = rows[h];

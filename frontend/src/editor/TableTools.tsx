@@ -69,7 +69,7 @@ function Num({ label, tw, unit, onCommit, off, w = 64 }: { label: string; tw: nu
 
 /** The contextual ribbon tab. */
 export function TableTab({ editor, ui, off, styles, onCaption }: { editor: Editor; ui: Ui; off: boolean; styles: Style[]; onCaption: () => void }) {
-  const a = tableActions(editor, ui), info = useEditorState({ editor, selector: ({ editor: e }) => T.tableInfo(e.state) });
+  const a = tableActions(editor, ui), info = useEditorState({ editor, selector: ({ editor: e }) => T.tableInfo(e.state) }), nest = useEditorState({ editor, selector: ({ editor: e }) => T.nesting(e.state), equalityFn: (x, y) => x?.depth === y?.depth && x?.inner === y?.inner });
   const [unit, setUnitState] = useState<T.Unit>(T.getUnit()), [bs, setBs] = useState({ val: "single", sz: 4, color: "#000000" }), [wUnit, setWUnit] = useState<string>("unit");
   if (!info) return null;
   const setUnit = (u: T.Unit) => { localStorage.setItem("docgen.unit", u); setUnitState(u); };
@@ -79,6 +79,10 @@ export function TableTab({ editor, ui, off, styles, onCaption }: { editor: Edito
   const tstyles = styles.filter((s) => s.kind === "table");
   const G = ({ label, children }: { label: string; children: React.ReactNode }) => <div className="rgroup" role="group" aria-label={label}><div className="rrow">{children}</div><div className="rlabel">{label}</div></div>;
   return <>
+    {(nest?.depth || nest?.inner) ? <G label="Nested table">
+      <button type="button" className="btn small" data-testid="outer-table" disabled={off || !nest.depth} title="Apply the Table tab to the enclosing table (Alt+Up)" onMouseDown={(e) => e.preventDefault()} onClick={() => T.run(editor, T.selectOuterTable)}>Outer table</button>
+      <button type="button" className="btn small" data-testid="inner-table" disabled={off || !nest.inner} title="Apply the Table tab to the table inside the selected cell (Alt+Down)" onMouseDown={(e) => e.preventDefault()} onClick={() => T.run(editor, T.selectInnerTable)}>Inner table</button>
+    </G> : null}
     <G label="Rows and columns">
       <I i="rowAdd" t="Insert row above" flip fn={a.rowAbove} /><I i="rowAdd" t="Insert row below" fn={a.rowBelow} />
       <I i="colAdd" t="Insert column left" flip fn={a.colLeft} /><I i="colAdd" t="Insert column right" fn={a.colRight} />

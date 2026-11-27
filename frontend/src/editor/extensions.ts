@@ -10,7 +10,7 @@ import Paragraph from "@tiptap/extension-paragraph";
 import { Table, TableCell, TableHeader, TableRow } from "@tiptap/extension-table";
 import { isInTable } from "@tiptap/pm/tables";
 import StarterKit from "@tiptap/starter-kit";
-import { gridGuard, moveColumn, moveRow, run as runOp, type Op } from "./tables";
+import { gridGuard, moveColumn, moveRow, run as runOp, selectInnerTable, selectOuterTable, type Op } from "./tables";
 import { esc, cellCss, imgCss, listCss, pflags, pfmtCss, rowCss, runCss, safeId, tableCss } from "./fmt";
 import { ooxmlToHtml, getMedia } from "./ooxml";
 import { renderMath } from "./math";
@@ -288,7 +288,7 @@ export const TableKeys = Extension.create({
   addProseMirrorPlugins() { return [gridGuard()]; },
   addKeyboardShortcuts() {
     const e = () => this.editor, mv = (op: Op) => () => isInTable(e().state) && (runOp(e(), op) || true);
-    return { "Alt-Shift-ArrowUp": mv(moveRow(-1)), "Alt-Shift-ArrowDown": mv(moveRow(1)), "Alt-Shift-ArrowLeft": mv(moveColumn(-1)), "Alt-Shift-ArrowRight": mv(moveColumn(1)),
+    return { "Alt-ArrowUp": mv(selectOuterTable), "Alt-ArrowDown": mv(selectInnerTable), "Alt-Shift-ArrowUp": mv(moveRow(-1)), "Alt-Shift-ArrowDown": mv(moveRow(1)), "Alt-Shift-ArrowLeft": mv(moveColumn(-1)), "Alt-Shift-ArrowRight": mv(moveColumn(1)),
       "Shift-F10": () => isInTable(e().state) && window.dispatchEvent(new CustomEvent("docgen:tablemenu")), ContextMenu: () => isInTable(e().state) && window.dispatchEvent(new CustomEvent("docgen:tablemenu")) };
   },
 });
