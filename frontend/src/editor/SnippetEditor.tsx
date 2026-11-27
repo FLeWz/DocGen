@@ -68,6 +68,7 @@ export function RichEditor({ qkey, load, save, keyOf, me, idleSaved, notices = [
   }, [focus, setFocus]);
   const [guides, setGuides] = useState(false), [struct, setStruct] = useState(false);
   const [pdf, setPdf] = useState<{ url: string; busy: boolean; err: string; pages?: number }>({ url: "", busy: false, err: "" });
+  const [ready, setReady] = useState(false); // read-only until the document arrived: early typing would be wiped by the load
   const [follow, setFollow] = useState(() => loadFollow(localStorage)), rootRef = useRef<HTMLDivElement>(null), layRef = useRef<EditorLayout | null>(null), pagesRef = useRef(0);
   const bases = useQuery({ queryKey: ["base-docs", me.org?.id], queryFn: () => api<BaseDoc[]>("/base-documents"), enabled: !lookSrc });
   const src: LookSrc = lookSrc ?? (pick && bases.data?.some((b) => b.id === pick) ? { base_doc: pick } : {});
@@ -118,7 +119,7 @@ export function RichEditor({ qkey, load, save, keyOf, me, idleSaved, notices = [
   });
   editorRef.current = editor;
   // Preview follows the editor: caret/typing/jumps -> top-level block -> preview scroll (HTML) or page (PDF); see follow.ts
-  const fol = useFollow({ root: rootRef, on: follow && pv !== "off", pv, mode,
+  const fol = useFollow({ root: rootRef, on: follow && pv !== "off", pv, mode, ready,
     spans: () => layRef.current?.spans ?? [], pdfPages: () => pagesRef.current,
     scrollBlock: () => {
       const e = editorRef.current, sc = rootRef.current?.querySelector<HTMLElement>('[aria-label="Editor pane"] .docx-stage'), pm = sc?.querySelector(".ProseMirror");
@@ -180,7 +181,6 @@ export function RichEditor({ qkey, load, save, keyOf, me, idleSaved, notices = [
   };
   // text -> text goes through Word (parse with the same error/lossy rules, then write the other syntax)
   const switchTo = async (to: ModeId) => { if (to === mode) return; if (to === "word") toWord(); else if (mode === "word") toText(to); else if (await toWord()) toText(to); };
-  const [ready, setReady] = useState(false); // read-only until the document arrived: early typing would be wiped by the load
   // emitUpdate=false: the update event would autosave an unchanged draft just for opening it
   useEffect(() => { editor?.setEditable(!ro && ready, false); }, [editor, ro, ready]);
   useEffect(() => { editor?.view.dispatch(editor.state.tr); }, [editor, orgStyles, lk.data]); // redraw heading numbers when the style set arrives

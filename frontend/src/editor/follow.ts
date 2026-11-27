@@ -61,7 +61,8 @@ export function lineBlock(text: string, line: number, blocks: number, latex: boo
 }
 
 type Opts = {
-  root: MutableRefObject<HTMLElement | null>; on: boolean; pv: "live" | "word" | "off"; mode: string;
+  root: MutableRefObject<HTMLElement | null>; on: boolean; pv: "live" | "word" | "off"; mode: string; ready: boolean; // ready: the panes are mounted (the editor renders nothing before)
+ 
   spans: () => { to: { block: number; row: number } }[]; pdfPages: () => number;
   scrollBlock: () => number | null; // top-most visible block of the editor
 };
@@ -87,7 +88,7 @@ export function useFollow(o: Opts) {
     const stage = root.current.querySelector<HTMLElement>('[aria-label="Preview pane"] .docx-stage');
     if (!stage || paused(now, st.until)) return;
     let el: HTMLElement | null = null;
-    for (let i = st.block; i >= Math.max(0, st.block - 20) && !el; i--) el = stage.querySelector(`[data-block="${i}"]`);
+    for (let i = st.block; i >= Math.max(0, st.block - 20) && !el; i--) el = stage.querySelector(`.docx-pages [data-block="${i}"]`);
     if (!el) return;
     const sr = stage.getBoundingClientRect(), er = el.getBoundingClientRect(); // reads first, writes after
     const plan = scrollPlan(er.top - sr.top, er.height, stage.clientHeight, stage.scrollTop, matchMedia("(prefers-reduced-motion: reduce)").matches);
@@ -110,7 +111,7 @@ export function useFollow(o: Opts) {
   }, [apply]);
   const again = useCallback(() => { if (s.current.block >= 0) { window.clearTimeout(s.current.t); s.current.t = window.setTimeout(apply, 80); } }, [apply]);
 
-  const { on, pv, mode } = o;
+  const { on, pv, mode, ready } = o;
   useEffect(() => { // manual scroll in the preview pauses following; wheel/touch/pointer on the stage also covers its scrollbar
     if (!on || pv !== "live") return;
     const stage = o.root.current?.querySelector<HTMLElement>('[aria-label="Preview pane"] .docx-stage');
@@ -119,20 +120,23 @@ export function useFollow(o: Opts) {
     const ev = ["wheel", "touchstart", "pointerdown"] as const;
     ev.forEach((e) => stage.addEventListener(e, h, { passive: true }));
     return () => ev.forEach((e) => stage.removeEventListener(e, h));
-  }, [on, pv]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [on, pv, ready]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { // scrolling the EDITOR with wheel/touch/scrollbar drives the preview (caret-driven scrolls are ignored)
     if (!on || pv === "off") return;
     const sc = o.root.current?.querySelector<HTMLElement>(mode === "word" ? '[aria-label="Editor pane"] .docx-stage' : ".mdsrc .cm-scroller");
     if (!sc) return;
     let raf = 0;
-    const mark = () => { s.current.user = performance.now(); };
+    const mark = (e: Event) => { if (e.type !== "pointerdown" || e.target === sc) s.current.user = performance.now(); }; // pointerdown on the scroller itself = its scrollbar
     const sync = () => { raf = 0; const b = ref.current.scrollBlock(); if (b != null) go(b, true); };
-    const onScroll = () => { if (performance.now() - s.current.user < 500 && !raf) raf = requestAnimationFrame(sync); };
+    const onScroll = () => { // smooth/inertial wheel scrolling keeps the "user is scrolling" window open
+      const now = performance.now();
+      if (now - s.current.user < 500) { s.current.user = now; if (!raf) raf = requestAnimationFrame(sync); }
+    };
     const ev = ["wheel", "touchmove", "pointerdown"] as const;
     ev.forEach((e) => sc.addEventListener(e, mark, { passive: true }));
     sc.addEventListener("scroll", onScroll, { passive: true });
     return () => { ev.forEach((e) => sc.removeEventListener(e, mark)); sc.removeEventListener("scroll", onScroll); cancelAnimationFrame(raf); };
-  }, [on, pv, mode, go]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [on, pv, mode, ready, go]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => () => window.clearTimeout(s.current.t), []);
   return { go, again };
 }

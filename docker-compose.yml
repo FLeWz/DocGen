@@ -108,7 +108,7 @@ services:
     volumes: ["./e2e-artifacts:/artifacts"]
     depends_on:
       web: {condition: service_healthy}
-    command: ["sh", "-c", "for t in smoke docbuilder import invite fidelity basedoc editor round7 tables round9 round12 round13 round14 round15 locks focus prefs round19 modes latex; do python $$t.py || exit 1; done"]
+    command: ["sh", "-c", "for t in smoke docbuilder import invite fidelity basedoc editor round7 tables round9 round12 round13 round14 round15 locks focus prefs round19 modes latex follow; do python $$t.py || exit 1; done"]
 
   # `make test-e2e-oidc`: test OpenID Provider (tests/mock_idp.py), never part of a normal `up`.
   idp:
