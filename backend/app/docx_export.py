@@ -362,6 +362,8 @@ class Builder(Rich):
             self.image(a, cont, ctx)
         elif t == "opaque":
             self.opaque(a, cont)
+        elif t in ("textbox", "sdtBlock"):
+            self.container(n, cont, ctx)
         elif t == "toc" and cont is self.doc:
             self.toc(a)
         elif t == "sectBreak" and cont is self.doc:
@@ -386,11 +388,33 @@ class Builder(Rich):
         except ValueError as e:
             self.warn.append(f"opaque block '{str(a.get('kind'))[:40]}' skipped: {e}")
             return
+        self.place(el, cont)
+
+    def place(self, el, cont) -> None:
         if cont is self.doc:
             s = self.doc.element.body.find(qn("w:sectPr"))
             s.addprevious(el) if s is not None else self.doc.element.body.append(el)
         else:
             cont._tc.append(el)
+
+    def container(self, n: dict, cont, ctx) -> None:
+        """Text box / block content control: the shape or sdtPr stays in attrs.xml, every txbxContent (DrawingML and its VML fallback)
+        or the sdtContent is refilled with the edited blocks."""
+        try:
+            el = opaque_element((n.get("attrs") or {}).get("xml"), self.rels)
+        except ValueError as e:
+            self.warn.append(f"{n.get('type')} skipped: {e}")
+            return
+        tc = OxmlElement("w:tc")  # scratch container: the normal block writers fill it, its children move into the box
+        self.nodes(n.get("content"), _Cell(tc, self.doc._body), ctx)  # the body as parent: pictures need the package part
+        if n.get("type") == "textbox" and (not len(tc) or tc[-1].tag != qn("w:p")):
+            tc.append(OxmlElement("w:p"))
+        for box in (el.iter(qn("w:txbxContent")) if n.get("type") == "textbox" else el.findall(qn("w:sdtContent"))):
+            for c in list(box):
+                box.remove(c)
+            for c in tc:
+                box.append(copy.deepcopy(c))
+        self.place(el, cont)
 
     def with_parts(self, a: dict):
         """An opaque block that travels with its pictures/embedded objects (`attrs.parts`, from a snippet): every part

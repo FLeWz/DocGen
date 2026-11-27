@@ -64,8 +64,8 @@ def test_parse_shapes(imported):
     r = team["editor"].get(f"/api/imports/{iid}").json()
     blocks = r["content"]["content"]
     kinds = [b["type"] for b in blocks]
-    assert kinds.count("table") == 2 and kinds.count("image") == 2 and kinds.count("opaque") == 2
-    assert {b["attrs"]["kind"] for b in blocks if b["type"] == "opaque"} == {"content control", "text box"}  # block-level SDT and text box stay opaque
+    assert kinds.count("table") == 2 and kinds.count("image") == 2 and kinds.count("opaque") == 0
+    assert kinds.count("sdtBlock") == 1 and kinds.count("textbox") == 1  # round 24: block-level SDT and text box are editable containers
     assert any("INSERTED-MARKER" in D.block_text(b) for b in blocks if b["type"] == "paragraph")  # tracked insertion: accept view = editable text
     assert any(b["type"] == "paragraph" and b["attrs"]["styleId"] == "Callout" for b in blocks)  # custom style id kept
     h = [b for b in blocks if b["type"] == "heading"]
@@ -79,7 +79,7 @@ def test_parse_shapes(imported):
     assert cells == [[(2, 1), (1, 1)], [(1, 1), (1, 1), (1, 2)], [(1, 1), (1, 1)]]
     hdr = [b for b in blocks if b["type"] == "table"][0]["content"][0]["content"]
     assert all(c["type"] == "tableHeader" for c in hdr)
-    assert any("text box" in w and "not editable" in w for w in r["warnings"])
+    assert not any("text box" in w or "content control" in w for w in r["warnings"])  # both are editable now
 
 
 def test_round_trip_keeps_package_parts(imported):
@@ -220,11 +220,10 @@ def test_opaque_block_in_snippet_exports_when_self_contained(imported):
     team, iid = imported
     ed = team["editor"]
     fo = folder(ed)
-    # blocks 18..20 = SDT, text box, tracked change (all without relationships)
+    # blocks 18..20 = SDT, text box, tracked change (all without relationships; the first two are container nodes since round 24)
     blocks = ed.get(f"/api/imports/{iid}").json()["content"]["content"]
-    start = next(k for k, b in enumerate(blocks) if b["type"] == "opaque")
+    start = next(k for k, b in enumerate(blocks) if b["type"] == "sdtBlock")
     sid = ed.post(f"/api/imports/{iid}/selection-snippet", json={"folder_id": fo, "title": "Opaque", "start": start, "end": start + 3}).json()
-    assert sid["warnings"]
     sid = sid["id"]
     commit(ed, fo, [sid])
     sha = ed.get(f"/api/snippets/{sid}").json()["sha"]
@@ -349,7 +348,7 @@ def test_selection_large_range_across_section_break(team, long_doc):
     iid = imp(ed, long_doc, "long.docx").json()["id"]
     blocks = ed.get(f"/api/imports/{iid}").json()["content"]["content"]
     assert len(blocks) > 700
-    brk = next(k for k, b in enumerate(blocks) if b["type"] == "opaque" and b["attrs"]["kind"] == "section break")
+    brk = next(k for k, b in enumerate(blocks) if b["type"] == "sectBreak")
     fo = folder(ed)
     for start, end in ((0, len(blocks)), (brk - 3, brk + 3), (5, 650)):  # everything, over the break, hundreds of blocks
         r = ed.post(f"/api/imports/{iid}/selection-snippet", json={"folder_id": fo, "title": f"r{start}", "start": start, "end": end})

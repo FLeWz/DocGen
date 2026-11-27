@@ -435,7 +435,7 @@ def w_block(n: dict, o: Out):
             cmd = {"tof": "\\listoffigures", "tot": "\\listoftables"}.get(a.get("kind"), "\\tableofcontents")
             return E("RawBlock", ["latex", cmd]) if bare else [ann_of(kv), E("RawBlock", ["latex", cmd])]
         return E("Div", [attr(kv), []])
-    elif t == "sectBreak":
+    elif t == "sectBreak" and not a.get("xml"):  # an imported break keeps its sectPr: a placeholder, restored verbatim
         kv = [["sectbreak", str(a.get("brk") or "nextPage")], *kv_of({k: a.get(k) for k in ("orient", "top", "right", "bottom", "left")})]
         return [ann_of(kv), E("RawBlock", ["latex", "\\clearpage"])] if lx else E("Div", [attr(kv), []])
     return opaque_div(n, o, str(a.get("kind") or t) if t == "opaque" else str(t))
@@ -980,7 +980,7 @@ def from_text(text: str, base_content: dict | None = None, fmt: str = "markdown"
 
 def _from_text(text: str, base_content: dict | None, fmt: str) -> dict:
     base = (base_content or {}).get("content") or []
-    store = {oid(x): x for b in base for x in walk(b) if x.get("type") in ("opaque", "table")}
+    store = {oid(x): x for b in base for x in walk(b) if x.get("type") in ("opaque", "table", "sectBreak", "textbox", "sdtBlock")}
     errors, lw = LT.scan(text, store) if fmt == "latex" else (scan(text, store), [])
     if errors:
         return {"content": None, "warnings": [], "errors": errors}

@@ -20,7 +20,7 @@ from docx.opc.constants import RELATIONSHIP_TYPE as RT
 from .ooxml import opaque_element
 
 W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
-FIELD_CODES = {"PAGE", "NUMPAGES", "SECTIONPAGES", "SEQ", "REF", "PAGEREF"}
+FIELD_CODES = {"PAGE", "NUMPAGES", "SECTIONPAGES", "SEQ", "REF", "PAGEREF", "FORMTEXT"}
 ARG_RE = re.compile(r"[A-Za-z0-9_ .-]{0,60}")
 BM_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,39}")
 SEC_KINDS = {"section", "appendix"}
@@ -134,6 +134,13 @@ class Rich:
         if a.get("code") == "SEQ" and id(a) in self.seq:
             shown = str(self.seq[id(a)])
         dirty = a.get("code") in ("REF", "PAGEREF")
+        ff = bm = None
+        if a.get("code") == "FORMTEXT":  # legacy form field: ffData (name, default, format) stays verbatim, the bookmark that names it too
+            try:
+                ff = opaque_element(a["ff"], self.rels, {"ffData"}) if a.get("ff") else None
+            except ValueError as e:
+                self.warn.append(f"form field data dropped: {e}")
+            bm = bm_name(a.get("bm")) if a.get("bm") else None
 
         def run(*kids):
             r = p.add_run()
@@ -153,7 +160,25 @@ class Rich:
         t = OxmlElement("w:t")
         t.text = shown
         t.set(qn("xml:space"), "preserve")
-        run(ch("begin")), run(it), run(ch("separate")), run(t), run(ch("end"))
+        b = ch("begin")
+        if ff is not None:
+            b.append(ff)
+        outer = bool(a.get("bmo"))  # bookmark around the whole field (cover title) or between begin and instruction (Word's form field)
+        if bm:
+            i = self.new_bm_id()
+            st = OxmlElement("w:bookmarkStart")
+            st.set(qn("w:id"), str(i))
+            st.set(qn("w:name"), bm)
+            if outer:
+                p._p.append(st)
+        run(b)
+        if bm and not outer:
+            p._p.append(st)
+        run(it), run(ch("separate")), run(t), run(ch("end"))
+        if bm:
+            en = OxmlElement("w:bookmarkEnd")
+            en.set(qn("w:id"), str(i))
+            p._p.append(en)
 
     # ---- footnotes / endnotes ----
     def note(self, p, a: dict, marks: list) -> None:
@@ -347,8 +372,18 @@ class Rich:
     def sect_break(self, a: dict) -> None:
         """A paragraph carrying a sectPr = the end of a section. Its page setup is the final section's, with the orientation,
         margins and start type given here (these describe the section that ENDS at the break, as in OOXML)."""
-        final = self.doc.element.body.find(qn("w:sectPr"))
-        sp = copy.deepcopy(final) if final is not None else parse_xml(f'<w:sectPr xmlns:w="{W_NS}"><w:pgSz w:w="11906" w:h="16838"/>'
+        final, kept = self.doc.element.body.find(qn("w:sectPr")), None
+        if a.get("xml"):  # imported break: the original paragraph (sectPr with header/footer references etc.); only brk/orient/margins are patched
+            try:
+                kept = opaque_element(a["xml"], self.rels)
+            except ValueError as e:
+                self.warn.append(f"section break skipped: {e}")
+                return
+            final = kept.find(f"{qn('w:pPr')}/{qn('w:sectPr')}")
+            if final is None:
+                self.warn.append("section break skipped: no sectPr")
+                return
+        sp = final if kept is not None else copy.deepcopy(final) if final is not None else parse_xml(f'<w:sectPr xmlns:w="{W_NS}"><w:pgSz w:w="11906" w:h="16838"/>'
                                                                        '<w:pgMar w:top="1417" w:right="1417" w:bottom="1417" w:left="1417" w:header="708" w:footer="708" w:gutter="0"/></w:sectPr>')
         for t in sp.findall(qn("w:type")):
             sp.remove(t)
@@ -373,5 +408,9 @@ class Rich:
                 v = a.get(k)
                 if isinstance(v, int) and not isinstance(v, bool) and 0 <= v <= 10000:
                     mar.set(qn(f"w:{k}"), str(v))
+        if kept is not None:
+            body = self.doc.element.body
+            body.find(qn("w:sectPr")).addprevious(kept) if body.find(qn("w:sectPr")) is not None else body.append(kept)
+            return
         p = self.doc.add_paragraph()
         p._p.get_or_add_pPr().append(sp)

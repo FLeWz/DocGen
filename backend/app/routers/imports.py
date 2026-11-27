@@ -520,6 +520,29 @@ def use_as_base(import_id: UUID, body: ImportBaseIn, ctx: Ctx = A):
 
 # ---- variables: per-document values (cover, header/footer, fields) -> {{ name }} ----
 
+def _forms(n: dict) -> list:
+    """FORMTEXT field nodes of a paragraph/heading, in order (the cover's form fields: variable candidates like their OOXML twins)."""
+    return [x for x in (n.get("content") or []) if x.get("type") == "field" and (x.get("attrs") or {}).get("code") == "FORMTEXT"] \
+        if n.get("type") in ("paragraph", "heading") else []
+
+
+def _form_xml(n: dict):
+    """The paragraph as the finder sees it: text runs and FORMTEXT complex fields (result run = the cached text, the bookmark around it)."""
+    esc = lambda t: (t or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
+    r = lambda inner: f"<w:r>{inner}</w:r>"
+    out = []
+    for c in n.get("content") or []:
+        a = c.get("attrs") or {}
+        if c.get("type") != "field" or a.get("code") != "FORMTEXT":
+            out.append(r(f'<w:t>{esc(c.get("text"))}</w:t>'))
+            continue
+        out.append(f'<w:bookmarkStart w:id="1" w:name="{esc(a["bm"])}"/>' if a.get("bm") else "")
+        out += [r('<w:fldChar w:fldCharType="begin"/>'), r("<w:instrText> FORMTEXT </w:instrText>"), r('<w:fldChar w:fldCharType="separate"/>'),
+                r(f'<w:t>{esc(a.get("text"))}</w:t>'), r('<w:fldChar w:fldCharType="end"/>'), '<w:bookmarkEnd w:id="1"/>' if a.get("bm") else ""]
+    sid = re.sub(r"[^A-Za-z0-9_-]", "", (n.get("attrs") or {}).get("styleId") or "Normal")
+    return docx_vars.parse(f'<w:p xmlns:w="{docx_vars.W_NS}"><w:pPr><w:pStyle w:val="{sid}"/></w:pPr>{"".join(out)}</w:p>'.encode())
+
+
 def _units(ctx: Ctx, i: Import):
     """(units for docx_vars, write-back list) of the import: header/footer parts of the package and the front matter
     blocks (everything before the first Heading 1). Opaque XML and plain paragraphs are edited in place."""
@@ -530,7 +553,7 @@ def _units(ctx: Ctx, i: Import):
     for b in blocks[:D.front_end(blocks)]:
         if (b.get("attrs") or {}).get("sec") or b.get("type") == "toc":
             continue  # marked sections and generated lists are structure, never per-document values
-        if b.get("type") in ("paragraph", "heading") and D.block_text(b).strip():
+        if b.get("type") in ("paragraph", "heading") and D.block_text(b).strip() and not _forms(b):
             p = docx_vars.parse(('<w:p xmlns:w="%s"><w:pPr><w:pStyle w:val="%s"/></w:pPr><w:r><w:t/></w:r></w:p>'
                                  % (docx_vars.W_NS, re.sub(r"[^A-Za-z0-9_-]", "", (b.get("attrs") or {}).get("styleId") or "Normal"))).encode())
             p.find(".//" + docx_vars.W + "t").text = D.block_text(b)
@@ -544,8 +567,8 @@ def _units(ctx: Ctx, i: Import):
                     labels.update({id(n): prev for n in D.walk(cell)})
                     prev = D.block_text(cell).strip()
         for n in D.walk(b):
-            if n.get("type") == "opaque" and isinstance((n.get("attrs") or {}).get("xml"), str):
-                r = docx_vars.parse(n["attrs"]["xml"].encode())
+            if _forms(n) or n.get("type") == "opaque" and isinstance((n.get("attrs") or {}).get("xml"), str):
+                r = _form_xml(n) if _forms(n) else docx_vars.parse(n["attrs"]["xml"].encode())
                 if id(n) in labels:  # wrap like the table it came from, so label/`in a table` checks see it
                     row = docx_vars.parse(('<w:tr xmlns:w="%s"><w:tc><w:p/></w:tc><w:tc/></w:tr>' % docx_vars.W_NS).encode())
                     row[0][0].append(docx_vars.parse(('<w:r xmlns:w="%s"><w:t/></w:r>' % docx_vars.W_NS).encode()))
@@ -554,7 +577,7 @@ def _units(ctx: Ctx, i: Import):
                     units.append(("cover", row, True))
                 else:
                     units.append(("cover", r, True))
-                back.append((n, r, n["attrs"]["xml"]))
+                back.append((n, r, n["attrs"]["xml"] if n.get("type") == "opaque" else ""))
     return units, hf, back
 
 
@@ -574,7 +597,12 @@ def apply_import_variables(import_id: UUID, body: VarPicks, ctx: Ctx = E):
     if not n:
         raise HTTPException(422, "none of the values were found")
     for node, root, old in back:
-        if node.get("type") == "opaque":
+        if _forms(node):  # the new result texts go back into the field nodes, in order
+            for fld, f in zip(_forms(node), [f for f in docx_vars.fields(root) if f["kw"] == "FORMTEXT"]):
+                if fld["attrs"].get("text") != f["text"]:
+                    fld["attrs"]["text"] = f["text"]
+                    (node.get("attrs") or {}).pop("orig", None)
+        elif node.get("type") == "opaque":
             new = etree.tostring(root, encoding="unicode")
             if new != old:
                 node["attrs"]["xml"] = new

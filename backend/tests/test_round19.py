@@ -45,11 +45,11 @@ def text(n):
     return D.block_text(n)
 
 
-def test_wrapped_text_imports_as_paragraphs_and_only_textbox_and_form_field_stay_opaque():
+def test_wrapped_text_imports_as_paragraphs_and_the_textbox_is_a_container():  # round 24: form fields are `field` nodes now
     content, warn = D.parse(package(), lambda b: None)
     blocks = content["content"]
-    assert [b["type"] for b in blocks] == ["paragraph"] * 8 + ["opaque", "opaque"]
-    assert [b["attrs"]["kind"] for b in blocks[8:]] == ["text box", "form field"]
+    assert [b["type"] for b in blocks] == ["paragraph"] * 8 + ["textbox", "paragraph"]
+    assert D.block_text(blocks[8]) == "BOX-TEXT" and D.block_text(blocks[9]) == "" and blocks[9]["content"][0]["attrs"]["code"] == "FORMTEXT"
     t = [text(b) for b in blocks[:8]]
     assert t[0] == "SMART-TEXT" and t[1] == "CUSTOM-TEXT" and t[2] == "SDT-TEXT" and t[3] == "Before INS-TEXT" and "DEL-TEXT" not in t[3]
     assert t[4] == "COMMENT-TEXT" and t[7] == "ANCHOR-TEXT"
@@ -58,7 +58,7 @@ def test_wrapped_text_imports_as_paragraphs_and_only_textbox_and_form_field_stay
     seq = next(x for x in D.walk(blocks[6]) if x.get("type") == "field")
     assert seq["attrs"]["arg"] == "Table" and seq["attrs"]["text"] == "1"  # label only: no "* ARABIC" in the model
     w = " | ".join(warn)
-    assert "1× content control" in w and "1× smartTag" in w and "1× tracked insertion" in w and "× comment" in w and "1× text box" in w and "1× form field" in w
+    assert "1× content control" in w and "1× smartTag" in w and "1× tracked insertion" in w and "× comment" in w and "text box" not in w and "form field" not in w
 
 
 def test_unedited_round_trip_is_byte_identical_and_edit_changes_only_that_paragraph():

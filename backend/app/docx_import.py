@@ -146,11 +146,26 @@ def fold_fields(p, hf: bool = False):
     res = etree.Element(p.tag, nsmap=p.nsmap)
     res.attrib.update(p.attrib)
     depth, cur, found = 0, None, False
-    for el in p:
+    els, wrap, closing = list(p), {}, set()  # a bookmark right around a field names it (REF targets: cover title...)
+    for k, el in enumerate(els[:-1]):
+        nxt = els[k + 1].find(W + "fldChar") if loc(els[k + 1]) == "r" else None
+        if loc(el) == "bookmarkStart" and nxt is not None and nxt.get(W + "fldCharType") == "begin":
+            wrap[els[k + 1]] = (el.get(W + "name"), el.get(W + "id"))
+            closing.add(el.get(W + "id"))
+    for el in els:
         t = loc(el)
+        if t == "bookmarkStart" and any(w[1] == el.get(W + "id") for w in wrap.values()):
+            continue
+        if t == "bookmarkEnd" and depth == 0 and el.get(W + "id") in closing:
+            continue
         fc = el.find(W + "fldChar") if t == "r" else None
         kind = fc.get(W + "fldCharType") if fc is not None else None
         if depth:
+            if t == "bookmarkStart" and not cur["bm"] and not cur["bmo"]:  # FORMTEXT: the bookmark between begin and separate names the form field
+                cur["bm"] = el.get(W + "name")
+                continue
+            if t in ("bookmarkEnd", "proofErr"):
+                continue
             if t != "r" or kind == "begin":
                 return None  # nested field or foreign element inside one
             if kind == "separate":
@@ -159,7 +174,7 @@ def fold_fields(p, hf: bool = False):
                 code, arg = _instr(cur["instr"])
                 if code not in ok or (arg := _arg(code, arg)) is None:
                     return None
-                res.append(_marker(code, arg, cur["text"], cur["rpr"]))
+                res.append(_marker(code, arg, cur["text"], cur["rpr"], cur["ff"], wrap[cur["el"]][0] if cur["bmo"] else cur["bm"], cur["bmo"]))
                 depth, found = 0, True
             elif cur["sep"]:
                 cur["text"] += "".join(x.text or "" for x in el.iter(W + "t"))
@@ -175,13 +190,15 @@ def fold_fields(p, hf: bool = False):
             res.append(_marker(code, arg, "".join(x.text or "" for x in el.iter(W + "t")), r.find(W + "rPr") if r is not None else None))
             found = True
         elif kind == "begin":
-            depth, cur = 1, {"instr": "", "text": "", "rpr": None, "sep": False}
+            ffd = fc.find(W + "ffData")
+            depth, cur = 1, {"instr": "", "text": "", "rpr": None, "sep": False, "bm": None, "bmo": el in wrap, "el": el,
+                             "ff": etree.tostring(ffd, encoding="unicode", with_tail=False) if ffd is not None else None}
         else:
             res.append(copy.deepcopy(el))
     return res if found and not depth else None
 
 
-def _marker(code, arg, text, rpr):
+def _marker(code, arg, text, rpr, ff=None, bm=None, bmo=False):
     r = etree.Element(W + "r")
     if rpr is not None:
         r.append(copy.deepcopy(rpr))
@@ -189,6 +206,11 @@ def _marker(code, arg, text, rpr):
     m.set("code", code)
     m.set("arg", arg)
     m.set("text", text)
+    if ff:
+        m.set("ff", ff)
+    if bm:
+        m.set("bm", bm)
+        m.set("bmo", "1" if bmo else "")
     return r
 
 
@@ -220,7 +242,7 @@ class _Parser:
     # ---- opaque ----
     def keep(self, el, kind: str | None = None) -> dict:
         kind = (kind or _kind(el))[:60]
-        if kind == "field" and any("FORMTEXT" in (x.text or "") for x in el.iter(W + "instrText")):
+        if kind == "field" and any("FORMTEXT" in (x.text or "") for x in el.iter(W + "instrText")):  # only when not foldable (see fold_fields)
             kind = "form field"
         xml = etree.tostring(el, encoding="unicode", with_tail=False)
         try:
@@ -284,7 +306,8 @@ class _Parser:
                 if code in HF_VARS:
                     out.append({"type": "variable", "attrs": {"name": HF_VARS[code], "default": "", "filter": "date:DD.MM.YYYY" if "date" in HF_VARS[code] else None}, **({"marks": mk} if mk else {})})
                 else:
-                    out.append({"type": "field", "attrs": {"code": code, "arg": arg, "text": c.get("text") or ""}, **({"marks": mk} if mk else {})})
+                    out.append({"type": "field", "attrs": {"code": code, "arg": arg, "text": c.get("text") or "",
+                                                           **({"ff": c.get("ff"), "bm": c.get("bm"), "bmo": bool(c.get("bmo"))} if code == "FORMTEXT" else {})}, **({"marks": mk} if mk else {})})
             elif t == "br":
                 if c.get(W + "type") == "page":
                     out.append({"type": "hardBreak", "attrs": {"page": True}})
@@ -300,13 +323,75 @@ class _Parser:
             elif t not in RUN_IGNORED:
                 return c
 
+    def sdt_block(self, sdt) -> dict | None:
+        """Block-level content control -> `sdtBlock` container: its paragraphs/tables are editable, sdtPr (alias, tag, data binding,
+        checkbox/date/dropdown settings...) stays verbatim in attrs.xml with an empty sdtContent that the export refills."""
+        content = sdt.find(W + "sdtContent")
+        if content is None or any(loc(c) not in ("p", "tbl", "bookmarkStart", "bookmarkEnd") for c in content) or not len(content):
+            return None
+        cp = copy.deepcopy(sdt)
+        for c in list(cp.find(W + "sdtContent")):
+            cp.find(W + "sdtContent").remove(c)
+        xml = etree.tostring(cp, encoding="unicode", with_tail=False)
+        try:
+            opaque_element(xml, self.rel_ids)
+        except ValueError:
+            return None
+        kids = self.blocks(content, 1)
+        return {"type": "sdtBlock", "attrs": {"xml": xml}, "content": kids} if kids else None
+
+    def textbox(self, p) -> dict | None:
+        """A paragraph that holds nothing but one text box (DrawingML wps:txbx, mc:AlternateContent with its VML fallback, or VML v:textbox)
+        -> `textbox` node: the box's paragraphs are editable content, the paragraph XML (anchor, size, position, shape properties) stays in
+        attrs.xml with empty txbxContent elements; the export refills every txbxContent (fallback copy too) with the edited content.
+        Anything else (text next to the box, nested boxes, no txbxContent) stays opaque."""
+        kids = [c for c in p if loc(c) not in ("pPr", "proofErr", "bookmarkStart", "bookmarkEnd")]
+        if len(kids) != 1 or loc(kids[0]) != "r" or any(loc(c) not in ("rPr", "lastRenderedPageBreak", "AlternateContent", "drawing", "pict") for c in kids[0]):
+            return None
+        shapes = [c for c in kids[0] if loc(c) in ("AlternateContent", "drawing", "pict")]
+        boxes = list(shapes[0].iter(W + "txbxContent")) if len(shapes) == 1 else []
+        if not boxes or any(b.find(f".//{W}txbxContent") is not None for b in boxes):
+            return None
+        content = self.blocks(boxes[0], 1)
+        if not content:
+            return None
+        cp = copy.deepcopy(p)
+        for b in cp.iter(W + "txbxContent"):
+            for c in list(b):
+                b.remove(c)
+        xml = etree.tostring(cp, encoding="unicode", with_tail=False)
+        try:
+            opaque_element(xml, self.rel_ids)
+        except ValueError:
+            return None
+        return {"type": "textbox", "attrs": {"xml": xml}, "content": content}
+
+    def sect_break(self, p, ppr) -> dict | None:
+        """An empty paragraph that ends a section -> `sectBreak` node: the paragraph XML (sectPr with header/footer references, titlePg,
+        page numbering) stays verbatim in attrs.xml, brk/orient/margins are the editable view of it. Paragraphs with text stay opaque."""
+        if any(loc(c) not in ("pPr", "proofErr", "bookmarkStart", "bookmarkEnd") for c in p) or ppr.find(W + "sectPr") is None:
+            return None
+        sp, xml = ppr.find(W + "sectPr"), etree.tostring(p, encoding="unicode", with_tail=False)
+        try:
+            opaque_element(xml, self.rel_ids)
+        except ValueError:
+            return None
+        sz, mar, ty = sp.find(W + "pgSz"), sp.find(W + "pgMar"), val(sp.find(W + "type"))
+        num = lambda e, k: int(e.get(W + k)) if e is not None and (e.get(W + k) or "").lstrip("-").isdigit() else None
+        a = {"xml": xml, "brk": ty if ty in ("nextPage", "continuous", "evenPage", "oddPage") else "nextPage",
+             "orient": "landscape" if sz is not None and (sz.get(W + "orient") == "landscape") else "portrait",
+             **{k: num(mar, k) for k in ("top", "right", "bottom", "left")}}
+        return {"type": "sectBreak", "attrs": a}
+
     def para(self, p):
         """-> (nodes, list_info). nodes = [paragraph|heading|opaque, image...]; list_info = (numId, ilvl) for list items."""
         ppr = p.find(W + "pPr")
         if any(loc(x) in REVISION - {"ins", "del"} for x in p.iter()):
             return [self.keep(p, "tracked changes")], None
         if ppr is not None and ppr.find(W + "sectPr") is not None:
-            return [self.keep(p, "section break")], None
+            return [self.sect_break(p, ppr) or self.keep(p, "section break")], None
+        if (tb := self.textbox(p)) is not None:
+            return [tb], None
         out, images = [], []
         orig_p = p
         u = unwrap(p, self.unwrapped)
@@ -445,6 +530,10 @@ class _Parser:
                 span(out[-1], i)
             elif t in ("sectPr", "tcPr"):
                 continue
+            elif t == "sdt":
+                stack.clear()
+                out.append(self.sdt_block(ch) or self.keep(ch))
+                span(out[-1], i)
             else:
                 stack.clear()
                 out.append(self.keep(ch))
@@ -675,6 +764,10 @@ def check_content(content: dict, rels: set) -> None:
             opaque_element(a.get("xml"), own)
         elif n.get("type") == "table" and a.get("tblPr"):
             opaque_element(a["tblPr"], rels, {"tblPr"})
+        elif n.get("type") == "field" and a.get("ff"):
+            opaque_element(a["ff"], rels, {"ffData"})
+        elif n.get("type") in ("sectBreak", "textbox", "sdtBlock") and a.get("xml"):
+            opaque_element(a["xml"], rels)
 
 
 def block_text(n) -> str:

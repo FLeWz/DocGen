@@ -65,7 +65,7 @@ def test_parse_keeps_paragraph_cell_table_image_attrs(parsed):
     assert cells[0]["attrs"]["cfmt"] == {"shd": "D9E2F3", "vAlign": "center"}
     assert cells[1]["attrs"]["rowspan"] == 2
     kinds = {n["attrs"]["kind"] for n in find(parsed, lambda n: n["type"] == "opaque")}
-    assert kinds == {"field", "text box"}
+    assert kinds == {"field"} and find(parsed, lambda n: n["type"] == "textbox")  # round 24: the text box is editable content
 
 
 def png_bytes():
