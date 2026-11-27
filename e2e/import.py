@@ -48,9 +48,11 @@ with sync_playwright() as pw:
         assert w.bounding_box()["height"] < 45
         w.get_by_role("button").click()
         expect(w.locator("li").first).to_be_visible()
-        for kind in ("text box", "content control", "tracked insertion"):
-            expect(w).to_contain_text(kind)
-        expect(ed.locator(".opaque-view")).to_have_count(2)  # text box + block content control (the tracked insertion is plain text now), drawn from their OOXML
+        expect(w).to_contain_text("tracked insertion")  # round 24: the text box and the block content control are editable nodes, not warnings
+        expect(w).not_to_contain_text("text box")
+        expect(ed.locator(".opaque-view")).to_have_count(0)
+        expect(ed.locator(".txbx")).to_have_count(1)
+        expect(ed.locator(".sdtb")).to_have_count(1)
         expect(ed.get_by_text("INSERTED-MARKER")).to_be_visible()
         expect(ed.get_by_text("TEXTBOX-MARKER")).to_be_visible()
         expect(ed.get_by_text("SDT-CONTENT-MARKER")).to_be_visible()
