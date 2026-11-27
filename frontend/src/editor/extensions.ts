@@ -174,13 +174,13 @@ export const ImportAttrs = Extension.create({
 });
 
 
-const fieldLabel = (a: Record<string, any>) => (a.code === "SEQ" || a.code === "REF" || a.code === "PAGEREF") ? String(a.text || "?") : `‹${a.code}›`;
+const fieldLabel = (a: Record<string, any>) => (a.code === "SEQ" || a.code === "REF" || a.code === "PAGEREF") ? String(a.text || "?") : a.code === "FORMTEXT" ? String(a.text || "‹form field›") : `‹${a.code}›`;
 /** Word field: PAGE / NUMPAGES / SECTIONPAGES (value per page), SEQ (caption number), REF / PAGEREF (cross reference). */
 export const Field = Node.create({
   name: "field", group: "inline", inline: true, atom: true, selectable: true,
   addAttributes() { return { code: attr("code", "data-field", "PAGE"), arg: attr("arg", "data-arg", ""), text: attr("text", "data-text", ""), ff: hidden(), bm: hidden(), bmo: hidden() }; }, // ff/bm/bmo: FORMTEXT form field data, bookmark name and where it sits (kept verbatim)
   addProseMirrorPlugins() {
-    return [new Plugin({ props: { handleDoubleClickOn: (_v, _p, node) => { if (node.type.name === "field" && node.attrs.code === "FORMTEXT") { window.dispatchEvent(new CustomEvent("docgen:cmd", { detail: "editfield" })); return true; } return false; } } })];
+    return [new Plugin({ props: { handleDoubleClickOn: (_v, _p, node, nodePos) => { if (node.type.name === "field" && node.attrs.code === "FORMTEXT") { window.dispatchEvent(new CustomEvent("docgen:editfield", { detail: nodePos })); return true; } return false; } } })];
   },
   parseHTML: () => [{ tag: "span[data-field]" }],
   renderHTML: ({ node, HTMLAttributes }) => ["span", mergeAttributes(HTMLAttributes, { class: `fld fld-${safeId(node.attrs.code) ?? "x"}`, title: node.attrs.code === "SEQ" ? "Automatic number: follows the order of the captions" : node.attrs.code === "FORMTEXT" ? "Form field: double-click to edit its text" : node.attrs.code === "REF" ? "Cross-reference (updates with its target)" : `Field ${node.attrs.code} ${node.attrs.arg ?? ""}`.trim() }), fieldLabel(node.attrs)],

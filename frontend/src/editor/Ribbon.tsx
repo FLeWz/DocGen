@@ -99,9 +99,10 @@ export function Ribbon({ editor, ro, styles, mode = "body", onErr, structure, on
 
   // shortcuts that open dialogs (Ctrl+K, Ctrl+F, Ctrl+/) come from the editor as `docgen:cmd`
   useEffect(() => {
-    const h = (e: Event) => { const c = (e as CustomEvent).detail; if (!editor.isFocused) return; if (c === "link") setDlg("link"); else if (c === "find") setDlg("find"); else if (c === "shortcuts") setDlg("shortcuts"); else if (c === "dynamic") openDynamic(); else if (c === "caption") openCaption(); else if (c === "editfield") editField(); };
-    window.addEventListener("docgen:cmd", h);
-    return () => window.removeEventListener("docgen:cmd", h);
+    const h = (e: Event) => { const c = (e as CustomEvent).detail; if (!editor.isFocused) return; if (c === "link") setDlg("link"); else if (c === "find") setDlg("find"); else if (c === "shortcuts") setDlg("shortcuts"); else if (c === "dynamic") openDynamic(); else if (c === "caption") openCaption(); };
+    const ef = (e: Event) => { editField((e as CustomEvent).detail); };
+    window.addEventListener("docgen:cmd", h); window.addEventListener("docgen:editfield", ef);
+    return () => { window.removeEventListener("docgen:cmd", h); window.removeEventListener("docgen:editfield", ef); };
   }, [editor]);
   useEffect(() => { editor.view.dom.setAttribute("spellcheck", String(spell)); }, [editor, spell]);
   const [mathAt, setMathAt] = useState<{ pos: number | null } | null>(null);  // equation dialog: pos = the equation being edited, null = insert at the cursor
@@ -232,11 +233,12 @@ export function Ribbon({ editor, ro, styles, mode = "body", onErr, structure, on
     if (t === null || !t.trim()) return;
     if (existing) run().updateAttributes("footnote", { text: t.trim() }).run(); else run().insertContent({ type: "footnote", attrs: { kind, text: t.trim() } }).run();
   };
-  const editField = async () => {
-    const sel = editor.state.selection;
-    if (!(sel instanceof NodeSelection) || sel.node.type.name !== "field" || sel.node.attrs.code !== "FORMTEXT") return;
-    const t = await ui.prompt({ title: "Edit form field", label: "Text", value: String(sel.node.attrs.text ?? ""), ok: "Save" });
-    if (t !== null) run().updateAttributes("field", { text: t }).run();
+  /** Form field (FORMTEXT): its text is the cached result, edited in a prompt (double-click or the Edit field button). */
+  const editField = async (at?: number) => {
+    const sel = editor.state.selection, pos = at ?? (sel instanceof NodeSelection ? sel.from : -1), node = pos >= 0 ? editor.state.doc.nodeAt(pos) : null;
+    if (!node || node.type.name !== "field" || node.attrs.code !== "FORMTEXT") return;
+    const t = await ui.prompt({ title: "Edit form field", label: "Text", value: String(node.attrs.text ?? ""), ok: "Save" });
+    if (t !== null) editor.view.dispatch(editor.state.tr.setNodeMarkup(pos, undefined, { ...node.attrs, text: t }));
   };
   const bookmark = async () => {
     const t = editor.state.selection.$from.parent;
@@ -380,7 +382,7 @@ export function Ribbon({ editor, ro, styles, mode = "body", onErr, structure, on
     <G label={hf ? "Fields" : "Notes and fields"}>
       {!hf && <><I i="footnote" t="Insert footnote" label="Footnote" fn={() => footnote("footnote")} /><I i="footnote" t="Insert endnote" label="Endnote" fn={() => footnote("endnote")} />
         {st.footnote && <I i="edit" t="Edit selected note" label="Edit note" fn={() => footnote("footnote", true)} />}</>}
-      {st.formField && <I i="edit" t="Edit the text of the selected form field (or double-click it)" label="Edit field" fn={editField} />}
+      {st.formField && <I i="edit" t="Edit the text of the selected form field (or double-click it)" label="Edit field" fn={() => editField()} />}
       <select aria-label="Insert field" title="Insert field: page number, total pages, date, document title, version, author" disabled={off} value="" onChange={(e) => { const f = HF_FIELDS[Number(e.target.value)]; if (f) run().insertContent(f[1]).run(); }}>
         <option value="">Field…</option>{HF_FIELDS.map(([l], i) => <option key={l} value={i}>{l}</option>)}</select>
       <I i="var" t="Make variable" label="Variable" on={st.variable} fn={openVariable} />
