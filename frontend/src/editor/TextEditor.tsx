@@ -13,7 +13,7 @@ import { latexCompletion } from "./latex";
 import type { ModeId } from "./modes";
 import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
 
-export type TextHandle = { jump: (offset: number) => void; focus: () => void };
+export type TextHandle = { jump: (offset: number) => void; focus: () => void; topLine: () => number };
 
 const look = HighlightStyle.define([
   { tag: t.heading, fontWeight: "700", color: "var(--primary)" }, { tag: t.strong, fontWeight: "700" }, { tag: t.emphasis, fontStyle: "italic" },
@@ -35,9 +35,9 @@ const theme = EditorView.theme({
   ".cm-searchMatch": { backgroundColor: "color-mix(in srgb, var(--primary) 25%, transparent)" },
 });
 
-export const TextEditor = forwardRef<TextHandle, { value: string; onChange: (v: string) => void; readOnly?: boolean; label?: string; mode?: ModeId }>(function TextEditor({ value, onChange, readOnly, label, mode }, ref) {
-  const host = useRef<HTMLDivElement>(null), view = useRef<EditorView | null>(null), cb = useRef(onChange);
-  cb.current = onChange;
+export const TextEditor = forwardRef<TextHandle, { value: string; onChange: (v: string) => void; readOnly?: boolean; label?: string; mode?: ModeId; onLine?: (line: number) => void }>(function TextEditor({ value, onChange, readOnly, label, mode, onLine }, ref) {
+  const host = useRef<HTMLDivElement>(null), view = useRef<EditorView | null>(null), cb = useRef(onChange), line = useRef(onLine);
+  cb.current = onChange; line.current = onLine;
   useEffect(() => {
     const v = new EditorView({
       parent: host.current!,
@@ -48,7 +48,7 @@ export const TextEditor = forwardRef<TextHandle, { value: string; onChange: (v: 
         syntaxHighlighting(look), theme, keymap.of([...searchKeymap, ...historyKeymap, ...defaultKeymap, indentWithTab]),
         EditorState.readOnly.of(!!readOnly), EditorView.editable.of(!readOnly),
         EditorView.contentAttributes.of({ "aria-label": label ?? "Source" }),
-        EditorView.updateListener.of((u) => { if (u.docChanged) cb.current(u.state.doc.toString()); }),
+        EditorView.updateListener.of((u) => { if (u.docChanged) cb.current(u.state.doc.toString()); if (u.docChanged || u.selectionSet) line.current?.(u.state.doc.lineAt(u.state.selection.main.head).number); }),
       ] }),
     });
     view.current = v;
@@ -57,6 +57,7 @@ export const TextEditor = forwardRef<TextHandle, { value: string; onChange: (v: 
   useImperativeHandle(ref, () => ({
     jump: (o) => { const v = view.current; if (v) { v.dispatch({ selection: { anchor: Math.min(o, v.state.doc.length) }, scrollIntoView: true }); v.focus(); } },
     focus: () => view.current?.focus(),
+    topLine: () => { const v = view.current; return v ? v.state.doc.lineAt(v.lineBlockAtHeight(v.scrollDOM.scrollTop).from).number : 1; },
   }), []);
   return <div className="mdsrc" data-testid="text-editor" ref={host} />;
 });

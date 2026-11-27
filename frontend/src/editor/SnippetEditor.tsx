@@ -20,6 +20,7 @@ import { normalize, pageKind, pageParts } from "./pagelayout";
 import { PagedView } from "./pages";
 import { autosaveAction, DEFAULT_MODE, leaveText, MODES, modeOf, ModeId, offsetOf, textKey, TextError } from "./modes";
 import { TextEditor, TextHandle } from "./TextEditor";
+import { FOLLOW_KEY, lineBlock, loadFollow, pdfPageCount, topBlock, useFollow } from "./follow";
 import { contentBlocks } from "./render";
 import { loadPrefs, PV_KEY, PvMode, ZOOM_KEY, ZOOMS } from "./prefs";
 
@@ -66,7 +67,8 @@ export function RichEditor({ qkey, load, save, keyOf, me, idleSaved, notices = [
     return () => { window.removeEventListener("keydown", h, true); document.documentElement.classList.remove("ed-focus"); };
   }, [focus, setFocus]);
   const [guides, setGuides] = useState(false), [struct, setStruct] = useState(false);
-  const [pdf, setPdf] = useState<{ url: string; busy: boolean; err: string }>({ url: "", busy: false, err: "" });
+  const [pdf, setPdf] = useState<{ url: string; busy: boolean; err: string; pages?: number }>({ url: "", busy: false, err: "" });
+  const [follow, setFollow] = useState(() => loadFollow(localStorage)), rootRef = useRef<HTMLDivElement>(null), layRef = useRef<EditorLayout | null>(null), pagesRef = useRef(0);
   const bases = useQuery({ queryKey: ["base-docs", me.org?.id], queryFn: () => api<BaseDoc[]>("/base-documents"), enabled: !lookSrc });
   const src: LookSrc = lookSrc ?? (pick && bases.data?.some((b) => b.id === pick) ? { base_doc: pick } : {});
   const lk = useLook(src);
@@ -115,6 +117,22 @@ export function RichEditor({ qkey, load, save, keyOf, me, idleSaved, notices = [
     onUpdate: ({ editor }) => { setDoc(editor.getJSON() as PMNode); touch(); },
   });
   editorRef.current = editor;
+  // Preview follows the editor: caret/typing/jumps -> top-level block -> preview scroll (HTML) or page (PDF); see follow.ts
+  const fol = useFollow({ root: rootRef, on: follow && pv !== "off", pv, mode,
+    spans: () => layRef.current?.spans ?? [], pdfPages: () => pagesRef.current,
+    scrollBlock: () => {
+      const e = editorRef.current, sc = rootRef.current?.querySelector<HTMLElement>('[aria-label="Editor pane"] .docx-stage'), pm = sc?.querySelector(".ProseMirror");
+      if (modeRef.current !== "word") return lineBlock(txtRef.current, tx.current?.topLine() ?? 1, (textDoc.current ?? base.current)?.content?.length ?? 1, modeRef.current === "latex");
+      if (!e || !sc || !pm) return null;
+      const sr = sc.getBoundingClientRect(), pr = pm.getBoundingClientRect(), p = e.view.posAtCoords({ left: pr.left + pr.width / 2, top: sr.top + 8 });
+      return p ? topBlock(e.state.doc.resolve(p.pos), e.state.doc.childCount) : null;
+    } });
+  useEffect(() => {
+    if (!editor || !follow || pv === "off") return;
+    const h = () => { if (modeRef.current === "word") { const s = editor.state.selection; fol.go(topBlock((s as { node?: unknown }).node ? s.$from : s.$head, editor.state.doc.childCount)); } };
+    editor.on("selectionUpdate", h); editor.on("update", h); h();
+    return () => { editor.off("selectionUpdate", h); editor.off("update", h); };
+  }, [editor, follow, pv, fol.go]);
   if (handle) handle.current = { flush, json: () => editorRef.current?.getJSON() };
   useEffect(() => () => { flush(); }, [flush]); // leaving the editor never drops edits
   const parse = (text: string) => convert.fromText(modeOf(modeRef.current).format!, text, base.current);
@@ -168,6 +186,7 @@ export function RichEditor({ qkey, load, save, keyOf, me, idleSaved, notices = [
   useEffect(() => { editor?.view.dispatch(editor.state.tr); }, [editor, orgStyles, lk.data]); // redraw heading numbers when the style set arrives
   // page gaps: the plugin measures the editor DOM and reports the layout back (header of page 1 and footer of the last page live in the frame)
   pageState.look = look; pageState.zoom = zoom; pageState.onLayout = setLay;
+  layRef.current = lay;
   useEffect(() => { pageState.tick++; editor?.view.dispatch(editor.state.tr); }, [editor, look, zoom, focus]);
 
   // Reload the editor only when the server draft changes identity (restore/discard/resolve), not per autosave.
@@ -194,10 +213,13 @@ export function RichEditor({ qkey, load, save, keyOf, me, idleSaved, notices = [
     setPdf((p) => ({ ...p, busy: true, err: "" }));
     try {
       const blob = await apiBlob("/render/pdf", { content: mode !== "word" && textDoc.current ? textDoc.current : editor.getJSON(), import_id: src.import ?? null, base_doc: src.base_doc ?? null });
-      setPdf((p) => { if (p.url) URL.revokeObjectURL(p.url); return { url: URL.createObjectURL(blob), busy: false, err: "" }; });
+      const pages = pdfPageCount(new TextDecoder("latin1").decode(await blob.arrayBuffer()));
+      pagesRef.current = pages;
+      setPdf((p) => { if (p.url) URL.revokeObjectURL(p.url); return { url: URL.createObjectURL(blob), busy: false, err: "", pages }; });
     } catch (e) { setPdf((p) => ({ ...p, busy: false, err: (e as Error).message })); }
   };
   useEffect(() => { if (pv === "word" && !pdf.url && !pdf.busy) renderWord(); }, [pv]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { fol.again(); }, [pdf.url, fol.again]); // a fresh render opens at the followed page
 
   // A plain click on a page header/footer (they are not hit-testable: pointer-events off, so geometry decides) opens its editor.
   const openHfAt = (x: number, y: number) => {
@@ -216,7 +238,7 @@ export function RichEditor({ qkey, load, save, keyOf, me, idleSaved, notices = [
   const label = { idle: "No changes", saving: "Saving…", saved: "Draft saved", error: "Save failed" }[status];
 
   return (
-    <div className="editorpage" onKeyDown={(e) => {  // Ctrl+A with focus on the toolbar/page would select the web page, not the document
+    <div className="editorpage" ref={rootRef} onKeyDown={(e) => {  // Ctrl+A with focus on the toolbar/page would select the web page, not the document
       const t = e.target as HTMLElement;
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "a" && !t.closest("input,textarea,select,[contenteditable=true]")) { e.preventDefault(); editor.chain().focus().selectAll().run(); }
     }}>
@@ -245,6 +267,8 @@ export function RichEditor({ qkey, load, save, keyOf, me, idleSaved, notices = [
           <option value="">Organization styles</option>{bases.data?.map((b) => <option key={b.id} value={b.id}>Base: {b.name}</option>)}</select></label>}
         <label>Preview <select aria-label="Preview mode" value={pv} onChange={(e) => { setPv(e.target.value as PvMode); localStorage.setItem(PV_KEY, e.target.value); }}>
           <option value="off">No preview</option><option value="live">Live (HTML)</option><option value="word">Word (PDF)</option></select></label>
+        {pv !== "off" && <button type="button" className={`btn sm icon ${follow ? "on" : ""}`} data-testid="follow-toggle" aria-pressed={follow} aria-label="Follow" title="Preview follows the editor"
+          onClick={() => { setFollow(!follow); localStorage.setItem(FOLLOW_KEY, follow ? "0" : "1"); }}><Icon n="link" /> Follow</button>}
         <label>Zoom <select aria-label="Zoom" value={zoom} onChange={(e) => { setZoom(+e.target.value); localStorage.setItem(ZOOM_KEY, e.target.value); }}>
           {ZOOMS.map((z) => <option key={z} value={z}>{z * 100}%</option>)}</select></label>
         {mode === "word" && <><button type="button" className={`btn sm ${guides ? "on" : ""}`} aria-pressed={guides} onClick={() => setGuides(!guides)}>Page guides</button>
@@ -255,7 +279,7 @@ export function RichEditor({ qkey, load, save, keyOf, me, idleSaved, notices = [
       <div className={`panes ${pv === "off" && !src.import ? "single" : ""}`}>
         {mode !== "word" && <section className="pane" aria-label="Text editor pane">
           <div className="pane-h">{modeOf(mode).label} <span className="muted small" style={{ textTransform: "none", letterSpacing: 0, fontWeight: 400 }}>· the same content as text; saved as the usual draft when it parses</span></div>
-          <TextEditor key={`${mode}:${loaded.current}`} ref={tx} mode={mode} value={txtRef.current} readOnly={ro} onChange={onText} label={`${modeOf(mode).label} source`} />
+          <TextEditor key={`${mode}:${loaded.current}`} ref={tx} mode={mode} value={txtRef.current} readOnly={ro} onChange={onText} label={`${modeOf(mode).label} source`} onLine={follow && pv !== "off" ? (l) => fol.go(lineBlock(txtRef.current, l, (textDoc.current ?? base.current)?.content?.length ?? 1, mode === "latex")) : undefined} />
           {conv && (conv.errors.length > 0 || conv.warnings.length > 0) && <div className={`mderrs ${conv.errors.length ? "bad" : "warn"}`} data-testid="text-errors" role="alert">
             <ul>
               {conv.errors.map((e, i) => <li key={`e${i}`}><button type="button" className="linklike" onClick={() => tx.current?.jump(offsetOf(txtRef.current, e.line, e.column))}>Line {e.line}, column {e.column}</button> {e.message}</li>)}
@@ -269,7 +293,7 @@ export function RichEditor({ qkey, load, save, keyOf, me, idleSaved, notices = [
           onClick={(e) => { const d0 = downAt.current; if (d0 && Math.hypot(e.clientX - d0[0], e.clientY - d0[1]) > 4) return; if (!(window.getSelection()?.isCollapsed ?? true)) return; openHfAt(e.clientX, e.clientY); }}>
           <div className="pane-h">Editor{src.import && <span className="muted small" style={{ textTransform: "none", letterSpacing: 0, fontWeight: 400 }}> · click a page header or footer to edit it</span>}</div>
           <TableTools editor={editor} ro={ro} /><div className="docx-stage"><PageFrame look={look} zoom={zoom} guides={guides} hdrHtml={lay ? pageParts(look, lay.pages[0], lay.total).hdr : undefined} ftrHtml={lay ? pageParts(look, lay.pages[lay.total - 1], lay.total).ftr : undefined}><EditorContent editor={editor} aria-label="Editor" /></PageFrame></div></section>}
-        {pv === "live" && <section className="pane" aria-label="Preview pane"><div className="pane-h">Preview</div><Preview doc={doc} styles={styles} look={look} zoom={zoom} guides={guides} /></section>}
+        {pv === "live" && <section className="pane" aria-label="Preview pane"><div className="pane-h">Preview</div><Preview doc={doc} styles={styles} look={look} zoom={zoom} guides={guides} onPages={fol.again} /></section>}
         {pv === "word" && <section className="pane" aria-label="Word rendering pane"><div className="pane-h">Rendered as Word does</div>
           {pdf.err && <ErrorBanner e={new Error(pdf.err)} />}
           {pdf.url ? <iframe className="word-pdf" title="Word rendering (PDF)" src={pdf.url} data-testid="word-pdf" /> : <div className="pane-msg">{pdf.busy ? <><Spinner /> Rendering with LibreOffice…</> : ""}</div>}</section>}

@@ -4,6 +4,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { applyLook, Look, pageVars } from "./look";
 import { measureBlock, sliceTable } from "./measure";
 import { layout, normalize, PageInfo, pageParts, startsPage } from "./pagelayout";
+import { tagBlock } from "./follow";
 import { Block } from "./paginate";
 import type { HtmlBlock } from "./render";
 
@@ -12,7 +13,7 @@ export type PagedStats = { pages: number };
 
 export function PagedView({ blocks, look, zoom, guides, testid, onPages }: { blocks: HtmlBlock[]; look?: Look; zoom: number; guides?: boolean; testid?: string; onPages?: (n: number) => void }) {
   applyLook(look);
-  const html = useMemo(() => blocks.map((b) => b.html).join(""), [blocks]);
+  const html = useMemo(() => blocks.map((b, i) => tagBlock(b.html, i)).join(""), [blocks]);
   const meas = useRef<HTMLDivElement>(null);
   const [plan, setPlan] = useState<Planned[] | null>(null);
   const [fonts, setFonts] = useState(0);
